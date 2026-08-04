@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Master-data seed — idempotent (upserts by deterministic ids / unique keys).
 // Run: npx prisma db seed   (or: npx tsx prisma/seed.ts)
 import { newPrismaClient } from "../src/lib/prisma-factory";

@@ -1,3 +1,4 @@
+import "dotenv/config";
 // One-off DB inspection for building the 1C sync classifier.
 //   npx tsx prisma/inspect-db.ts
 import { newPrismaClient } from "../src/lib/prisma-factory";

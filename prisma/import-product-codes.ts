@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Loads 1C product codes ("Код", e.g. 00-00000008) from "Humana товар.xls"
 // into Product.code1c, matching by the exact 1C name. Import matching then
 // prefers these codes over names (see src/lib/import-sales.ts).

@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Seeds Product.article (Артикул производителя) and Product.codeSales1c
 // (КодСКЮ of the pinetrade sales API — its own code space, not Код 00-xxx).
 // Mapping verified against the May-2026 API pull (qty tied exactly to the

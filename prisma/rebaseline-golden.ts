@@ -1,3 +1,4 @@
+import "dotenv/config";
 // The workbook was the trusted reference until 2026-08-03, when the owner made
 // pinetrade 1C the source of truth for sales. The golden values are therefore
 // re-baselined to the engine's current output so the check keeps doing its real

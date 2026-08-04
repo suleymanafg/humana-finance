@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Imports the real 1C sales export (Aug 2025 – Jul 2026) as the app's live data.
 //
 //   npx tsx prisma/import-real-sales.ts            # dry run: report only

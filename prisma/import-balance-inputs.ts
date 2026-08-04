@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Loads the three manual-input tabs from the owner's workbook:
 //   Investments      → CapitalContribution (TI/Fargo) + FargoTransfer (cash/bank)
 //   Month-End Stock  → StockCount (all into «Основной склад» — the workbook

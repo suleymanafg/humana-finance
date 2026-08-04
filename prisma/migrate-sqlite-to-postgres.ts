@@ -1,3 +1,4 @@
+import "dotenv/config";
 // One-time move of the local SQLite database into Postgres (Neon).
 //
 //   npx tsx prisma/migrate-sqlite-to-postgres.ts            # dry run

@@ -1,3 +1,4 @@
+import "dotenv/config";
 // One-off: fold the Marketing section into OPEX (owner decision 2026-08-03).
 // The marketing page is removed; its categories become ordinary OPEX categories
 // under the new TI_MARKETING / FG_MARKETING P&L groups, so P&L totals are

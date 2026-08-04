@@ -1,3 +1,4 @@
+import "dotenv/config";
 // DEMO data — synthetic numbers to explore the app before importing real data.
 // Run:   npx tsx prisma/seed-demo.ts
 // Reset: npx tsx prisma/reset.ts  (wipes transactions, keeps master data)

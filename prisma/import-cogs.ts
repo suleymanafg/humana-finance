@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Imports COGS from "Humana P&L - 2026 - Working Copy.xlsx" — the COGS tab
 // (shipment detail) and the Import Expenses tab (expense detail).
 //

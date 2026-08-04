@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Wipes ALL transaction data (sales, shipments, OPEX, marketing, taxes,
 // balances, audit log). Master data (products, channels, months, categories,
 // settings, users) is kept. Run: npx tsx prisma/reset.ts

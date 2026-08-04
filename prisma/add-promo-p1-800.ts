@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Adds the promo Platin 1 800г SKU (owner decision 2026-07-31: include it;
 // previously excluded). Price 195,000; promo variant of regular Platin 1 800г;
 // 1C Код 00-00000020; pinetrade КодСКЮ 96689.

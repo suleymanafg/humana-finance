@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Imports OPEX (both companies) and marketing from
 // "Humana P&L - 2026 - Working Copy.xlsx" (tabs OPEX — Turbo Impex,
 // OPEX — Fargo, Marketing & Promo).
