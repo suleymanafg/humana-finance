@@ -1,26 +1,233 @@
 @import "tailwindcss";
 
+/* "Quiet Authority" design system (from the approved Stitch design):
+   deep-indigo primary, navy sidebar, white quiet cards on an off-white plane,
+   Manrope for headline figures, Inter for body, JetBrains Mono for data. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8f9ff;
+  --foreground: #0b1c30;
+  --surface: #ffffff;
+  --surface-low: #eff4ff;
+  --border: #e2e8f0;
+  --border-strong: #c8c4d5;
+  --muted: #64748b;
+  --accent: #1f108e;
+  --accent-hover: #3730a3;
+  --accent-soft: #e2dfff;
+  --accent-soft-bg: #eef0fd;
+  --danger: #ba1a1a;
+  --danger-soft: #ffdad6;
+  --ok: #067647;
+  --ok-soft: #ecfdf3;
+  --warn: #b54708;
+  --warn-soft: #fffaeb;
+  --sidebar: #1e1b4b;
+  --sidebar-line: rgba(255, 255, 255, 0.08);
+  --sidebar-fg: #adaae3;
+  --sidebar-fg-strong: #ffffff;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-surface: var(--surface);
+  --color-surface-low: var(--surface-low);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-bg: var(--accent-soft-bg);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-line: var(--sidebar-line);
+  --color-sidebar-fg: var(--sidebar-fg);
+  --color-sidebar-fg-strong: var(--sidebar-fg-strong);
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-manrope);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-manrope), var(--font-inter), system-ui, sans-serif;
+}
+
+/* uppercase micro-labels ("label-caps" in the design system) */
+.label-caps {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── numbers: JetBrains Mono, right-aligned, negatives red ── */
+/* Figures: Inter (the body face) carries real medium weights — Arial only ships
+   400/700, so a 500 there silently rendered thin. tabular-nums keeps every digit
+   the same width so columns line up. */
+.num {
+  font-family: var(--font-inter), Arial, Helvetica, sans-serif;
+  font-size: 0.95em;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: 0.01em;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-ligatures: none;
+}
+.num.font-semibold,
+.font-semibold .num {
+  font-weight: 680;
+}
+
+/* ── financial tables ── */
+.tbl {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+.tbl th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  /* soft indigo header band (per the approved Stitch mocks) */
+  background: var(--accent-soft-bg);
+  color: color-mix(in srgb, var(--accent) 42%, var(--muted));
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 0.75rem 0.75rem;
+  border-bottom: 1px solid var(--accent-soft);
+  white-space: nowrap;
+}
+/* globals.css is unlayered, so `.tbl th { text-align: left }` outranks the
+   Tailwind `text-right` utility (layered) on the same cell. Restore the
+   utility's intent explicitly — every numeric column header relies on it. */
+.tbl th.text-right {
+  text-align: right;
+}
+.tbl th.text-center,
+.tbl td.text-center {
+  text-align: center;
+}
+.tbl td.text-right {
+  text-align: right;
+}
+.tbl td {
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  vertical-align: middle;
+}
+.tbl tbody tr {
+  transition: background-color 0.15s ease;
+}
+.tbl tbody tr:hover td {
+  background: var(--surface-low);
+}
+.tbl tbody tr:last-child td {
+  border-bottom: none;
+}
+.tbl .sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.tbl th.sticky-col {
+  z-index: 6;
+  background: var(--accent-soft-bg);
+}
+.tbl tbody tr:hover .sticky-col {
+  background: var(--surface-low);
+}
+
+/* highlighted YTD / selected column */
+.tbl .col-hl {
+  background: var(--accent-soft-bg);
+}
+.tbl tbody tr:hover .col-hl {
+  background: #e0e3fb;
+}
+.tbl th.col-hl {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tbl tr.row-section > td {
+  border-top: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--accent-soft-bg) 55%, var(--surface));
+}
+.tbl tbody tr.row-section:hover td {
+  background: color-mix(in srgb, var(--accent-soft-bg) 80%, var(--surface));
+}
+.tbl tr.row-grand > td {
+  border-top: 2px solid var(--border-strong);
+  background: var(--accent-soft-bg);
+}
+.tbl tbody tr.row-grand:hover td {
+  background: #e0e3fb;
+}
+
+/* ── quiet cards: 1px border, no shadow, border tints on hover ── */
+.quiet-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  transition: border-color 0.2s ease;
+}
+.quiet-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cdd2dc;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b4bac7;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.auth-bg {
+  background:
+    radial-gradient(600px 300px at 15% 0%, rgba(31, 16, 142, 0.08), transparent 60%),
+    radial-gradient(700px 350px at 90% 100%, rgba(55, 48, 163, 0.06), transparent 60%),
+    var(--background);
 }

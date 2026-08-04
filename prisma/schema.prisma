@@ -1,0 +1,356 @@
+// Humana Uzbekistan P&L — data model
+// SQLite in dev (via libsql adapter). To move to Postgres/Neon: change provider
+// to "postgresql", set DATABASE_URL, swap the adapter in src/lib/db.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ───────────────────────── Master data ─────────────────────────
+
+model Product {
+  id               String    @id @default(cuid())
+  nameRu           String
+  nameEn           String?
+  code1c           String? // Код/GUID номенклатуры in 1C (import matching)
+  article          String? // Артикул производителя (e.g. 70836) — sales API "СКЮ" column
+  codeSales1c      String? // КодСКЮ in the pinetrade sales API (96597…) — its own code space, ≠ code1c
+  productLine      String? // "Platin" | "Expert" — reporting group
+  price            Float // sell price UZS
+  isPromo          Boolean   @default(false)
+  regularProductId String? // promo SKU -> its regular SKU (shares unit costs)
+  regularProduct   Product?  @relation("PromoVariant", fields: [regularProductId], references: [id])
+  promoVariants    Product[] @relation("PromoVariant")
+  sortOrder        Int       @default(0)
+  active           Boolean   @default(true)
+
+  sales         Sale[]
+  shipmentLines ShipmentLine[]
+  stockCounts   StockCount[]
+}
+
+model Channel {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  code1c    String? // Код контрагента/подразделения in 1C (import matching)
+  retroPct  Float   @default(0) // fraction, e.g. 0.08
+  cashPct   Float   @default(0) // fraction; bankPct = 1 - cashPct
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
+
+  sales Sale[]
+}
+
+// id is the month code, e.g. "2025-08" — used by CSV/1C import and sorting.
+model Month {
+  id        String @id
+  nameRu    String
+  nameEn    String
+  sortOrder Int
+
+  sales          Sale[]
+  shipments      Shipment[]
+  importExpenses ImportExpense[]
+  opexTi         OpexTiEntry[]
+  opexFargo      OpexFargoEntry[]
+  marketing      MarketingEntry[]
+  taxFilings     TiTaxFiling[]
+  stockCounts    StockCount[]
+  monthBalance   MonthBalance?
+  arEntries      ArEntry[]
+  dataRequests   DataRequest[]
+}
+
+// company: "TI" | "FARGO"; plGroup: one of the fixed P&L groups per company,
+// null => "UNMAPPED" (surfaces in Health Check, never silently dropped).
+model OpexCategory {
+  id        String  @id @default(cuid())
+  company   String
+  name      String
+  plGroup   String?
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
+
+  tiEntries    OpexTiEntry[]
+  fargoEntries OpexFargoEntry[]
+
+  @@unique([company, name])
+}
+
+model MarketingCategory {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  active Boolean @default(true)
+
+  entries MarketingEntry[]
+}
+
+model ImportExpenseCategory {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  active Boolean @default(true)
+
+  expenses ImportExpense[]
+}
+
+// key-value store for tax rates & golden reference values (JSON string values)
+model Setting {
+  key   String @id
+  value String
+}
+
+// Physical warehouses (1C keeps stock per warehouse; code1c used for import matching)
+model Warehouse {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  code1c    String? // Код/GUID склада in 1C
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
+
+  stockCounts StockCount[]
+}
+
+// ───────────────────────── Transactions ─────────────────────────
+
+model Sale {
+  id        String   @id @default(cuid())
+  monthId   String
+  month     Month    @relation(fields: [monthId], references: [id])
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  channelId String
+  channel   Channel  @relation(fields: [channelId], references: [id])
+  qty       Float
+  // Invoiced revenue from the source system (VAT incl.), when known. Revenue
+  // uses this in preference to qty × list price, so discounts, returns and
+  // price corrections are reflected exactly. Null for manual entry.
+  amount    Float?
+  source    String   @default("MANUAL") // MANUAL | CSV | API
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([monthId, productId, channelId])
+}
+
+model Shipment {
+  id        String    @id @default(cuid())
+  code      String    @unique // "Авиа №1", "Фура №2", ...
+  monthId   String
+  month     Month     @relation(fields: [monthId], references: [id])
+  notes     String?
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  lines    ShipmentLine[]
+  expenses ImportExpense[]
+}
+
+model ShipmentLine {
+  id            String    @id @default(cuid())
+  shipmentId    String
+  shipment      Shipment  @relation(fields: [shipmentId], references: [id])
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id])
+  qty           Float
+  priceEur      Float
+  rate          Float // EUR -> UZS
+  fargoUnitCost Float? // Себест Fargo (declared transfer price), manual
+  deletedAt     DateTime?
+}
+
+model ImportExpense {
+  id         String                @id @default(cuid())
+  monthId    String
+  month      Month                 @relation(fields: [monthId], references: [id])
+  shipmentId String
+  shipment   Shipment              @relation(fields: [shipmentId], references: [id])
+  categoryId String
+  category   ImportExpenseCategory @relation(fields: [categoryId], references: [id])
+  amount     Float
+  notes      String?
+  deletedAt  DateTime?
+}
+
+model OpexTiEntry {
+  id         String       @id @default(cuid())
+  monthId    String
+  month      Month        @relation(fields: [monthId], references: [id])
+  categoryId String
+  category   OpexCategory @relation(fields: [categoryId], references: [id])
+  bankAmount Float        @default(0)
+  cashAmount Float        @default(0)
+  notes      String?
+  deletedAt  DateTime?
+}
+
+model OpexFargoEntry {
+  id         String       @id @default(cuid())
+  monthId    String
+  month      Month        @relation(fields: [monthId], references: [id])
+  categoryId String
+  category   OpexCategory @relation(fields: [categoryId], references: [id])
+  amount     Float
+  notes      String?
+  deletedAt  DateTime?
+}
+
+model MarketingEntry {
+  id         String            @id @default(cuid())
+  monthId    String
+  month      Month             @relation(fields: [monthId], references: [id])
+  categoryId String
+  category   MarketingCategory @relation(fields: [categoryId], references: [id])
+  amount     Float
+  paidBy     String // "FARGO" | "TI"
+  notes      String?
+  deletedAt  DateTime?
+}
+
+model TiTaxFiling {
+  id               String    @id @default(cuid())
+  quarterLabel     String // "Q3 2025"
+  taxAmount        Float // from accountant
+  bookedMonthId    String // P&L month the charge lands in
+  bookedMonth      Month     @relation(fields: [bookedMonthId], references: [id])
+  declaredExpenses Float     @default(0) // input for the audit recomputation
+  deletedAt        DateTime?
+}
+
+model CapitalContribution {
+  id          String    @id @default(cuid())
+  date        DateTime
+  tiAmount    Float     @default(0)
+  fargoAmount Float     @default(0)
+  notes       String?
+  deletedAt   DateTime?
+}
+
+model FargoTransfer {
+  id         String    @id @default(cuid())
+  date       DateTime
+  cashAmount Float     @default(0)
+  bankAmount Float     @default(0)
+  notes      String?
+  deletedAt  DateTime?
+}
+
+// ───────────────────────── Month-end snapshots ─────────────────────────
+
+model StockCount {
+  id          String    @id @default(cuid())
+  monthId     String
+  month       Month     @relation(fields: [monthId], references: [id])
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  qty         Float // month-end count, regular+promo combined
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([monthId, productId, warehouseId])
+}
+
+model MonthBalance {
+  monthId         String @id
+  month           Month  @relation(fields: [monthId], references: [id])
+  tiBank          Float  @default(0)
+  goodsInTransit  Float  @default(0) // prepayments to Germany
+  vatPrepayment   Float  @default(0)
+  priorVatBalance Float  @default(0) // liability
+  nutribenLoan    Float  @default(0) // liability
+}
+
+model ArEntry {
+  id           String    @id @default(cuid())
+  monthId      String
+  month        Month     @relation(fields: [monthId], references: [id])
+  customerName String
+  amount       Float
+  deletedAt    DateTime?
+}
+
+// ───────────────────────── Auth & audit ─────────────────────────
+
+model User {
+  id           String @id @default(cuid())
+  username     String @unique
+  passwordHash String // scrypt: salt:hex
+  role         String // "ADMIN" | "VIEWER"
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  entity    String
+  entityId  String
+  action    String // CREATE | UPDATE | DELETE
+  data      String // JSON payload (before/after)
+  username  String
+  createdAt DateTime @default(now())
+}
+
+// ───────────────────────── Data requests (сбор данных) ─────────────────────────
+// Ask someone outside the app for figures, collect their answers in a staging
+// area, review, then integrate through the normal CRUD path so every write is
+// audit-logged. Nothing a responder submits touches the P&L until confirmed.
+
+model Contact {
+  id             String  @id @default(cuid())
+  name           String
+  role           String? // «бухгалтер», «склад» — free text, shown when composing
+  telegramChatId String? @unique // captured when they tap Start on the bot
+  telegramUser   String? // @username, for display only
+  email          String?
+  active         Boolean @default(true)
+
+  requests DataRequest[]
+}
+
+// status: DRAFT | SENT | OPENED | PARTIAL | SUBMITTED | INTEGRATED | REVOKED
+model DataRequest {
+  id           String    @id @default(cuid())
+  kind         String // key into REQUEST_KINDS (OPEX_TI | OPEX_FARGO | STOCK | AR)
+  monthId      String
+  month        Month     @relation(fields: [monthId], references: [id])
+  contactId    String
+  contact      Contact   @relation(fields: [contactId], references: [id])
+  token        String    @unique // the credential in the fill-page URL
+  note         String? // free-text covering message shown at the top of the form
+  status       String    @default("DRAFT")
+  dueDate      DateTime?
+  createdAt    DateTime  @default(now())
+  createdBy    String
+  sentAt       DateTime?
+  remindedAt   DateTime?
+  openedAt     DateTime?
+  submittedAt  DateTime?
+  integratedAt DateTime?
+  revokedAt    DateTime?
+
+  items DataRequestItem[]
+}
+
+// One line of a request. refId/refId2 bind it to a real target (category,
+// product, warehouse) so integrating is a mechanical write, never a guess.
+model DataRequestItem {
+  id         String      @id @default(cuid())
+  requestId  String
+  request    DataRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  sortOrder  Int         @default(0)
+  label      String
+  refId      String? // categoryId | productId — null for responder-added AR rows
+  refId2     String? // warehouseId for stock lines
+  field      String // target column: cashAmount | bankAmount | qty | amount
+  freeLabel  String? // responder-typed name (AR customer)
+  priorValue Float? // prior-month figure, shown as a hint
+  value      Float? // what they submitted
+  note       String?
+  decision   String      @default("PENDING") // PENDING | ACCEPTED | REJECTED
+  updatedAt  DateTime    @updatedAt
+
+  @@index([requestId])
+}

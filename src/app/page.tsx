@@ -1,65 +1,115 @@
-import Image from "next/image";
+import { getComputed } from "@/lib/data";
+import { dict } from "@/lib/i18n";
+import { computeMonthStatus, defaultMonthId } from "@/lib/month-status";
+import { resolveMonthId } from "@/lib/month";
+import { UZ_REGIONS } from "@/lib/uz-map";
+import { costProductIdOf } from "@/lib/engine/compute";
+import DashboardView from "@/components/DashboardView";
 
-export default function Home() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>;
+}) {
+  const { month } = await searchParams;
+  const { dataset, computed } = await getComputed();
+  const status = computeMonthStatus(dataset);
+  const monthId = await resolveMonthId(
+    month,
+    dataset.months,
+    defaultMonthId(status, dataset.months[0]?.id ?? "")
+  );
+
+  const idx = computed.monthly.findIndex((m) => m.monthId === monthId);
+  const monthly = idx >= 0 ? computed.monthly[idx] : null;
+  const prior = idx > 0 ? computed.monthly[idx - 1] : null;
+  const active = computed.monthly.filter((m) => m.revenue !== 0);
+
+  // ── attention list: missing data for the month + top health warnings ──
+  const cur = status.find((s) => s.monthId === monthId);
+  const attention: Array<{ text: { ru: string; en: string }; href: string; tone: "warn" | "danger" }> = [];
+  if (cur) {
+    const missing: Array<[boolean, { ru: string; en: string }, string]> = [
+      [cur.hasSales, { ru: "Продажи за месяц не внесены", en: "Sales not entered" }, `/sales?month=${monthId}`],
+      [cur.hasOpexTi, { ru: "Расходы Turbo Impex не внесены", en: "Turbo Impex expenses missing" }, `/opex-ti?month=${monthId}`],
+      [cur.hasOpexFargo, { ru: "Расходы Fargo не внесены", en: "Fargo expenses missing" }, `/opex-fargo?month=${monthId}`],
+      [cur.hasStock, { ru: "Остатки на складах не внесены", en: "Stock counts missing" }, `/close?month=${monthId}`],
+      [cur.hasInputs, { ru: "Балансовые вводы не заполнены", en: "Balance inputs missing" }, `/close?month=${monthId}`],
+    ];
+    for (const [ok, text, href] of missing) {
+      if (!ok) attention.push({ text, href, tone: "warn" });
+    }
+  }
+  // informational checks don't belong on the dashboard action list
+  const INFO_CHECKS = new Set(["goldenValues", "negativeSaleQty"]);
+  for (const h of computed.healthChecks.filter((h) => h.status === "warn")) {
+    if (INFO_CHECKS.has(h.key)) continue;
+    const k = `hc_${h.key}` as keyof typeof dict;
+    const label = k in dict ? dict[k] : { ru: h.key, en: h.key };
+    attention.push({ text: { ru: label.ru, en: label.en }, href: h.href, tone: "danger" });
+  }
+
+  // ── region distribution for the month ──
+  const channelByName = new Map(dataset.channels.map((c) => [c.name, c.id]));
+  const seen = new Set<string>();
+  const regions: Array<{ name: { ru: string; en: string }; revenue: number }> = [];
+  for (const r of UZ_REGIONS) {
+    if (r.channels.length === 0) continue;
+    const sig = [...r.channels].sort().join("|");
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    const revenue = r.channels.reduce(
+      (a, name) => a + (monthly?.revenueByChannel[channelByName.get(name) ?? ""] ?? 0),
+      0
+    );
+    if (revenue > 0) regions.push({ name: { ru: r.nameRu, en: r.nameEn }, revenue });
+  }
+  regions.sort((a, b) => b.revenue - a.revenue);
+  const regionTotal = regions.reduce((a, r) => a + r.revenue, 0);
+  const top3 = regions.slice(0, 3);
+  const monthRevenue = monthly?.revenue ?? 0;
+  const others = monthRevenue - top3.reduce((a, r) => a + r.revenue, 0);
+  void regionTotal;
+
+  // ── top products for the month ──
+  const topProducts = Object.entries(monthly?.revenueByProduct ?? {})
+    .map(([pid, revenue]) => {
+      const p = dataset.products.find((x) => x.id === pid);
+      const qty = monthly?.qtyByProduct[pid] ?? 0;
+      const cost = computed.productCosts[costProductIdOf(pid, dataset)]?.avgTiCost ?? 0;
+      const realised = qty !== 0 ? revenue / qty : 0;
+      return {
+        name: p?.nameRu ?? pid,
+        qty,
+        revenue,
+        marginPct: realised !== 0 ? (realised - cost) / realised : 0,
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <DashboardView
+      months={dataset.months}
+      monthId={monthId}
+      netProfit={monthly?.netProfit ?? 0}
+      priorNetProfit={prior?.netProfit ?? null}
+      priorMonthId={prior?.monthId ?? null}
+      netSeries={active.map((m) => m.netProfit)}
+      revenue={monthRevenue}
+      priorRevenue={prior?.revenue ?? null}
+      gpMarginPct={monthly?.gpMarginPct ?? 0}
+      priorGpMarginPct={prior?.gpMarginPct ?? null}
+      expenses={monthly?.totalOpex ?? 0}
+      expensesShare={monthRevenue !== 0 ? (monthly?.totalOpex ?? 0) / monthRevenue : 0}
+      trend={active.map((m) => ({ monthId: m.monthId, revenue: m.revenue }))}
+      attention={attention.slice(0, 3)}
+      moreAttention={Math.max(0, attention.length - 3)}
+      regions={[...top3, ...(others > 0 ? [{ name: { ru: "Другие каналы", en: "Other channels" }, revenue: others }] : [])]}
+      settlement={
+        computed.settlement.find((s) => s.monthId === monthId) ?? null
+      }
+      topProducts={topProducts}
+    />
   );
 }
