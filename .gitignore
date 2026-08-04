@@ -49,3 +49,6 @@ next-env.d.ts
 /dev.db.backup-*
 /*.db
 /*.db-journal
+
+# generated production secrets, never commit
+PRODUCTION-SECRETS.txt
