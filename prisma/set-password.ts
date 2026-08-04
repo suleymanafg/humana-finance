@@ -4,16 +4,35 @@ import "dotenv/config";
 // (admin/admin123) are public knowledge in the repo, so they must not survive
 // on a deployed instance.
 //
-//   npx tsx prisma/set-password.ts <username>
+//   npx tsx prisma/set-password.ts <username>               # whatever .env points at (dev)
+//   npx tsx prisma/set-password.ts <username> --production  # the live site
+//
+// --production reads the commented `# DATABASE_URL_PRODUCTION=` line in .env.
+// Without it the default target is the dev branch, so changing the live
+// password would silently do nothing to the live site.
 //
 // The new password is read from stdin, never from argv — arguments show up in
 // shell history and process listings.
+import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { newPrismaClient } from "../src/lib/prisma-factory";
 import { hashPassword } from "../src/lib/auth-crypto";
 
 const username = process.argv[2];
-const prisma = newPrismaClient();
+const useProduction = process.argv.includes("--production");
+
+function productionUrl(): string {
+  const env = readFileSync(".env", "utf8");
+  const url = (env.match(/^#\s*DATABASE_URL_PRODUCTION=\s*"?([^"\n]+)/m) ?? [])[1]?.trim();
+  if (!url) {
+    throw new Error(
+      "No `# DATABASE_URL_PRODUCTION=` line in .env. Add the live connection string there first."
+    );
+  }
+  return url;
+}
+
+const prisma = newPrismaClient(useProduction ? productionUrl() : undefined);
 
 function readSecret(prompt: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -52,8 +71,9 @@ async function main() {
     where: { username },
     data: { passwordHash: hashPassword(password) },
   });
-  const target = (process.env.DATABASE_URL ?? "").startsWith("postgres") ? "Postgres (Neon)" : "local SQLite";
-  console.log(`✓ password updated for "${username}" on ${target}`);
+  console.log(
+    `✓ password updated for "${username}" on ${useProduction ? "PRODUCTION (the live site)" : "the dev branch"}`
+  );
 }
 
 main()
