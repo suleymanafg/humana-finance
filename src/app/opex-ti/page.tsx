@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getComputed } from "@/lib/data";
 import { getSession } from "@/lib/auth";
+import { canEditData, canEditStructure } from "@/lib/permissions";
 import { resolveMonthId } from "@/lib/month";
 import OpexView from "@/components/OpexView";
 
@@ -47,7 +48,8 @@ export default async function OpexTiPage({
         bank: r.bankAmount,
         cash: r.cashAmount,
       }))}
-      readOnly={session?.role !== "ADMIN"}
+      readOnly={!canEditData(session?.role)}
+      canManage={canEditStructure(session?.role)}
     />
   );
 }

@@ -17,9 +17,17 @@ export function verifyPassword(password: string, stored: string): boolean {
 
 const SECRET = process.env.SESSION_SECRET ?? "humana-dev-secret-change-in-prod";
 
+/**
+ * ADMIN  — everything, including structure (categories, products, settings).
+ * STAFF  — fills in figures; cannot change structure or see admin-only pages.
+ * VIEWER — reads everything, changes nothing.
+ */
+export const ROLES = ["ADMIN", "STAFF", "VIEWER"] as const;
+export type Role = (typeof ROLES)[number];
+
 export interface SessionData {
   username: string;
-  role: "ADMIN" | "VIEWER";
+  role: Role;
   exp: number; // unix seconds
 }
 
@@ -27,7 +35,7 @@ function sign(payload: string): string {
   return createHmac("sha256", SECRET).update(payload).digest("base64url");
 }
 
-export function createSessionToken(username: string, role: "ADMIN" | "VIEWER", ttlHours = 24 * 14): string {
+export function createSessionToken(username: string, role: Role, ttlHours = 24 * 14): string {
   const data: SessionData = { username, role, exp: Math.floor(Date.now() / 1000) + ttlHours * 3600 };
   const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
   return `${payload}.${sign(payload)}`;
@@ -44,7 +52,7 @@ export function verifySessionToken(token: string | undefined): SessionData | nul
   try {
     const data = JSON.parse(Buffer.from(payload, "base64url").toString()) as SessionData;
     if (data.exp < Math.floor(Date.now() / 1000)) return null;
-    if (data.role !== "ADMIN" && data.role !== "VIEWER") return null;
+    if (!ROLES.includes(data.role)) return null;
     return data;
   } catch {
     return null;

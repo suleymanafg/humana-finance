@@ -1,5 +1,6 @@
 import { getComputed } from "@/lib/data";
 import { getSession } from "@/lib/auth";
+import { canEditData } from "@/lib/permissions";
 import TaxesView from "@/components/TaxesView";
 import { resolveMonthId } from "@/lib/month";
 
@@ -53,7 +54,7 @@ export default async function TaxesPage({
       productNames={Object.fromEntries(dataset.products.map((p) => [p.id, p.nameRu]))}
       taxFilings={dataset.taxFilings}
       quarterAudits={computed.quarterAudits}
-      readOnly={session?.role !== "ADMIN"}
+      readOnly={!canEditData(session?.role)}
     />
   );
 }

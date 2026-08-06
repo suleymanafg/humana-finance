@@ -145,6 +145,7 @@ function NameCell({
   onRename,
 }: {
   name: string;
+  /** renaming is a structural change — ADMIN only */
   readOnly: boolean;
   onRename: (v: string) => void;
 }) {
@@ -201,6 +202,7 @@ export default function OpexView({
   categories,
   entries,
   readOnly,
+  canManage,
 }: {
   variant: "TI" | "FARGO";
   entity: "opexTi" | "opexFargo";
@@ -210,7 +212,10 @@ export default function OpexView({
   monthId: string;
   categories: OpexCategoryLite[];
   entries: OpexEntryLite[];
+  /** may edit amounts (ADMIN or STAFF) */
   readOnly: boolean;
+  /** may add / rename / remove categories (ADMIN only) */
+  canManage: boolean;
 }) {
   const { t, locale } = useT();
   const router = useRouter();
@@ -464,7 +469,7 @@ export default function OpexView({
               />
               {ru ? "Скрыть пустые" : "Hide empty"}
             </label>
-            {!readOnly && (
+            {canManage && (
               <Button variant="secondary" onClick={() => setAdding((v) => !v)}>
                 <IconPlus size={13} /> {ru ? "Категория" : "Category"}
               </Button>
@@ -472,7 +477,7 @@ export default function OpexView({
           </div>
         </div>
 
-        {adding && !readOnly && (
+        {adding && canManage && (
           <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-low px-4 py-2.5">
             <Input
               value={newName}
@@ -517,7 +522,7 @@ export default function OpexView({
                   <th className="text-right">{t("amount")}</th>
                 )}
                 <th className="text-right">{ru ? "К пред. месяцу" : "vs prior"}</th>
-                {!readOnly && <th className="w-8" />}
+                {canManage && <th className="w-8" />}
               </tr>
             </thead>
             <tbody>
@@ -543,7 +548,7 @@ export default function OpexView({
                     <td className="text-right">
                       <NumCell value={sub.bank + sub.cash} className="font-semibold" />
                     </td>
-                    <td colSpan={readOnly ? 1 : 2} />
+                    <td colSpan={canManage ? 2 : 1} />
                   </tr>,
                   ...cats.map((c) => {
                     const v = byCatMonth.get(keyOf(c.id, monthId));
@@ -556,7 +561,7 @@ export default function OpexView({
                           <div className="flex items-center gap-1.5">
                             <NameCell
                               name={c.name}
-                              readOnly={readOnly}
+                              readOnly={!canManage}
                               onRename={(n) => renameCategory(c.id, n)}
                             />
                             {!c.active && <Badge tone="warn">{ru ? "скрыта" : "hidden"}</Badge>}
@@ -602,7 +607,7 @@ export default function OpexView({
                             </span>
                           </div>
                         </td>
-                        {!readOnly && (
+                        {canManage && (
                           <td>
                             <button
                               onClick={() => removeCategory(c)}

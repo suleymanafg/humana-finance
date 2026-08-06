@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { createSessionToken, verifyPassword } from "@/lib/auth-crypto";
+import type { Role } from "@/lib/auth-crypto";
 import { SESSION_COOKIE } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
@@ -12,7 +13,7 @@ export async function POST(request: NextRequest) {
   if (!user || !verifyPassword(password, user.passwordHash)) {
     return NextResponse.json({ error: "invalid" }, { status: 401 });
   }
-  const token = createSessionToken(user.username, user.role as "ADMIN" | "VIEWER");
+  const token = createSessionToken(user.username, user.role as Role);
   const res = NextResponse.json({ ok: true, role: user.role });
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,

@@ -1,10 +1,10 @@
 // Inline sales-grid editing: upsert one (month, product, channel) cell.
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireDataEditor } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
-  const session = await requireAdmin();
+  const session = await requireDataEditor();
   if (!session) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const { monthId, productId, channelId, qty } = (await request.json()) as {

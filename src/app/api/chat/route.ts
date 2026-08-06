@@ -18,7 +18,7 @@ import {
   runAiTool,
   runAiWriteTool,
 } from "@/lib/ai/tools";
-import { ADMIN_WRITE_RULES, SYSTEM_PROMPT, VIEWER_RULES } from "@/lib/ai/prompt";
+import { ADMIN_WRITE_RULES, STAFF_RULES, SYSTEM_PROMPT, VIEWER_RULES } from "@/lib/ai/prompt";
 
 // The tool loop can take a while on a hard question; Vercel fluid compute
 // allows up to 300s on this plan.
@@ -53,7 +53,9 @@ export async function POST(request: NextRequest) {
   // sees them, and the executor below re-checks the role as defense in depth.
   const isAdmin = session.role === "ADMIN";
   const tools = isAdmin ? [...AI_TOOLS, ...AI_WRITE_TOOLS] : AI_TOOLS;
-  const system = SYSTEM_PROMPT + (isAdmin ? ADMIN_WRITE_RULES : VIEWER_RULES);
+  const system =
+    SYSTEM_PROMPT +
+    (isAdmin ? ADMIN_WRITE_RULES : session.role === "STAFF" ? STAFF_RULES : VIEWER_RULES);
 
   const messages: Anthropic.Beta.BetaMessageParam[] = history.map((m) => ({
     role: m.role,

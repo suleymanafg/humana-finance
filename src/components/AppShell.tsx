@@ -8,6 +8,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import type { DictKey } from "@/lib/i18n";
+import type { Role } from "@/lib/auth-crypto";
 import { MONTH_COOKIE } from "@/lib/month-cookie";
 import ChatWidget from "./ChatWidget";
 import {
@@ -30,7 +31,7 @@ import {
   IconTruck,
 } from "./icons";
 
-type NavItem = { href: string; key: DictKey; icon: React.ComponentType<{ size?: number }> };
+type NavItem = { href: string; key: DictKey; icon: React.ComponentType<{ size?: number }>; adminOnly?: boolean };
 
 const NAV: NavItem[] = [
   { href: "/", key: "navDashboard", icon: IconDashboard },
@@ -42,9 +43,9 @@ const NAV: NavItem[] = [
   { href: "/opex-ti", key: "navOpexTi", icon: IconBuilding },
   { href: "/opex-fargo", key: "navOpexFargo", icon: IconStore },
   { href: "/close", key: "navClose", icon: IconEdit },
-  { href: "/requests", key: "navRequests", icon: IconInbox },
-  { href: "/health", key: "navHealth", icon: IconShield },
-  { href: "/settings", key: "navSettings", icon: IconSettings },
+  { href: "/requests", key: "navRequests", icon: IconInbox, adminOnly: true },
+  { href: "/health", key: "navHealth", icon: IconShield, adminOnly: true },
+  { href: "/settings", key: "navSettings", icon: IconSettings, adminOnly: true },
 ];
 
 interface MonthLite {
@@ -68,7 +69,7 @@ export default function AppShell({
   children,
 }: {
   username: string;
-  role: "ADMIN" | "VIEWER";
+  role: Role;
   months: MonthLite[];
   status: StatusLite[];
   fallbackMonth: string;
@@ -112,7 +113,7 @@ export default function AppShell({
 
         <nav className="flex-1 overflow-y-auto">
           <ul className="space-y-0.5">
-            {NAV.map((item) => {
+            {NAV.filter((item) => !item.adminOnly || role === "ADMIN").map((item) => {
               const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
               const Icon = item.icon;
               return (
@@ -147,7 +148,7 @@ export default function AppShell({
               {username.slice(0, 1)}
             </div>
             <div className="min-w-0 flex-1 leading-tight">
-              <div className="label-caps !text-sidebar-fg/60">{role === "ADMIN" ? "Администратор" : "Просмотр"}</div>
+              <div className="label-caps !text-sidebar-fg/60">{role === "ADMIN" ? "Администратор" : role === "STAFF" ? "Сотрудник" : "Просмотр"}</div>
               <div className="truncate text-[13px] text-sidebar-fg-strong">{username}</div>
             </div>
             <button
@@ -197,6 +198,11 @@ export default function AppShell({
           </div>
         </header>
 
+        {role === "STAFF" && (
+          <div className="border-b border-accent/15 bg-accent-soft px-6 py-2 text-[12.5px] text-accent">
+            {t("staffScope")}
+          </div>
+        )}
         {role === "VIEWER" && (
           <div className="mx-6 mt-4 rounded border border-accent/15 bg-accent-soft-bg px-3.5 py-2 text-[13px] text-accent">
             {t("viewerReadOnly")}

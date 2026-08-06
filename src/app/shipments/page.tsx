@@ -1,5 +1,6 @@
 import { getComputed } from "@/lib/data";
 import { getSession } from "@/lib/auth";
+import { canEditData } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import ShipmentsView from "@/components/ShipmentsView";
 import { costProductIdOf } from "@/lib/engine/compute";
@@ -55,7 +56,7 @@ export default async function ShipmentsPage() {
         notes: e.notes,
       }))}
       importCategories={importCategories.map((c) => ({ id: c.id, name: c.name }))}
-      readOnly={session?.role !== "ADMIN"}
+      readOnly={!canEditData(session?.role)}
     />
   );
 }

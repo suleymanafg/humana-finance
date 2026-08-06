@@ -1,8 +1,11 @@
-// Generic audited CRUD endpoint. Admin-only. Soft delete where configured.
+// Generic audited CRUD endpoint. Soft delete where configured.
+// ADMIN writes anything; STAFF writes figures but not structural entities
+// (categories, products, channels, settings) — see src/lib/permissions.ts.
 // POST /api/crud/<entity>  { action: "create"|"update"|"delete"|"upsert", id?, data?, where? }
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireDataEditor } from "@/lib/auth";
+import { canWriteEntity } from "@/lib/permissions";
 
 interface EntityConfig {
   delegate: () => unknown; // prisma model delegate
@@ -141,12 +144,17 @@ type Delegate = {
 };
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ entity: string }> }) {
-  const session = await requireAdmin();
+  const session = await requireDataEditor();
   if (!session) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const { entity } = await ctx.params;
   const config = registry[entity];
   if (!config) return NextResponse.json({ error: "unknown entity" }, { status: 404 });
+
+  // structural entities (categories, products, settings) stay ADMIN-only
+  if (!canWriteEntity(session.role, entity)) {
+    return NextResponse.json({ error: "structure changes require an administrator" }, { status: 403 });
+  }
 
   const body = (await request.json()) as {
     action: "create" | "update" | "delete" | "upsert";

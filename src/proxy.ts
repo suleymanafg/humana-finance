@@ -6,6 +6,7 @@
 // service layer verifies on every call.
 import { NextResponse, type NextRequest } from "next/server";
 import { verifySessionToken } from "@/lib/auth-crypto";
+import { canAccessPath } from "@/lib/permissions";
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -31,6 +32,17 @@ export function proxy(request: NextRequest) {
     }
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+  // admin-only sections: staff and viewers are bounced to the dashboard rather
+  // than shown a page they cannot use
+  if (!canAccessPath(session.role, pathname)) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    const url = request.nextUrl.clone();
+    url.pathname = "/";
     url.search = "";
     return NextResponse.redirect(url);
   }

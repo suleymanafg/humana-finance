@@ -1,5 +1,6 @@
 import { getComputed } from "@/lib/data";
 import { getSession } from "@/lib/auth";
+import { canEditData } from "@/lib/permissions";
 import SalesView from "@/components/SalesView";
 import { costProductIdOf } from "@/lib/engine/compute";
 import { resolveMonthId } from "@/lib/month";
@@ -71,7 +72,7 @@ export default async function SalesPage({
           computed.productCosts[costProductIdOf(p.id, dataset)]?.avgTiCost ?? 0,
         ])
       )}
-      readOnly={session?.role !== "ADMIN"}
+      readOnly={!canEditData(session?.role)}
     />
   );
 }

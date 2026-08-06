@@ -1,5 +1,6 @@
 import { getComputed } from "@/lib/data";
 import { getSession } from "@/lib/auth";
+import { canEditData } from "@/lib/permissions";
 import BalanceInputsView from "@/components/BalanceInputsView";
 import { costProductIdOf } from "@/lib/engine/compute";
 import { computeMonthStatus, defaultMonthId } from "@/lib/month-status";
@@ -73,7 +74,7 @@ export default async function BalanceInputsPage({
       }
       contributions={dataset.contributions}
       transfers={dataset.transfers}
-      readOnly={session?.role !== "ADMIN"}
+      readOnly={!canEditData(session?.role)}
     />
   );
 }
