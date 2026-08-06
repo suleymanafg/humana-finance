@@ -64,6 +64,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
               status={shellData.status}
               fallbackMonth={shellData.fallbackMonth}
               healthWarnings={shellData.healthWarnings}
+              aiConfigured={Boolean(process.env.ANTHROPIC_API_KEY)}
             >
               {children}
             </AppShell>

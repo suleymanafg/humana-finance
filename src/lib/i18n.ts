@@ -18,6 +18,7 @@ export const dict = {
   navHealth: { ru: "Проверка данных", en: "Health Check" },
   navClose: { ru: "Ввод данных", en: "Data entry" },
   navRequests: { ru: "Запросы данных", en: "Data requests" },
+  navChat: { ru: "AI-аналитик", en: "AI Analyst" },
   navSettings: { ru: "Справочники", en: "Settings" },
   logout: { ru: "Выйти", en: "Log out" },
 

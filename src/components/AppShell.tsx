@@ -9,6 +9,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import type { DictKey } from "@/lib/i18n";
 import { MONTH_COOKIE } from "@/lib/month-cookie";
+import ChatWidget from "./ChatWidget";
 import {
   IconBell,
   IconBuilding,
@@ -63,6 +64,7 @@ export default function AppShell({
   status,
   fallbackMonth,
   healthWarnings,
+  aiConfigured,
   children,
 }: {
   username: string;
@@ -71,6 +73,7 @@ export default function AppShell({
   status: StatusLite[];
   fallbackMonth: string;
   healthWarnings: number;
+  aiConfigured: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -201,6 +204,7 @@ export default function AppShell({
         )}
         <div className="mx-auto w-full max-w-[1440px] flex-1 px-6 py-8">{children}</div>
       </main>
+      <ChatWidget configured={aiConfigured} />
     </div>
   );
 }
