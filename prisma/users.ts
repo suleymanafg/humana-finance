@@ -4,6 +4,7 @@ import "dotenv/config";
 //
 //   npx tsx prisma/users.ts list [--production]
 //   npx tsx prisma/users.ts add <username> <ADMIN|STAFF|VIEWER> [--production]
+//   npx tsx prisma/users.ts reset <username> [--production]
 //   npx tsx prisma/users.ts remove <username> [--production]
 //
 // --temp generates a one-time password, writes it to NEW-ACCOUNT-<user>.txt in
@@ -54,6 +55,29 @@ function tempPassword(): string {
 function ask(prompt: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => rl.question(prompt, (a) => (rl.close(), resolve(a))));
+}
+
+/** Writes the hand-off file and tells the operator what to do with it. */
+function writeHandoff(user: string, password: string) {
+  const file = `NEW-ACCOUNT-${user}.txt`;
+  writeFileSync(
+    file,
+    [
+      `Humana Finance — вход`,
+      ``,
+      `Логин:            ${user}`,
+      `Временный пароль: ${password}`,
+      ``,
+      `При первом входе приложение попросит задать собственный пароль.`,
+      `После этого временный перестанет работать.`,
+      ``,
+      `Удалите этот файл, когда передадите данные.`,
+      ``,
+    ].join("\n"),
+    "utf8"
+  );
+  console.log(`  temporary password written to ${file} — hand it over, then delete the file`);
+  console.log("  the app will force a password change on first login");
 }
 
 async function list() {
@@ -128,27 +152,29 @@ async function add() {
   });
   console.log(`✓ created "${username}" (${roleArg}) on ${target}`);
 
-  if (useTemp) {
-    const file = `NEW-ACCOUNT-${username}.txt`;
-    writeFileSync(
-      file,
-      [
-        `Humana Finance — новый вход`,
-        ``,
-        `Логин:            ${username}`,
-        `Временный пароль: ${password}`,
-        ``,
-        `При первом входе приложение попросит задать собственный пароль.`,
-        `После этого временный перестанет работать.`,
-        ``,
-        `Удалите этот файл, когда передадите данные.`,
-        ``,
-      ].join("\n"),
-      "utf8"
-    );
-    console.log(`  temporary password written to ${file} — hand it over, then delete the file`);
-    console.log("  the app will force a password change on first login");
+  if (useTemp) writeHandoff(username, password);
+}
+
+/** Forgotten password: issue a fresh one-time password and force a change. */
+async function reset() {
+  if (!username) {
+    console.error("usage: npx tsx prisma/users.ts reset <username> [--production]");
+    process.exitCode = 1;
+    return;
   }
+  const user = await prisma.user.findUnique({ where: { username } });
+  if (!user) {
+    console.error(`no user "${username}" on ${target}`);
+    process.exitCode = 1;
+    return;
+  }
+  const password = tempPassword();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash: hashPassword(password), mustChangePassword: true },
+  });
+  console.log(`✓ reset "${username}" (${user.role}) on ${target}`);
+  writeHandoff(username, password);
 }
 
 async function remove() {
@@ -181,8 +207,9 @@ async function remove() {
 async function main() {
   if (command === "list") return list();
   if (command === "add") return add();
+  if (command === "reset") return reset();
   if (command === "remove") return remove();
-  console.error("usage: npx tsx prisma/users.ts <list|add|remove> [...] [--production]");
+  console.error("usage: npx tsx prisma/users.ts <list|add|reset|remove> [...] [--production]");
   process.exitCode = 1;
 }
 

@@ -23,6 +23,7 @@ export default function ChangePasswordView({
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [repeat, setRepeat] = useState("");
+  const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,11 +35,13 @@ export default function ChangePasswordView({
 
   async function submit() {
     setError(null);
+    const currentPassword = current.trim();
+    const newPassword = next.trim();
     if (next !== repeat) {
       setError(ru ? "Пароли не совпадают" : "Passwords do not match");
       return;
     }
-    if (next.length < MIN_LENGTH) {
+    if (newPassword.length < MIN_LENGTH) {
       setError(
         ru ? `Минимум ${MIN_LENGTH} символов` : `At least ${MIN_LENGTH} characters`
       );
@@ -48,7 +51,7 @@ export default function ChangePasswordView({
     const res = await fetch("/api/auth/change-password", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      body: JSON.stringify({ currentPassword, newPassword }),
     });
     setBusy(false);
     if (!res.ok) {
@@ -92,7 +95,7 @@ export default function ChangePasswordView({
                 ? "Текущий пароль"
                 : "Current password"}
             <Input
-              type="password"
+              type={show ? "text" : "password"}
               value={current}
               autoComplete="current-password"
               onChange={(e) => setCurrent(e.target.value)}
@@ -101,7 +104,7 @@ export default function ChangePasswordView({
           <label className="flex flex-col gap-1 text-[12px] text-muted">
             {ru ? "Новый пароль" : "New password"}
             <Input
-              type="password"
+              type={show ? "text" : "password"}
               value={next}
               autoComplete="new-password"
               onChange={(e) => setNext(e.target.value)}
@@ -110,17 +113,26 @@ export default function ChangePasswordView({
           <label className="flex flex-col gap-1 text-[12px] text-muted">
             {ru ? "Повторите новый пароль" : "Repeat new password"}
             <Input
-              type="password"
+              type={show ? "text" : "password"}
               value={repeat}
               autoComplete="new-password"
               onKeyDown={(e) => e.key === "Enter" && submit()}
               onChange={(e) => setRepeat(e.target.value)}
             />
           </label>
+          <label className="flex items-center gap-1.5 text-[12px] text-muted">
+            <input
+              type="checkbox"
+              checked={show}
+              onChange={(e) => setShow(e.target.checked)}
+              className="accent-accent"
+            />
+            {ru ? "Показать пароли" : "Show passwords"}
+          </label>
           <p className="text-[11.5px] text-muted">
             {ru
-              ? `Минимум ${MIN_LENGTH} символов. Не используйте пароль от других сервисов.`
-              : `At least ${MIN_LENGTH} characters. Don't reuse a password from another service.`}
+              ? `Минимум ${MIN_LENGTH} символов. Проверьте раскладку клавиатуры и Caps Lock — пароль запомнится ровно таким, каким вы его ввели.`
+              : `At least ${MIN_LENGTH} characters. Check your keyboard layout and Caps Lock — the password is stored exactly as typed.`}
           </p>
           {error && <p className="text-[12.5px] text-danger">{error}</p>}
         </div>
