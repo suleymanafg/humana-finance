@@ -3,6 +3,7 @@
 // Password change. Rendered stand-alone (outside the app shell) when forced,
 // because a session with a temporary password cannot reach any other page.
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, Input } from "./ui";
 import { useT } from "@/lib/locale-context";
@@ -24,6 +25,12 @@ export default function ChangePasswordView({
   const [repeat, setRepeat] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
 
   async function submit() {
     setError(null);
@@ -79,8 +86,8 @@ export default function ChangePasswordView({
           <label className="flex flex-col gap-1 text-[12px] text-muted">
             {forced
               ? ru
-                ? "Временный пароль"
-                : "Temporary password"
+                ? "Временный пароль — тот же, которым вы только что вошли"
+                : "Temporary password — the same one you just signed in with"
               : ru
                 ? "Текущий пароль"
                 : "Current password"}
@@ -117,7 +124,19 @@ export default function ChangePasswordView({
           </p>
           {error && <p className="text-[12.5px] text-danger">{error}</p>}
         </div>
-        <div className="flex justify-end border-t border-border px-4 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+          {forced ? (
+            <button
+              onClick={signOut}
+              className="text-[12.5px] text-muted transition-colors hover:text-danger"
+            >
+              {ru ? "Выйти" : "Sign out"}
+            </button>
+          ) : (
+            <Link href="/" className="text-[12.5px] text-muted transition-colors hover:text-accent">
+              ← {ru ? "Назад в приложение" : "Back to the app"}
+            </Link>
+          )}
           <Button onClick={submit} disabled={busy || !current || !next || !repeat}>
             {busy ? (ru ? "Сохранение…" : "Saving…") : ru ? "Сохранить пароль" : "Save password"}
           </Button>
