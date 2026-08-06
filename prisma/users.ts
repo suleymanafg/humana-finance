@@ -6,6 +6,11 @@ import "dotenv/config";
 //   npx tsx prisma/users.ts add <username> <ADMIN|STAFF|VIEWER> [--production]
 //   npx tsx prisma/users.ts remove <username> [--production]
 //
+// --temp generates a one-time password, writes it to NEW-ACCOUNT-<user>.txt in
+// the project root (gitignored) and flags the account so the app forces a
+// change on first login. Hand the file's contents to the person, then delete
+// it; the temporary password stops working the moment they choose their own.
+//
 // --production targets the live site via the commented `# DATABASE_URL_PRODUCTION=`
 // line in .env. Without it the target is whatever DATABASE_URL points at (the
 // dev branch), so an account created for the live site would silently go to a
@@ -13,7 +18,8 @@ import "dotenv/config";
 //
 // The password is read from stdin, never from argv — arguments show up in shell
 // history and process listings.
-import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { newPrismaClient } from "../src/lib/prisma-factory";
 import { ROLES, hashPassword, type Role } from "../src/lib/auth-crypto";
@@ -35,6 +41,16 @@ function productionUrl(): string {
 const prisma = newPrismaClient(useProduction ? productionUrl() : undefined);
 const target = useProduction ? "PRODUCTION (the live site)" : "the dev branch";
 
+/** Readable one-time password — grouped so it can be dictated over the phone. */
+function tempPassword(): string {
+  const alphabet = "abcdefghijkmnpqrstuvwxyz23456789"; // no l/o/0/1 lookalikes
+  const bytes = randomBytes(16);
+  const chars = [...bytes].map((b) => alphabet[b % alphabet.length]);
+  return [chars.slice(0, 5), chars.slice(5, 10), chars.slice(10, 15)]
+    .map((g) => g.join(""))
+    .join("-");
+}
+
 function ask(prompt: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => rl.question(prompt, (a) => (rl.close(), resolve(a))));
@@ -44,7 +60,8 @@ async function list() {
   const users = await prisma.user.findMany({ orderBy: { username: "asc" } });
   console.log(`Accounts on ${target}:`);
   for (const u of users) {
-    console.log(`  ${u.username.padEnd(20)} ${u.role}`);
+    const pending = u.mustChangePassword ? "  (temporary password — change pending)" : "";
+    console.log(`  ${u.username.padEnd(20)} ${u.role.padEnd(7)}${pending}`);
   }
   if (users.length === 0) console.log("  (none)");
 }
@@ -83,22 +100,55 @@ async function add() {
     );
   }
 
-  const password = (process.env.NEW_PASSWORD ?? (await ask(`Password for ${username}: `))).trim();
-  if (password.length < 12) {
-    console.error(`Too short (${password.length} chars). Use at least 12.`);
-    process.exitCode = 1;
-    return;
-  }
-  if (/^(admin|viewer|password|humana)\d*$/i.test(password)) {
-    console.error("That is a guessable password. Pick something else.");
-    process.exitCode = 1;
-    return;
+  const useTemp = process.argv.includes("--temp");
+  let password: string;
+  if (useTemp) {
+    password = tempPassword();
+  } else {
+    password = (process.env.NEW_PASSWORD ?? (await ask(`Password for ${username}: `))).trim();
+    if (password.length < 12) {
+      console.error(`Too short (${password.length} chars). Use at least 12.`);
+      process.exitCode = 1;
+      return;
+    }
+    if (/^(admin|viewer|password|humana)\d*$/i.test(password)) {
+      console.error("That is a guessable password. Pick something else.");
+      process.exitCode = 1;
+      return;
+    }
   }
 
   await prisma.user.create({
-    data: { username, role: roleArg as Role, passwordHash: hashPassword(password) },
+    data: {
+      username,
+      role: roleArg as Role,
+      passwordHash: hashPassword(password),
+      mustChangePassword: useTemp,
+    },
   });
   console.log(`✓ created "${username}" (${roleArg}) on ${target}`);
+
+  if (useTemp) {
+    const file = `NEW-ACCOUNT-${username}.txt`;
+    writeFileSync(
+      file,
+      [
+        `Humana Finance — новый вход`,
+        ``,
+        `Логин:            ${username}`,
+        `Временный пароль: ${password}`,
+        ``,
+        `При первом входе приложение попросит задать собственный пароль.`,
+        `После этого временный перестанет работать.`,
+        ``,
+        `Удалите этот файл, когда передадите данные.`,
+        ``,
+      ].join("\n"),
+      "utf8"
+    );
+    console.log(`  temporary password written to ${file} — hand it over, then delete the file`);
+    console.log("  the app will force a password change on first login");
+  }
 }
 
 async function remove() {

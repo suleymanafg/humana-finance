@@ -28,7 +28,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // the public fill page is stand-alone: it must never render inside the app
   // shell, including when the owner opens their own link while logged in
   const pathname = (await headers()).get("x-pathname") ?? "";
-  const standalone = pathname.startsWith("/f/");
+  // the forced password-change screen must render bare too — that session
+  // cannot load the shell's data anyway
+  const standalone = pathname.startsWith("/f/") || pathname.startsWith("/change-password");
 
   let shellData: {
     months: Array<{ id: string; nameRu: string; nameEn: string }>;

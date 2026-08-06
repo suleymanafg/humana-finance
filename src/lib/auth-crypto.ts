@@ -28,6 +28,8 @@ export type Role = (typeof ROLES)[number];
 export interface SessionData {
   username: string;
   role: Role;
+  /** account was created with a temporary password; the app forces a change */
+  mustChange?: boolean;
   exp: number; // unix seconds
 }
 
@@ -35,8 +37,18 @@ function sign(payload: string): string {
   return createHmac("sha256", SECRET).update(payload).digest("base64url");
 }
 
-export function createSessionToken(username: string, role: Role, ttlHours = 24 * 14): string {
-  const data: SessionData = { username, role, exp: Math.floor(Date.now() / 1000) + ttlHours * 3600 };
+export function createSessionToken(
+  username: string,
+  role: Role,
+  opts: { mustChange?: boolean; ttlHours?: number } = {}
+): string {
+  const { mustChange, ttlHours = 24 * 14 } = opts;
+  const data: SessionData = {
+    username,
+    role,
+    ...(mustChange ? { mustChange: true } : {}),
+    exp: Math.floor(Date.now() / 1000) + ttlHours * 3600,
+  };
   const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
   return `${payload}.${sign(payload)}`;
 }

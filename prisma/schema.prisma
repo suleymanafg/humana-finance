@@ -277,10 +277,13 @@ model ArEntry {
 // ───────────────────────── Auth & audit ─────────────────────────
 
 model User {
-  id           String @id @default(cuid())
-  username     String @unique
-  passwordHash String // scrypt: salt:hex
-  role         String // "ADMIN" | "VIEWER"
+  id                 String  @id @default(cuid())
+  username           String  @unique
+  passwordHash       String // scrypt: salt:hex
+  role               String // "ADMIN" | "STAFF" | "VIEWER"
+  /// set when an account is created with a temporary password; the app forces
+  /// a change on first login and clears it
+  mustChangePassword Boolean @default(false)
 }
 
 model AuditLog {

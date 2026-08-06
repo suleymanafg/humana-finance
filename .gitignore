@@ -55,3 +55,6 @@ PRODUCTION-SECRETS.txt
 
 .vercel
 .env*
+
+# generated account hand-off files, never commit
+NEW-ACCOUNT-*.txt

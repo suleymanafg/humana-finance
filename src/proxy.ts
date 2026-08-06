@@ -35,6 +35,24 @@ export function proxy(request: NextRequest) {
     url.search = "";
     return NextResponse.redirect(url);
   }
+  // a temporary password unlocks nothing but the change-password screen
+  if (session.mustChange) {
+    const allowed =
+      pathname === "/change-password" ||
+      pathname === "/api/auth/change-password" ||
+      pathname === "/api/auth/logout";
+    if (!allowed) {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json({ error: "password_change_required" }, { status: 403 });
+      }
+      const url = request.nextUrl.clone();
+      url.pathname = "/change-password";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+    return withPath();
+  }
+
   // admin-only sections: staff and viewers are bounced to the dashboard rather
   // than shown a page they cannot use
   if (!canAccessPath(session.role, pathname)) {

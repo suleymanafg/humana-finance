@@ -13,8 +13,14 @@ export async function POST(request: NextRequest) {
   if (!user || !verifyPassword(password, user.passwordHash)) {
     return NextResponse.json({ error: "invalid" }, { status: 401 });
   }
-  const token = createSessionToken(user.username, user.role as Role);
-  const res = NextResponse.json({ ok: true, role: user.role });
+  const token = createSessionToken(user.username, user.role as Role, {
+    mustChange: user.mustChangePassword,
+  });
+  const res = NextResponse.json({
+    ok: true,
+    role: user.role,
+    mustChange: user.mustChangePassword,
+  });
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
