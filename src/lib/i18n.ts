@@ -52,10 +52,6 @@ export const dict = {
   cash: { ru: "Наличные", en: "Cash" },
   allMonths: { ru: "Все месяцы", en: "All months" },
   viewerReadOnly: { ru: "Режим просмотра — редактирование недоступно", en: "Viewer mode — editing disabled" },
-  staffScope: {
-    ru: "Режим сотрудника — можно заполнять данные; справочники и настройки меняет администратор",
-    en: "Staff mode — you can fill in data; categories and settings are changed by an administrator",
-  },
   error: { ru: "Ошибка", en: "Error" },
   company: { ru: "Компания", en: "Company" },
   group: { ru: "Группа P&L", en: "P&L group" },

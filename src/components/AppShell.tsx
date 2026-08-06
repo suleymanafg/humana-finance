@@ -179,16 +179,18 @@ export default function AppShell({
         <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-border bg-surface/95 px-6 backdrop-blur">
           <MonthSwitcher months={months} status={status} fallbackMonth={fallbackMonth} />
           <div className="flex items-center gap-5">
-            <Link
-              href="/health"
-              title={t("navHealth")}
-              className="relative p-1.5 text-muted transition-colors hover:text-accent"
-            >
-              <IconBell size={19} />
-              {healthWarnings > 0 && (
-                <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border-2 border-surface bg-danger" />
-              )}
-            </Link>
+            {role === "ADMIN" && (
+              <Link
+                href="/health"
+                title={t("navHealth")}
+                className="relative p-1.5 text-muted transition-colors hover:text-accent"
+              >
+                <IconBell size={19} />
+                {healthWarnings > 0 && (
+                  <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border-2 border-surface bg-danger" />
+                )}
+              </Link>
+            )}
             <div className="border-l border-border pl-5 text-right leading-tight">
               <div className="text-[13px]">
                 {greeting}, {username}
@@ -197,12 +199,6 @@ export default function AppShell({
             </div>
           </div>
         </header>
-
-        {role === "STAFF" && (
-          <div className="border-b border-accent/15 bg-accent-soft px-6 py-2 text-[12.5px] text-accent">
-            {t("staffScope")}
-          </div>
-        )}
         {role === "VIEWER" && (
           <div className="mx-6 mt-4 rounded border border-accent/15 bg-accent-soft-bg px-3.5 py-2 text-[13px] text-accent">
             {t("viewerReadOnly")}
