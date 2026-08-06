@@ -10,8 +10,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getSession } from "@/lib/auth";
 import { getComputed } from "@/lib/data";
-import { AI_TOOLS, TOOL_LABELS, runAiTool } from "@/lib/ai/tools";
-import { SYSTEM_PROMPT } from "@/lib/ai/prompt";
+import {
+  AI_TOOLS,
+  AI_WRITE_TOOLS,
+  TOOL_LABELS,
+  WRITE_TOOL_NAMES,
+  runAiTool,
+  runAiWriteTool,
+} from "@/lib/ai/tools";
+import { ADMIN_WRITE_RULES, SYSTEM_PROMPT, VIEWER_RULES } from "@/lib/ai/prompt";
 
 // The tool loop can take a while on a hard question; Vercel fluid compute
 // allows up to 300s on this plan.
@@ -42,6 +49,11 @@ export async function POST(request: NextRequest) {
 
   const client = new Anthropic();
   const ctx = await getComputed();
+  // Write tools exist only for ADMIN sessions — a viewer's model never even
+  // sees them, and the executor below re-checks the role as defense in depth.
+  const isAdmin = session.role === "ADMIN";
+  const tools = isAdmin ? [...AI_TOOLS, ...AI_WRITE_TOOLS] : AI_TOOLS;
+  const system = SYSTEM_PROMPT + (isAdmin ? ADMIN_WRITE_RULES : VIEWER_RULES);
 
   const messages: Anthropic.Beta.BetaMessageParam[] = history.map((m) => ({
     role: m.role,
@@ -60,8 +72,8 @@ export async function POST(request: NextRequest) {
             stream: true,
             model: MODEL,
             max_tokens: 16000,
-            system: SYSTEM_PROMPT,
-            tools: AI_TOOLS as unknown as Anthropic.Beta.BetaTool[],
+            system,
+            tools: tools as unknown as Anthropic.Beta.BetaTool[],
             messages,
             betas: ["server-side-fallback-2026-07-01"],
           };
@@ -100,7 +112,14 @@ export async function POST(request: NextRequest) {
             send({ t: "tool", label: TOOL_LABELS[block.name]?.[lang] ?? block.name });
             let result: unknown;
             try {
-              result = await runAiTool(ctx, block.name, (block.input ?? {}) as Record<string, unknown>);
+              const toolInput = (block.input ?? {}) as Record<string, unknown>;
+              if (WRITE_TOOL_NAMES.has(block.name)) {
+                result = isAdmin
+                  ? await runAiWriteTool(block.name, toolInput, session.username)
+                  : { error: "запись доступна только администратору" };
+              } else {
+                result = await runAiTool(ctx, block.name, toolInput);
+              }
             } catch (e) {
               result = { error: e instanceof Error ? e.message : "tool failed" };
             }

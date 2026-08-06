@@ -204,7 +204,7 @@ export default function AppShell({
         )}
         <div className="mx-auto w-full max-w-[1440px] flex-1 px-6 py-8">{children}</div>
       </main>
-      <ChatWidget configured={aiConfigured} />
+      <ChatWidget configured={aiConfigured} canWrite={role === "ADMIN"} />
     </div>
   );
 }

@@ -14,7 +14,7 @@ import { useT } from "@/lib/locale-context";
 
 type Mode = "closed" | "open" | "min";
 
-export default function ChatWidget({ configured }: { configured: boolean }) {
+export default function ChatWidget({ configured, canWrite }: { configured: boolean; canWrite: boolean }) {
   const { locale, t } = useT();
   const ru = locale === "ru";
   const [mode, setMode] = useState<Mode>("closed");
@@ -34,7 +34,13 @@ export default function ChatWidget({ configured }: { configured: boolean }) {
             <div className="min-w-0 flex-1 leading-tight">
               <div className="text-[13.5px] font-semibold">{t("navChat")}</div>
               <div className="text-[10.5px] text-sidebar-fg/70">
-                {ru ? "Только чтение — ничего не меняет" : "Read-only — changes nothing"}
+                {canWrite
+                  ? ru
+                    ? "Читает данные; записывает только по вашей команде"
+                    : "Reads data; writes only on your instruction"
+                  : ru
+                    ? "Только чтение"
+                    : "Read-only"}
               </div>
             </div>
             <button

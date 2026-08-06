@@ -1,8 +1,11 @@
-// Read-only tool surface for the AI analyst. Every tool answers from the same
-// engine the pages render, so the assistant can never disagree with the app.
-// No tool writes anything — that is the entire safety model of this feature.
+// Tool surface for the AI analyst. Read tools answer from the same engine the
+// pages render, so the assistant can never disagree with the app. Write tools
+// (further down) are ADMIN-only, reuse the data-request integrators, and are
+// mirrored into AuditLog.
 import type Anthropic from "@anthropic-ai/sdk";
 import { getComputed } from "@/lib/data";
+import { prisma } from "@/lib/db";
+import { REQUEST_KINDS } from "@/lib/requests/kinds";
 
 export type AiContext = Awaited<ReturnType<typeof getComputed>>;
 
@@ -21,6 +24,12 @@ export const TOOL_LABELS: Record<string, { ru: string; en: string }> = {
   health_checks: { ru: "Запускаю проверки данных", en: "Running data checks" },
   sales_query: { ru: "Ищу в продажах", en: "Querying sales" },
   quarter_tax_audit: { ru: "Сверяю налоги TI по кварталам", en: "Auditing TI quarterly taxes" },
+  set_opex: { ru: "✏ Записываю OPEX", en: "✏ Writing OPEX" },
+  set_stock: { ru: "✏ Записываю остатки", en: "✏ Writing stock" },
+  set_ar: { ru: "✏ Записываю дебиторку", en: "✏ Writing AR" },
+  set_month_balance: { ru: "✏ Записываю балансовый ввод", en: "✏ Writing balance input" },
+  add_contribution: { ru: "✏ Добавляю вклад капитала", en: "✏ Adding contribution" },
+  add_transfer: { ru: "✏ Добавляю платёж Fargo→TI", en: "✏ Adding transfer" },
 };
 
 export const AI_TOOLS: Anthropic.Messages.Tool[] = [
@@ -346,5 +355,360 @@ export async function runAiTool(
 
     default:
       return { error: `неизвестный инструмент ${name}` };
+  }
+}
+
+// ─── Write tools (ADMIN only) ───────────────────────────────────────
+// Included in the model's tool list only for ADMIN sessions, and the route
+// re-checks the role before executing — a viewer can never reach these.
+// OPEX / stock / AR writes reuse the data-request integrators, so chat writes
+// behave byte-for-byte like an accepted «Запрос данных». Every write is
+// mirrored into AuditLog.
+
+export const WRITE_TOOL_NAMES = new Set([
+  "set_opex",
+  "set_stock",
+  "set_ar",
+  "set_month_balance",
+  "add_contribution",
+  "add_transfer",
+]);
+
+export const AI_WRITE_TOOLS: Anthropic.Messages.Tool[] = [
+  {
+    name: "set_opex",
+    description:
+      "ЗАМЕНЯЕТ сумму OPEX-категории за месяц (не добавляет к существующей). Для TI можно задать банк и/или наличные — незаданная часть сохраняется. Возвращает прежнее значение, чтобы сообщить пользователю, что именно заменено.",
+    input_schema: {
+      type: "object",
+      properties: {
+        company: { type: "string", enum: ["TI", "FARGO"] },
+        month: { type: "string", description: "YYYY-MM" },
+        category: { type: "string", description: "название категории, как в приложении" },
+        bank: { type: "number", description: "TI: сумма по банку" },
+        cash: { type: "number", description: "TI: сумма наличными" },
+        amount: { type: "number", description: "FARGO: сумма" },
+      },
+      required: ["company", "month", "category"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_stock",
+    description: "Устанавливает остаток товара на конец месяца (штук) на складе.",
+    input_schema: {
+      type: "object",
+      properties: {
+        month: { type: "string", description: "YYYY-MM" },
+        product: { type: "string", description: "название товара (можно часть)" },
+        qty: { type: "number" },
+        warehouse: { type: "string", description: "название склада; по умолчанию основной" },
+      },
+      required: ["month", "product", "qty"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_ar",
+    description:
+      "Устанавливает дебиторку клиента на конец месяца (заменяет прежнюю сумму этого клиента за этот месяц).",
+    input_schema: {
+      type: "object",
+      properties: {
+        month: { type: "string", description: "YYYY-MM" },
+        customer: { type: "string", description: "имя клиента" },
+        amount: { type: "number" },
+      },
+      required: ["month", "customer", "amount"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_month_balance",
+    description:
+      "Устанавливает один из ручных балансовых вводов месяца: tiBank (счёт TI в банке), goodsInTransit (товары в пути), vatPrepayment (предоплата НДС), priorVatBalance (сальдо НДС, обязательство), nutribenLoan (займ Nutriben).",
+    input_schema: {
+      type: "object",
+      properties: {
+        month: { type: "string", description: "YYYY-MM" },
+        field: {
+          type: "string",
+          enum: ["tiBank", "goodsInTransit", "vatPrepayment", "priorVatBalance", "nutribenLoan"],
+        },
+        value: { type: "number" },
+      },
+      required: ["month", "field", "value"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "add_contribution",
+    description:
+      "Добавляет вклад капитала (дата + сумма TI и/или Fargo). Это добавление новой записи, не замена.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD" },
+        tiAmount: { type: "number" },
+        fargoAmount: { type: "number" },
+        note: { type: "string" },
+      },
+      required: ["date"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "add_transfer",
+    description:
+      "Добавляет платёж Fargo → TI (дата + наличные и/или банк). Это добавление новой записи, не замена.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD" },
+        cashAmount: { type: "number" },
+        bankAmount: { type: "number" },
+        note: { type: "string" },
+      },
+      required: ["date"],
+      additionalProperties: false,
+    },
+  },
+];
+
+const num = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+function resolveOne<T extends { id: string }>(
+  kind: string,
+  query: string,
+  rows: T[],
+  nameOf: (row: T) => string
+): { row?: T; error?: string } {
+  const q = query.trim().toLowerCase();
+  const exact = rows.filter((r) => nameOf(r).toLowerCase() === q);
+  if (exact.length === 1) return { row: exact[0] };
+  const partial = rows.filter((r) => nameOf(r).toLowerCase().includes(q));
+  if (partial.length === 1) return { row: partial[0] };
+  if (partial.length === 0) {
+    return { error: `${kind} «${query}» не найдено. Есть: ${rows.map(nameOf).join(", ")}` };
+  }
+  return {
+    error: `${kind} «${query}» неоднозначно: ${partial.map(nameOf).join(" | ")}. Уточните.`,
+  };
+}
+
+async function assertMonth(month: unknown): Promise<string | null> {
+  if (typeof month !== "string") return "не указан месяц";
+  const exists = await prisma.month.findUnique({ where: { id: month } });
+  return exists ? null : `месяца ${month} нет в справочнике`;
+}
+
+export async function runAiWriteTool(
+  name: string,
+  input: Record<string, unknown>,
+  username: string
+): Promise<unknown> {
+  const audit = (data: unknown) =>
+    prisma.auditLog.create({
+      data: {
+        entity: `chat:${name}`,
+        entityId: "",
+        action: "AI_WRITE",
+        data: JSON.stringify(data),
+        username,
+      },
+    });
+
+  switch (name) {
+    case "set_opex": {
+      const monthError = await assertMonth(input.month);
+      if (monthError) return { error: monthError };
+      const company = input.company === "FARGO" ? "FARGO" : "TI";
+      const cats = await prisma.opexCategory.findMany({ where: { company, active: true } });
+      const found = resolveOne("категория", String(input.category ?? ""), cats, (c) => c.name);
+      if (!found.row) return { error: found.error };
+      const month = input.month as string;
+
+      if (company === "TI") {
+        const bank = num(input.bank);
+        const cash = num(input.cash);
+        if (bank === null && cash === null) return { error: "укажите bank и/или cash" };
+        const before = await prisma.opexTiEntry.findMany({
+          where: { monthId: month, categoryId: found.row.id, deletedAt: null },
+        });
+        const prev = {
+          bank: before.reduce((s, e) => s + e.bankAmount, 0),
+          cash: before.reduce((s, e) => s + e.cashAmount, 0),
+        };
+        for (const [field, value] of [
+          ["bankAmount", bank],
+          ["cashAmount", cash],
+        ] as const) {
+          if (value === null) continue;
+          await REQUEST_KINDS.OPEX_TI.integrate(month, {
+            refId: found.row.id,
+            refId2: null,
+            field,
+            freeLabel: null,
+            value,
+          });
+        }
+        const written = {
+          month,
+          category: found.row.name,
+          bank: bank ?? prev.bank,
+          cash: cash ?? prev.cash,
+        };
+        await audit({ ...written, previous: prev });
+        return { ok: true, written, previous: prev };
+      }
+
+      const amount = num(input.amount);
+      if (amount === null) return { error: "укажите amount" };
+      const before = await prisma.opexFargoEntry.findMany({
+        where: { monthId: month, categoryId: found.row.id, deletedAt: null },
+      });
+      const prev = before.reduce((s, e) => s + e.amount, 0);
+      await REQUEST_KINDS.OPEX_FARGO.integrate(month, {
+        refId: found.row.id,
+        refId2: null,
+        field: "amount",
+        freeLabel: null,
+        value: amount,
+      });
+      const written = { month, category: found.row.name, amount };
+      await audit({ ...written, previous: prev });
+      return { ok: true, written, previous: prev };
+    }
+
+    case "set_stock": {
+      const monthError = await assertMonth(input.month);
+      if (monthError) return { error: monthError };
+      const qty = num(input.qty);
+      if (qty === null) return { error: "укажите qty" };
+      const products = await prisma.product.findMany({ where: { active: true, isPromo: false } });
+      const product = resolveOne("товар", String(input.product ?? ""), products, (p) => p.nameRu);
+      if (!product.row) return { error: product.error };
+      const warehouses = await prisma.warehouse.findMany({
+        where: { active: true },
+        orderBy: { sortOrder: "asc" },
+      });
+      let warehouse = warehouses[0];
+      if (typeof input.warehouse === "string" && input.warehouse.trim()) {
+        const w = resolveOne("склад", input.warehouse, warehouses, (x) => x.name);
+        if (!w.row) return { error: w.error };
+        warehouse = w.row;
+      }
+      const prev = await prisma.stockCount.findUnique({
+        where: {
+          monthId_productId_warehouseId: {
+            monthId: input.month as string,
+            productId: product.row.id,
+            warehouseId: warehouse.id,
+          },
+        },
+      });
+      await REQUEST_KINDS.STOCK.integrate(input.month as string, {
+        refId: product.row.id,
+        refId2: warehouse.id,
+        field: "qty",
+        freeLabel: null,
+        value: qty,
+      });
+      const written = {
+        month: input.month,
+        product: product.row.nameRu,
+        warehouse: warehouse.name,
+        qty,
+      };
+      await audit({ ...written, previous: prev?.qty ?? 0 });
+      return { ok: true, written, previous: prev?.qty ?? 0 };
+    }
+
+    case "set_ar": {
+      const monthError = await assertMonth(input.month);
+      if (monthError) return { error: monthError };
+      const amount = num(input.amount);
+      if (amount === null) return { error: "укажите amount" };
+      const customer = String(input.customer ?? "").trim();
+      if (!customer) return { error: "укажите customer" };
+      const prev = await prisma.arEntry.findFirst({
+        where: { monthId: input.month as string, customerName: customer, deletedAt: null },
+      });
+      await REQUEST_KINDS.AR.integrate(input.month as string, {
+        refId: null,
+        refId2: null,
+        field: "amount",
+        freeLabel: customer,
+        value: amount,
+      });
+      const written = { month: input.month, customer, amount };
+      await audit({ ...written, previous: prev?.amount ?? null });
+      return { ok: true, written, previous: prev?.amount ?? null };
+    }
+
+    case "set_month_balance": {
+      const monthError = await assertMonth(input.month);
+      if (monthError) return { error: monthError };
+      const value = num(input.value);
+      if (value === null) return { error: "укажите value" };
+      const FIELDS = [
+        "tiBank",
+        "goodsInTransit",
+        "vatPrepayment",
+        "priorVatBalance",
+        "nutribenLoan",
+      ] as const;
+      const field = FIELDS.find((f) => f === input.field);
+      if (!field) return { error: `field должен быть одним из: ${FIELDS.join(", ")}` };
+      const month = input.month as string;
+      const prev = await prisma.monthBalance.findUnique({ where: { monthId: month } });
+      await prisma.monthBalance.upsert({
+        where: { monthId: month },
+        create: {
+          monthId: month,
+          tiBank: 0,
+          goodsInTransit: 0,
+          vatPrepayment: 0,
+          priorVatBalance: 0,
+          nutribenLoan: 0,
+          [field]: value,
+        },
+        update: { [field]: value },
+      });
+      const written = { month, field, value };
+      await audit({ ...written, previous: prev?.[field] ?? 0 });
+      return { ok: true, written, previous: prev?.[field] ?? 0 };
+    }
+
+    case "add_contribution":
+    case "add_transfer": {
+      const date = new Date(String(input.date ?? ""));
+      if (Number.isNaN(date.getTime())) return { error: "укажите дату YYYY-MM-DD" };
+      const note = typeof input.note === "string" ? input.note : null;
+      if (name === "add_contribution") {
+        const ti = num(input.tiAmount) ?? 0;
+        const fargo = num(input.fargoAmount) ?? 0;
+        if (ti === 0 && fargo === 0) return { error: "укажите tiAmount и/или fargoAmount" };
+        await prisma.capitalContribution.create({
+          data: { date, tiAmount: ti, fargoAmount: fargo, notes: note },
+        });
+        const written = { date: date.toISOString().slice(0, 10), tiAmount: ti, fargoAmount: fargo };
+        await audit(written);
+        return { ok: true, written };
+      }
+      const cash = num(input.cashAmount) ?? 0;
+      const bank = num(input.bankAmount) ?? 0;
+      if (cash === 0 && bank === 0) return { error: "укажите cashAmount и/или bankAmount" };
+      await prisma.fargoTransfer.create({
+        data: { date, cashAmount: cash, bankAmount: bank, notes: note },
+      });
+      const written = { date: date.toISOString().slice(0, 10), cashAmount: cash, bankAmount: bank };
+      await audit(written);
+      return { ok: true, written };
+    }
+
+    default:
+      return { error: `неизвестный инструмент записи ${name}` };
   }
 }
