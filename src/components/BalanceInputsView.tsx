@@ -169,7 +169,10 @@ export default function BalanceInputsView({
         </span>
       </div>
 
+      {/* key={monthId}: drafts are seeded from props in useState initializers,
+          so each month must get a fresh mount or stale figures linger */}
       <StockStep
+        key={`stock-${monthId}`}
         monthId={monthId}
         warehouses={warehouses}
         stock={stock}
@@ -181,6 +184,7 @@ export default function BalanceInputsView({
       />
 
       <ArStep
+        key={`ar-${monthId}`}
         monthId={monthId}
         rows={arEntries}
         priorRows={priorAr}
@@ -190,6 +194,7 @@ export default function BalanceInputsView({
       />
 
       <MonthInputsStep
+        key={`mb-${monthId}`}
         monthId={monthId}
         balance={monthBalance}
         priorBalance={priorBalance}

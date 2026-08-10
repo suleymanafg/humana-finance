@@ -715,7 +715,10 @@ export default function OpexView({
       </Collapsible>
 
       {showFill && (
+        // key={monthId}: the panel seeds its fields from the month it opened
+        // on — remount on month change so it can never save into another month
         <FillMonthPanel
+          key={monthId}
           variant={variant}
           monthId={monthId}
           monthLabel={monthLabel(monthId)}

@@ -69,6 +69,11 @@ function FargoCell({
   onSaved: () => void;
 }) {
   const [text, setText] = useState(value == null ? "" : fmtN(value));
+  const [last, setLast] = useState(value);
+  if (last !== value) {
+    setLast(value);
+    setText(value == null ? "" : fmtN(value));
+  }
   if (readOnly) {
     return value == null ? (
       <Badge tone="warn">—</Badge>
