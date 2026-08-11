@@ -357,6 +357,43 @@ export default function BalanceView({
         </Card>
       )}
 
+      {settlement && (
+        <Card className="mt-4 overflow-hidden">
+          <CardHeader
+            title={`${t("fargoSettlement")} — ${monthName(monthId)}`}
+            desc={t("cumulativeTotal")}
+          />
+          <div className="py-2">
+            <StatementLine
+              label={`${t("revenue")} (${ru ? "собрано Fargo" : "collected by Fargo"})`}
+              value={settlement.cumRevenue}
+            />
+            <StatementLine label={`− ${t("opexFargoTotal")}`} value={-settlement.cumFargoOpex} />
+            <StatementLine label={`− ${t("retroBonus")}`} value={-settlement.cumRetro} />
+            <StatementLine label={`− ${t("fargoVat")}`} value={-settlement.cumFargoVat} />
+            <StatementLine label={`− ${t("fargoIncomeTax")}`} value={-settlement.cumFargoIncomeTax} />
+            <div className="mx-4 mt-1 border-t border-border" />
+            <StatementLine label={t("dueToTi")} value={settlement.dueToTi} strong />
+            <StatementLine label={t("paidCash")} value={settlement.cumTransfersCash} />
+            <StatementLine label={t("paidBank")} value={settlement.cumTransfersBank} />
+            <div className="mx-4 mt-1 border-t border-border" />
+            <StatementLine
+              label={t("totalTransferred")}
+              value={settlement.cumTransfersCash + settlement.cumTransfersBank}
+              strong
+            />
+            <StatementLine label={t("outstandingAr")} value={settlement.outstandingAr} />
+            <div className="mx-4 mt-1 border-t-2 border-border-strong" />
+            {/* Num paints negative values text-danger on its own */}
+            <StatementLine
+              label={`${t("remainingBalance")} (Fargo → TI)`}
+              value={settlement.remaining}
+              strong
+            />
+          </div>
+        </Card>
+      )}
+
       {trace && (
         <Modal title={trace.title} onClose={() => setTrace(null)}>
           <table className="tbl">
