@@ -43,6 +43,18 @@ export default async function SettingsPage() {
         sortOrder: c.sortOrder,
       }))}
       importCategories={importCategories.map((c) => ({ id: c.id, name: c.name }))}
+      clients={await prisma.clientChannelMap
+        .findMany({ where: { deletedAt: null }, orderBy: { totalQty: "desc" } })
+        .then((list) =>
+          list.map((c) => ({
+            id: c.id,
+            displayName: c.displayName,
+            channelId: c.channelId ?? "",
+            source: c.source,
+            lastSeenAt: c.lastSeenAt.toISOString().slice(0, 10),
+            totalQty: c.totalQty,
+          }))
+        )}
       taxes={dataset.taxes}
       readOnly={session?.role !== "ADMIN"}
     />

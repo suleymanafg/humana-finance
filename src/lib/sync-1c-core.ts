@@ -141,14 +141,19 @@ const CLIENTS: Array<[string[], string]> = [
   [["turbo", "турбо"], "Внутреннее"],
 ];
 
-export type ClassifyRule = "district" | "region" | "client" | "fallback";
+export type ClassifyRule = "manual" | "district" | "region" | "client" | "fallback";
 
-/** Returns the DB channel name + which rule fired. */
+/** Returns the DB channel name + which rule fired.
+ *  `manual` maps norm(client) → channel name (admin assignments from the
+ *  client registry) and beats every keyword rule. */
 export function classifyChannel(
   rayon: string | null | undefined,
   client: string,
-  byClientName: boolean
+  byClientName: boolean,
+  manual?: Map<string, string>
 ): { channel: string; rule: ClassifyRule } {
+  const manualChannel = manual?.get(norm(client));
+  if (manualChannel) return { channel: manualChannel, rule: "manual" };
   const r = norm(rayon ?? "");
   if (r) {
     if (TASH_REGION.some((k) => r.includes(k)))

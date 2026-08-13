@@ -10,7 +10,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Papa from "papaparse";
 import { Badge, Button, Modal, Num, PageTitle } from "./ui";
-import { IconDownload, IconUpload, IconX } from "./icons";
+import { IconChevronRight, IconDownload, IconUpload, IconX } from "./icons";
 import {
   Collapsible,
   Delta,
@@ -169,6 +169,7 @@ export default function SalesView({
   channels,
   monthId,
   sales,
+  clientSales,
   priorSales,
   current,
   prior,
@@ -181,6 +182,7 @@ export default function SalesView({
   channels: ChannelIn[];
   monthId: string;
   sales: SaleIn[];
+  clientSales: Array<{ clientMapId: string; name: string; productId: string; channelId: string; qty: number }>;
   priorSales: SaleIn[];
   current: Snapshot | null;
   prior: PriorSnapshot | null;
@@ -192,6 +194,7 @@ export default function SalesView({
   const router = useRouter();
   const [showImport, setShowImport] = useState(false);
   const [selection, setSelection] = useState<Selection>(null);
+  const [expandedClient, setExpandedClient] = useState<string | null>(null);
 
   // stable empty snapshot so the memos below don't re-run every render
   const cur = useMemo<Snapshot>(
@@ -408,6 +411,31 @@ export default function SalesView({
     [products, sel.byProduct]
   );
   const maxSkuRevenue = Math.max(1, ...detailSku.map((r) => Math.abs(r.revenue)));
+
+  // per-client rows for the current selection — the drill-down layer synced
+  // from 1C (list price valuation, same as API sales in the P&L)
+  const clientRows = useMemo(() => {
+    const byClient = new Map<
+      string,
+      { id: string; name: string; qty: number; revenue: number; byProduct: Map<string, number> }
+    >();
+    for (const cs of clientSales) {
+      if (selectedChannelIds && !selectedChannelIds.has(cs.channelId)) continue;
+      const price = productById.get(cs.productId)?.price ?? 0;
+      const row =
+        byClient.get(cs.clientMapId) ??
+        { id: cs.clientMapId, name: cs.name, qty: 0, revenue: 0, byProduct: new Map<string, number>() };
+      row.qty += cs.qty;
+      row.revenue += cs.qty * price;
+      row.byProduct.set(cs.productId, (row.byProduct.get(cs.productId) ?? 0) + cs.qty);
+      byClient.set(cs.clientMapId, row);
+    }
+    return [...byClient.values()]
+      .filter((r) => r.qty !== 0 || r.revenue !== 0)
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [clientSales, selectedChannelIds, productById]);
+  const maxClientRevenue = Math.max(1, ...clientRows.map((r) => Math.abs(r.revenue)));
+  const clientRevenueTotal = clientRows.reduce((s, r) => s + r.revenue, 0);
 
   // member channels of the current selection (for chains/other/whole-country)
   const memberChannels = useMemo(() => {
@@ -670,6 +698,66 @@ export default function SalesView({
                   ))}
                 </div>
               </>
+            )}
+
+            {/* per-client drill-down (populated by the 1C sync) */}
+            <div className="label-caps mb-1.5 mt-4">
+              {t("salesClients")}
+              {clientRows.length > 0 && (
+                <span className="ml-1.5 normal-case tracking-normal text-muted">· {clientRows.length}</span>
+              )}
+            </div>
+            {clientRows.length === 0 ? (
+              <p className="py-2 text-[12px] leading-relaxed text-muted">{t("salesClientsHint")}</p>
+            ) : (
+              <div className="max-h-72 overflow-auto pr-1">
+                {clientRows.map((r) => (
+                  <div key={r.id} className="border-b border-border last:border-b-0">
+                    <button
+                      onClick={() => setExpandedClient(expandedClient === r.id ? null : r.id)}
+                      className="flex w-full items-center gap-2 py-1.5 text-left transition-colors hover:text-accent"
+                    >
+                      <IconChevronRight
+                        size={11}
+                        className={`shrink-0 text-muted transition-transform ${
+                          expandedClient === r.id ? "rotate-90" : ""
+                        }`}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-[12.5px]" title={r.name}>
+                        {r.name}
+                      </span>
+                      <span className="num shrink-0 text-[11px] text-muted">
+                        {fmtPct(clientRevenueTotal !== 0 ? r.revenue / clientRevenueTotal : 0)}
+                      </span>
+                      <div className="w-16 shrink-0">
+                        <ShareBar value={Math.abs(r.revenue)} max={maxClientRevenue} />
+                      </div>
+                      <span className="num w-28 shrink-0 text-right text-[12.5px] font-medium">
+                        {fmtN(r.revenue)}
+                      </span>
+                    </button>
+                    {expandedClient === r.id && (
+                      <div className="mb-1.5 ml-5 rounded-lg bg-surface-low/60 px-3 py-1.5">
+                        {[...r.byProduct.entries()]
+                          .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+                          .map(([pid, qty]) => (
+                            <div
+                              key={pid}
+                              className="flex items-baseline justify-between gap-3 py-0.5 text-[12px]"
+                            >
+                              <span className="min-w-0 truncate text-muted">
+                                {productById.get(pid)?.nameRu ?? pid}
+                              </span>
+                              <span className="num shrink-0">
+                                {fmtN(qty)} {locale === "ru" ? "шт" : "pcs"}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>

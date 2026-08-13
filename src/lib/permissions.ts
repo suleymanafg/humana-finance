@@ -21,6 +21,7 @@ export const STRUCTURAL_ENTITIES = new Set([
   "month",
   "setting",
   "contact",
+  "clientChannelMap",
 ]);
 
 /** May write figures (OPEX amounts, stock, AR, shipments, balance inputs). */

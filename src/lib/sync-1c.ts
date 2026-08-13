@@ -34,11 +34,14 @@ export async function buildSync(
   report: SyncReport;
   matched: Array<{ productId: string; channelId: string; qty: number }>;
   learned: Array<{ productId: string; code: string }>;
+  /** per-client drill-down rows for ClientSale (committed alongside Sale) */
+  clientDetail: Array<{ productId: string; channelId: string; name1c: string; qty: number }>;
 }> {
-  const [products, channels, currentSales] = await Promise.all([
+  const [products, channels, currentSales, clientMaps] = await Promise.all([
     prisma.product.findMany({ where: { active: true } }),
     prisma.channel.findMany({ where: { active: true } }),
     prisma.sale.findMany({ where: { monthId }, include: { product: true } }),
+    prisma.clientChannelMap.findMany({ where: { deletedAt: null } }),
   ]);
 
   const byCode = new Map<string, string>();
@@ -52,12 +55,24 @@ export async function buildSync(
   }
   const channelByName = new Map(channels.map((c) => [c.name, c]));
   const productById = new Map(products.map((p) => [p.id, p]));
+  const channelById = new Map(channels.map((c) => [c.id, c]));
+  // admin assignments beat every keyword rule (registry, source "manual")
+  const manualByClient = new Map<string, string>();
+  for (const m of clientMaps) {
+    const ch = m.channelId ? channelById.get(m.channelId) : undefined;
+    if (m.source === "manual" && ch) manualByClient.set(m.name1c, ch.name);
+  }
+  const registryByName = new Map(clientMaps.map((m) => [m.name1c, m]));
 
   const { dateFrom, dateTo } = monthRange(monthId);
   const agg = new Map<string, AggKey>();
   const unknownSkus = new Map<string, { code: string; name: string; qty: number }>();
   const fallback = new Map<string, { client: string; qty: number; docs: number }>();
-  const byRule: Record<ClassifyRule, number> = { district: 0, region: 0, client: 0, fallback: 0 };
+  const byRule: Record<ClassifyRule, number> = { manual: 0, district: 0, region: 0, client: 0, fallback: 0 };
+  // per-client aggregates for the registry (only rows that matched a product)
+  const seenClients = new Map<string, { displayName: string; channelName: string; rule: ClassifyRule; qty: number }>();
+  // product × channel × client — the ClientSale drill-down layer
+  const clientAgg = new Map<string, { productId: string; channelName: string; name1c: string; qty: number }>();
   const learnedMap = new Map<string, { productId: string; code: string }>();
   let sales = 0,
     returns = 0,
@@ -94,15 +109,30 @@ export async function buildSync(
         learnedMap.set(code, { productId, code: String(it.КодСКЮ) });
     }
 
-    const cls = classifyChannel(it.Район, String(it.Контрагент ?? ""), byClientName);
+    const rawClient = String(it.Контрагент ?? "").trim() || "(без имени)";
+    const cls = classifyChannel(it.Район, rawClient, byClientName, manualByClient);
     byRule[cls.rule] += qty;
     if (cls.rule === "fallback") {
-      const client = String(it.Контрагент ?? "").trim() || "(без имени)";
-      const f = fallback.get(client) ?? { client, qty: 0, docs: 0 };
+      const f = fallback.get(rawClient) ?? { client: rawClient, qty: 0, docs: 0 };
       f.qty += qty;
       f.docs++;
-      fallback.set(client, f);
+      fallback.set(rawClient, f);
     }
+    const sc =
+      seenClients.get(norm(rawClient)) ??
+      { displayName: rawClient, channelName: cls.channel, rule: cls.rule, qty: 0 };
+    sc.qty += qty;
+    // rows of one client can classify differently (район varies) — keep the latest
+    sc.channelName = cls.channel;
+    sc.rule = cls.rule;
+    seenClients.set(norm(rawClient), sc);
+
+    const caKey = `${productId}|${cls.channel}|${norm(rawClient)}`;
+    const ca =
+      clientAgg.get(caKey) ??
+      { productId, channelName: cls.channel, name1c: norm(rawClient), qty: 0 };
+    ca.qty += qty;
+    clientAgg.set(caKey, ca);
 
     const aggKey = `${productId}|${cls.channel}`;
     const a =
@@ -192,17 +222,61 @@ export async function buildSync(
       sources: [...new Set(currentSales.map((x) => x.source))],
     },
   };
-  return { report, matched, learned: [...learnedMap.values()] };
+  // client registry upkeep (runs on preview too — it's metadata, not P&L data):
+  // new clients are created with their auto-resolved channel (null when the
+  // fallback fired — «unassigned» until an admin reviews them); auto rows get
+  // re-resolved every pull; manual rows only bump displayName/lastSeen/qty.
+  const now = new Date();
+  for (const [name1c, sc] of seenClients) {
+    const resolvedId = sc.rule === "fallback" ? null : (channelByName.get(sc.channelName)?.id ?? null);
+    const existing = registryByName.get(name1c);
+    if (!existing) {
+      await prisma.clientChannelMap.create({
+        data: {
+          name1c,
+          displayName: sc.displayName,
+          channelId: resolvedId,
+          source: "auto",
+          matchedRule: sc.rule,
+          lastSeenAt: now,
+          totalQty: sc.qty,
+        },
+      });
+    } else {
+      await prisma.clientChannelMap.update({
+        where: { name1c },
+        data: {
+          displayName: sc.displayName,
+          lastSeenAt: now,
+          totalQty: { increment: sc.qty },
+          ...(existing.source === "manual" ? {} : { channelId: resolvedId, matchedRule: sc.rule }),
+        },
+      });
+    }
+  }
+
+  const clientDetail: Array<{ productId: string; channelId: string; name1c: string; qty: number }> = [];
+  for (const ca of clientAgg.values()) {
+    const ch = channelByName.get(ca.channelName);
+    if (ch && ca.qty !== 0)
+      clientDetail.push({ productId: ca.productId, channelId: ch.id, name1c: ca.name1c, qty: ca.qty });
+  }
+
+  return { report, matched, learned: [...learnedMap.values()], clientDetail };
 }
 
-/** Full-snapshot replace of the month's sales + code learning + audit log. */
+/** Full-snapshot replace of the month's sales + client detail + code learning + audit log. */
 export async function commitSync(
   monthId: string,
   matched: Array<{ productId: string; channelId: string; qty: number }>,
   learned: Array<{ productId: string; code: string }>,
   summary: object,
-  username: string
+  username: string,
+  clientDetail: Array<{ productId: string; channelId: string; name1c: string; qty: number }> = []
 ): Promise<{ deleted: number; inserted: number }> {
+  // buildSync upserted every seen client into the registry, so the ids exist
+  const registry = await prisma.clientChannelMap.findMany({ select: { id: true, name1c: true } });
+  const clientIdByName = new Map(registry.map((r) => [r.name1c, r.id]));
   const result = await prisma.$transaction(async (tx) => {
     const del = await tx.sale.deleteMany({ where: { monthId } });
     for (const r of matched) {
@@ -210,6 +284,15 @@ export async function commitSync(
         data: { monthId, productId: r.productId, channelId: r.channelId, qty: r.qty, source: "API" },
       });
     }
+    // drill-down layer: replaced together with the month's sales so they tie
+    await tx.clientSale.deleteMany({ where: { monthId } });
+    const detailRows = clientDetail.flatMap((d) => {
+      const clientMapId = clientIdByName.get(d.name1c);
+      return clientMapId
+        ? [{ monthId, productId: d.productId, channelId: d.channelId, clientMapId, qty: d.qty }]
+        : [];
+    });
+    if (detailRows.length) await tx.clientSale.createMany({ data: detailRows });
     for (const l of learned) {
       await tx.product.update({ where: { id: l.productId }, data: { codeSales1c: l.code } });
     }
@@ -347,7 +430,7 @@ export async function commitAllMonths(
   const fallbackAgg = new Map<string, { client: string; qty: number }>();
   for (const monthId of [...byMonth.keys()].sort()) {
     const monthItems = byMonth.get(monthId)!;
-    const { report, matched, learned } = await buildSync(monthId, monthItems, byClientName);
+    const { report, matched, learned, clientDetail } = await buildSync(monthId, monthItems, byClientName);
     const qtyNew = report.products.reduce((s, p) => s + p.qtyNew, 0);
     const committed = await commitSync(
       monthId,
@@ -363,7 +446,8 @@ export async function commitAllMonths(
         fallbackClients: report.fallbackClients.length,
         learnedCodes: report.learnedCodes,
       },
-      username
+      username,
+      clientDetail
     );
     months.push({ monthId, qtyCur: report.current.qty, qtyNew, ...committed });
     for (const u of report.unknownSkus) {

@@ -238,6 +238,25 @@ export const dict = {
   stockValue: { ru: "Стоимость остатков", en: "Stock value" },
   warehouse: { ru: "Склад", en: "Warehouse" },
   settingsWarehouses: { ru: "Склады", en: "Warehouses" },
+  settingsClients: { ru: "Клиенты", en: "Clients" },
+  settingsClientsDesc: {
+    ru: "Контрагенты из 1С и их каналы. Назначение вручную имеет высший приоритет и применяется при следующей синхронизации.",
+    en: "1C clients and their channels. Manual assignments take top priority and apply on the next sync.",
+  },
+  clientsUnassigned: { ru: "Без канала (в «Прочие»)", en: "Unassigned (in «Прочие»)" },
+  clientsUnassignedHint: {
+    ru: "Попали в «Прочие» автоматически и никем не проверены. Назначьте канал — можно и «Прочие», это пометит клиента как проверенного.",
+    en: "Fell through to «Прочие» automatically and were never reviewed. Assign a channel — «Прочие» itself is fine, that marks the client as reviewed.",
+  },
+  clientSearch: { ru: "Поиск клиента…", en: "Search clients…" },
+  salesClients: { ru: "Клиенты", en: "Clients" },
+  salesClientsHint: {
+    ru: "Поклиентская детализация появится после синхронизации месяца с 1С («Ввод данных» → Синхронизация 1С)",
+    en: "Per-client detail appears once the month is synced from 1C (Data entry → 1C sync)",
+  },
+  clientLastSeen: { ru: "Последняя продажа", en: "Last seen" },
+  sourceManual: { ru: "вручную", en: "manual" },
+  sourceAuto: { ru: "авто", en: "auto" },
   code1c: { ru: "Код в 1С", en: "1C code" },
   stockApiHint: {
     ru: "Остатки могут приходить из 1С автоматически: POST /api/import/1c-stock (склад сверяется по имени или коду 1С)",
@@ -317,6 +336,10 @@ export const dict = {
   hc_soldWithoutCost: {
     ru: "Проданные товары без данных о себестоимости",
     en: "Products sold without landed-cost data",
+  },
+  hc_clientsUnassigned: {
+    ru: "Клиенты без канала (в «Прочие»)",
+    en: "Clients without a channel (in «Прочие»)",
   },
   hc_qtyTieSalesVsVat: {
     ru: "Сверка: кол-во продаж = кол-во в расчёте НДС",

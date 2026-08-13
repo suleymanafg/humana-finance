@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
   try {
     const { dateFrom, dateTo } = monthRange(body.monthId);
     const data = await fetch1cSales(dateFrom, dateTo, body.login, body.password);
-    const { report, matched, learned } = await buildSync(
+    const { report, matched, learned, clientDetail } = await buildSync(
       body.monthId,
       data.items,
       body.byClientName !== false
@@ -85,7 +85,8 @@ export async function POST(request: NextRequest) {
           fallbackClients: report.fallbackClients.length,
           learnedCodes: report.learnedCodes,
         },
-        session.username
+        session.username,
+        clientDetail
       );
     }
     return NextResponse.json(report);

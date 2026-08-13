@@ -29,6 +29,7 @@ export const loadDataset = cache(async (): Promise<Dataset> => {
     stockCounts,
     monthBalances,
     arEntries,
+    clientMaps,
     settings,
   ] = await Promise.all([
     prisma.product.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -52,6 +53,10 @@ export const loadDataset = cache(async (): Promise<Dataset> => {
     prisma.stockCount.findMany(),
     prisma.monthBalance.findMany(),
     prisma.arEntry.findMany({ where: { deletedAt: null } }),
+    prisma.clientChannelMap.findMany({
+      where: { deletedAt: null },
+      select: { id: true, displayName: true, channelId: true, source: true },
+    }),
     prisma.setting.findMany(),
   ]);
 
@@ -124,6 +129,7 @@ export const loadDataset = cache(async (): Promise<Dataset> => {
     stockCounts,
     monthBalances,
     arEntries,
+    clientMaps,
     taxes: settingOf<TaxSettings>("taxes", DEFAULT_TAXES),
     golden: settingOf<GoldenValues | null>("golden", null),
   };

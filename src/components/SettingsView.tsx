@@ -1,14 +1,14 @@
 "use client";
 
 // Reference module: products, channels, months, category mappings, tax constants.
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, CardHeader, Input, PageTitle } from "./ui";
+import { Badge, Button, Card, CardHeader, Input, PageTitle, Select } from "./ui";
 import EntryGrid, { type Col } from "./EntryGrid";
 import { useT } from "@/lib/locale-context";
 import { crud } from "@/lib/crud-client";
 import { GROUP_LABELS, TI_GROUPS, FARGO_GROUPS } from "@/lib/groups";
-import { parseNum } from "@/lib/format";
+import { fmtN, parseNum } from "@/lib/format";
 import type { TaxSettings } from "@/lib/engine/types";
 import type { DictKey } from "@/lib/i18n";
 
@@ -19,6 +19,7 @@ export default function SettingsView({
   warehouses,
   opexCategories,
   importCategories,
+  clients,
   taxes,
   readOnly,
 }: {
@@ -28,6 +29,7 @@ export default function SettingsView({
   warehouses: Array<{ id: string; name: string; code1c: string; sortOrder: number }>;
   opexCategories: Array<{ id: string; company: string; name: string; plGroup: string; sortOrder: number }>;
   importCategories: Array<{ id: string; name: string }>;
+  clients: ClientRowUI[];
   taxes: TaxSettings;
   readOnly: boolean;
 }) {
@@ -101,6 +103,8 @@ export default function SettingsView({
           <EntryGrid entity="channel" cols={channelCols} rows={channels} readOnly={readOnly} />
         </Card>
 
+        <ClientsCard clients={clients} channels={channels} readOnly={readOnly} />
+
         <TaxesCard taxes={taxes} readOnly={readOnly} />
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -151,6 +155,163 @@ export default function SettingsView({
         </Card>
       </div>
     </div>
+  );
+}
+
+// ── «Клиенты» — 1C client registry with channel assignment ───────
+interface ClientRowUI {
+  id: string;
+  displayName: string;
+  channelId: string; // "" = unassigned (auto-fallback, never reviewed)
+  source: string; // "auto" | "manual"
+  lastSeenAt: string; // ISO date
+  totalQty: number;
+}
+
+function ClientsCard({
+  clients,
+  channels,
+  readOnly,
+}: {
+  clients: ClientRowUI[];
+  channels: Array<{ id: string; name: string; sortOrder: number }>;
+  readOnly: boolean;
+}) {
+  const { t, locale } = useT();
+  const ru = locale === "ru";
+  const router = useRouter();
+  const [q, setQ] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const needle = q.trim().toLowerCase();
+  const visible = (c: ClientRowUI) => !needle || c.displayName.toLowerCase().includes(needle);
+  const unassigned = clients.filter((c) => !c.channelId && visible(c));
+  const groups = channels
+    .map((ch) => ({ ch, rows: clients.filter((c) => c.channelId === ch.id && visible(c)) }))
+    .filter((g) => g.rows.length > 0);
+  const unassignedTotal = clients.filter((c) => !c.channelId).length;
+
+  async function assign(id: string, channelId: string) {
+    if (!channelId) return;
+    setBusyId(id);
+    // an explicit admin choice — «Прочие» included — marks the client reviewed
+    await crud("clientChannelMap", "update", {
+      id,
+      data: { channelId, source: "manual", matchedRule: "manual" },
+    });
+    setBusyId(null);
+    router.refresh();
+  }
+
+  const picker = (c: ClientRowUI, placeholder: string) =>
+    readOnly ? (
+      <span className="text-[12.5px] text-muted">—</span>
+    ) : (
+      <Select
+        value={c.channelId}
+        disabled={busyId === c.id}
+        onChange={(e) => assign(c.id, e.target.value)}
+      >
+        <option value="">{placeholder}</option>
+        {channels.map((ch) => (
+          <option key={ch.id} value={ch.id}>
+            {ch.name}
+          </option>
+        ))}
+      </Select>
+    );
+
+  const row = (c: ClientRowUI, placeholder: string) => (
+    <tr key={c.id}>
+      <td className="max-w-[320px] truncate" title={c.displayName}>
+        {c.displayName}
+      </td>
+      <td>{picker(c, placeholder)}</td>
+      <td>
+        <Badge tone={c.source === "manual" ? "accent" : "neutral"}>
+          {c.source === "manual" ? t("sourceManual") : t("sourceAuto")}
+        </Badge>
+      </td>
+      <td className="num text-right">{fmtN(c.totalQty)}</td>
+      <td className="text-right text-[12px] text-muted">{c.lastSeenAt}</td>
+    </tr>
+  );
+
+  const head = (
+    <tr>
+      <th>{ru ? "Клиент (1С)" : "Client (1C)"}</th>
+      <th>{t("channel")}</th>
+      <th>{ru ? "Источник" : "Source"}</th>
+      <th className="text-right">{t("qty")}</th>
+      <th className="text-right">{t("clientLastSeen")}</th>
+    </tr>
+  );
+
+  return (
+    <Card>
+      <CardHeader
+        title={`${t("settingsClients")} (${clients.length})`}
+        desc={t("settingsClientsDesc")}
+        right={
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("clientSearch")}
+            className="w-56"
+          />
+        }
+      />
+
+      {unassignedTotal > 0 && (
+        <div className="border-b border-warn/25 bg-warn-soft/40">
+          <div className="flex items-baseline gap-2 px-4 pb-1 pt-3">
+            <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-warn">
+              {t("clientsUnassigned")} · {unassignedTotal}
+            </span>
+            <span className="text-[12px] text-muted">{t("clientsUnassignedHint")}</span>
+          </div>
+          {unassigned.length > 0 && (
+            <div className="overflow-x-auto pb-2">
+              <table className="tbl">
+                <thead>{head}</thead>
+                <tbody>{unassigned.map((c) => row(c, ru ? "Назначить канал…" : "Assign channel…"))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="tbl">
+          <thead>{head}</thead>
+          <tbody>
+            {groups.map((g) => (
+              <Fragment key={g.ch.id}>
+                <tr className="bg-surface-low/60">
+                  <td colSpan={5} className="text-[12px] font-semibold text-muted">
+                    {g.ch.name} · {g.rows.length}
+                  </td>
+                </tr>
+                {g.rows.map((c) => row(c, "—"))}
+              </Fragment>
+            ))}
+            {groups.length === 0 && unassigned.length === 0 && (
+              <tr>
+                <td colSpan={5} className="py-6 text-center text-[13px] text-muted">
+                  {needle
+                    ? ru
+                      ? "Ничего не найдено"
+                      : "No matches"
+                    : ru
+                      ? "Реестр пуст — заполнится при первой синхронизации 1С"
+                      : "Empty — populates on the first 1C sync"}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 

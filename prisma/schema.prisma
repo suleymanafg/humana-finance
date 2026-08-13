@@ -32,6 +32,7 @@ model Product {
   sales         Sale[]
   shipmentLines ShipmentLine[]
   stockCounts   StockCount[]
+  clientSales   ClientSale[]
 }
 
 model Channel {
@@ -43,7 +44,48 @@ model Channel {
   sortOrder Int     @default(0)
   active    Boolean @default(true)
 
-  sales Sale[]
+  sales      Sale[]
+  clientMaps ClientChannelMap[]
+  clientSales ClientSale[]
+}
+
+// Client registry: every distinct 1C Контрагент the sales sync has seen, with
+// the channel it resolved to. source "manual" rows are the highest-priority
+// classification rule on the next sync; channelId null = fallback («Прочие»)
+// never reviewed by an admin — surfaced as a health warning.
+model ClientChannelMap {
+  id          String    @id @default(cuid())
+  name1c      String    @unique // normalized client name (sync's norm())
+  displayName String // raw 1C spelling as last seen
+  channelId   String?
+  channel     Channel?  @relation(fields: [channelId], references: [id])
+  source      String    @default("auto") // "auto" | "manual"
+  matchedRule String? // manual | district | region | client | fallback
+  lastSeenAt  DateTime  @default(now())
+  totalQty    Float     @default(0) // running qty across pulls (informational)
+  deletedAt   DateTime?
+
+  clientSales ClientSale[]
+}
+
+// Per-client sales detail from the 1C sync — the drill-down layer behind the
+// aggregated Sale rows. Written only by the sync commit (full-snapshot replace
+// per month, same as Sale); the P&L engine never reads it, so P&L stays
+// grouped by channel while the UI can break any figure down to the client.
+model ClientSale {
+  id          String           @id @default(cuid())
+  monthId     String
+  month       Month            @relation(fields: [monthId], references: [id])
+  productId   String
+  product     Product          @relation(fields: [productId], references: [id])
+  channelId   String
+  channel     Channel          @relation(fields: [channelId], references: [id])
+  clientMapId String
+  clientMap   ClientChannelMap @relation(fields: [clientMapId], references: [id])
+  qty         Float
+
+  @@unique([monthId, productId, channelId, clientMapId])
+  @@index([monthId])
 }
 
 // id is the month code, e.g. "2025-08" — used by CSV/1C import and sorting.
@@ -64,6 +106,7 @@ model Month {
   monthBalance   MonthBalance?
   arEntries      ArEntry[]
   dataRequests   DataRequest[]
+  clientSales    ClientSale[]
 }
 
 // company: "TI" | "FARGO"; plGroup: one of the fixed P&L groups per company,

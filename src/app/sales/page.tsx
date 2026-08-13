@@ -1,4 +1,5 @@
 import { getComputed } from "@/lib/data";
+import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { canEditData } from "@/lib/permissions";
 import SalesView from "@/components/SalesView";
@@ -33,6 +34,25 @@ export default async function SalesPage({
       channels={dataset.channels}
       monthId={monthId}
       sales={dataset.sales.filter((s) => s.monthId === monthId)}
+      clientSales={await prisma.clientSale
+        .findMany({
+          where: { monthId },
+          select: {
+            productId: true,
+            channelId: true,
+            qty: true,
+            clientMap: { select: { id: true, displayName: true } },
+          },
+        })
+        .then((rows) =>
+          rows.map((r) => ({
+            clientMapId: r.clientMap.id,
+            name: r.clientMap.displayName,
+            productId: r.productId,
+            channelId: r.channelId,
+            qty: r.qty,
+          }))
+        )}
       priorSales={prior ? dataset.sales.filter((s) => s.monthId === prior.monthId) : []}
       current={
         monthly && {

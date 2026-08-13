@@ -118,6 +118,16 @@ export function buildHealthChecks(ds: Dataset, ctx: Ctx): HealthCheck[] {
   }
   checks.push(check("soldWithoutCost", [...soldNoCost], "/shipments"));
 
+  // 1C clients that fell through to «Прочие» and were never reviewed — an
+  // admin assigning a channel (even «Прочие» itself) clears them
+  checks.push(
+    check(
+      "clientsUnassigned",
+      (ds.clientMaps ?? []).filter((c) => !c.channelId).map((c) => c.displayName),
+      "/settings"
+    )
+  );
+
   // tie: sales qty vs VAT-detail qty per month
   const qtyTies: string[] = [];
   for (const m of ctx.monthly) {

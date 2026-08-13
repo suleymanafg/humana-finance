@@ -128,6 +128,12 @@ const registry: Record<string, EntityConfig> = {
     // telegramChatId is captured by the webhook, never typed in
     fields: ["name", "role", "email", "active"],
   },
+  clientChannelMap: {
+    delegate: () => prisma.clientChannelMap,
+    // only the assignment is editable — name/qty/lastSeen belong to the sync
+    fields: ["channelId", "source", "matchedRule"],
+    softDelete: true,
+  },
   setting: {
     delegate: () => prisma.setting,
     fields: ["key", "value"],

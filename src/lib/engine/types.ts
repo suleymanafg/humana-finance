@@ -132,6 +132,14 @@ export interface ArIn {
   amount: number;
 }
 
+// One row of the 1C client registry (channel assignment).
+export interface ClientMapIn {
+  id: string;
+  displayName: string;
+  channelId: string | null; // null = fallback, never reviewed → health warning
+  source: string; // "auto" | "manual"
+}
+
 export interface TaxSettings {
   vatRate: number; // 0.12
   deemedCashMargin: number; // 0.03
@@ -167,6 +175,8 @@ export interface Dataset {
   stockCounts: StockCountIn[];
   monthBalances: MonthBalanceIn[];
   arEntries: ArIn[];
+  /** optional so hand-built test fixtures stay valid */
+  clientMaps?: ClientMapIn[];
   taxes: TaxSettings;
   golden: GoldenValues | null;
 }

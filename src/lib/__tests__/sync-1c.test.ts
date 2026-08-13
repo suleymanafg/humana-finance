@@ -56,6 +56,30 @@ describe("classifyChannel", () => {
   it("normalizes ё and case", () => {
     expect(classifyChannel("ЯНГИХАЁТСКИЙ РАЙОН", "Y", true).channel).toBe("г. Ташкент");
   });
+
+  it("manual registry mapping beats every keyword rule", () => {
+    const manual = new Map([["ип неизвестный", "Korzinka"]]);
+    // beats the fallback
+    expect(classifyChannel("", "ИП Неизвестный", true, manual)).toEqual({
+      channel: "Korzinka",
+      rule: "manual",
+    });
+    // beats a район match
+    const m2 = new Map([["аптека x", "Makro"]]);
+    expect(classifyChannel("Чиланзарский район", "Аптека X", true, m2)).toEqual({
+      channel: "Makro",
+      rule: "manual",
+    });
+    // beats a client-keyword match, and normalizes the lookup
+    const m3 = new Map([["angelsey корзинка", "Прочие"]]);
+    expect(classifyChannel("", "  ANGELSEY  Корзинка ", true, m3).rule).toBe("manual");
+  });
+
+  it("manual map miss falls through to the normal rules", () => {
+    const manual = new Map([["кто-то другой", "Makro"]]);
+    expect(classifyChannel("Чирчик", "Y", true, manual).channel).toBe("Ташкентская область");
+    expect(classifyChannel("", "ИП Неизвестный", true, manual).rule).toBe("fallback");
+  });
 });
 
 describe("monthRange", () => {
