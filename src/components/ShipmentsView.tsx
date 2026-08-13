@@ -102,6 +102,98 @@ function FargoCell({
   );
 }
 
+// ── generic inline-editable numeric field on an existing record ──────
+// Same behaviour as FargoCell: plain input, commit on blur, server figures
+// (amounts, TI cost, load factor) recompute via router.refresh().
+function NumEditCell({
+  entity,
+  id,
+  field,
+  value,
+  decimals = 0,
+  readOnly,
+  onSaved,
+  width = "w-24",
+}: {
+  entity: "shipmentLine" | "importExpense";
+  id: string;
+  field: string;
+  value: number;
+  decimals?: number;
+  readOnly: boolean;
+  onSaved: () => void;
+  width?: string;
+}) {
+  const [text, setText] = useState(fmtN(value, decimals));
+  const [last, setLast] = useState(value);
+  if (last !== value) {
+    setLast(value);
+    setText(fmtN(value, decimals));
+  }
+  if (readOnly) return <span className="num">{fmtN(value, decimals)}</span>;
+  return (
+    <input
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={async () => {
+        const v = num(text);
+        setText(fmtN(v, decimals));
+        if (v !== value) {
+          await crud(entity, "update", { id, data: { [field]: v } });
+          onSaved();
+        }
+      }}
+      className={`num ${width} rounded-md border border-border bg-surface px-2 py-1 text-right text-[12.5px] outline-none focus:border-accent`}
+    />
+  );
+}
+
+// ── shipment-level FX rate: edit once, apply to every line ───────────
+function ShipmentRateEdit({
+  lines,
+  onSaved,
+}: {
+  lines: Array<{ id: string; rate: number }>;
+  onSaved: () => void;
+}) {
+  const { locale } = useT();
+  const ru = locale === "ru";
+  const uniform = lines.every((l) => l.rate === lines[0]?.rate);
+  const current = lines.at(-1)?.rate ?? 0;
+  const [text, setText] = useState(current === 0 ? "" : fmtN(current));
+  const [busy, setBusy] = useState(false);
+
+  async function apply() {
+    const v = num(text);
+    if (v <= 0) return;
+    setBusy(true);
+    for (const l of lines) {
+      if (l.rate !== v) await crud("shipmentLine", "update", { id: l.id, data: { rate: v } });
+    }
+    setBusy(false);
+    onSaved();
+  }
+
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-[11.5px] normal-case tracking-normal text-muted">
+        {ru ? "Курс EUR→UZS" : "EUR→UZS rate"}
+        {!uniform && ` (${ru ? "разные по строкам" : "varies by line"})`}
+      </span>
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={(e) => setText(num(e.target.value) === 0 ? "" : fmtN(num(e.target.value)))}
+        placeholder="14 500"
+        className="num w-24 rounded-md border border-border bg-surface px-2 py-1 text-right text-[12px] outline-none focus:border-accent"
+      />
+      <Button variant="secondary" onClick={apply} disabled={busy || num(text) <= 0}>
+        {busy ? "…" : ru ? "Ко всем строкам" : "Apply to all"}
+      </Button>
+    </span>
+  );
+}
+
 // ── ghost row: add a product line to an existing shipment ────────────
 function AddLineRow({
   shipmentId,
@@ -819,7 +911,16 @@ export default function ShipmentsView({
                         <div className="grid gap-5 p-4 lg:grid-cols-[3fr_2fr]">
                           {/* product lines */}
                           <div className="min-w-0">
-                            <div className="label-caps mb-1.5">{ru ? "Детализация товаров" : "Product lines"}</div>
+                            <div className="label-caps mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                              <span>{ru ? "Детализация товаров" : "Product lines"}</span>
+                              {!readOnly && s.lines.length > 0 && (
+                                <ShipmentRateEdit
+                                  key={`rate-${s.shipmentId}`}
+                                  lines={s.lines.map((l) => ({ id: l.id, rate: l.rate }))}
+                                  onSaved={() => router.refresh()}
+                                />
+                              )}
+                            </div>
                             <table className="tbl w-full">
                               <thead>
                                 <tr>
@@ -840,11 +941,38 @@ export default function ShipmentsView({
                                       {productName(l.productId)}
                                     </td>
                                     <td className="text-right">
-                                      <Num v={l.qty} />
+                                      <NumEditCell
+                                        entity="shipmentLine"
+                                        id={l.id}
+                                        field="qty"
+                                        value={l.qty}
+                                        readOnly={readOnly}
+                                        onSaved={() => router.refresh()}
+                                        width="w-20"
+                                      />
                                     </td>
-                                    <td className="num text-right">€{fmtN(l.priceEur, 2)}</td>
                                     <td className="text-right">
-                                      <Num v={l.rate} />
+                                      <NumEditCell
+                                        entity="shipmentLine"
+                                        id={l.id}
+                                        field="priceEur"
+                                        value={l.priceEur}
+                                        decimals={2}
+                                        readOnly={readOnly}
+                                        onSaved={() => router.refresh()}
+                                        width="w-24"
+                                      />
+                                    </td>
+                                    <td className="text-right">
+                                      <NumEditCell
+                                        entity="shipmentLine"
+                                        id={l.id}
+                                        field="rate"
+                                        value={l.rate}
+                                        readOnly={readOnly}
+                                        onSaved={() => router.refresh()}
+                                        width="w-24"
+                                      />
                                     </td>
                                     <td className="text-right">
                                       <Num v={l.purchaseAmount} />
@@ -901,7 +1029,15 @@ export default function ShipmentsView({
                                         {e.categoryName}
                                       </td>
                                       <td className="text-right">
-                                        <Num v={e.amount} />
+                                        <NumEditCell
+                                          entity="importExpense"
+                                          id={e.id}
+                                          field="amount"
+                                          value={e.amount}
+                                          readOnly={readOnly}
+                                          onSaved={() => router.refresh()}
+                                          width="w-32"
+                                        />
                                       </td>
                                       {!readOnly && (
                                         <td className="w-8">
