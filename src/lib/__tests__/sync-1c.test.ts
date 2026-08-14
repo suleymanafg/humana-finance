@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { classifyChannel, monthRange } from "../sync-1c-core";
+import { classifyChannel, monthRange, tashkentDistrictOf } from "../sync-1c-core";
+
+describe("tashkentDistrictOf", () => {
+  it("maps район spellings to canonical district names", () => {
+    expect(tashkentDistrictOf("Чиланзарский район")).toBe("Чиланзарский район");
+    expect(tashkentDistrictOf("Мирзо-Улугбекский")).toBe("Мирзо-Улугбекский район");
+    expect(tashkentDistrictOf("ЯНГИХАЁТСКИЙ РАЙОН")).toBe("Янгихаётский район");
+    expect(tashkentDistrictOf("шайхантаур")).toBe("Шайхантахурский район");
+  });
+  it("returns null for blanks and non-city районы", () => {
+    expect(tashkentDistrictOf("")).toBeNull();
+    expect(tashkentDistrictOf(null)).toBeNull();
+    expect(tashkentDistrictOf("Чирчик")).toBeNull();
+    expect(tashkentDistrictOf("Самаркандский район")).toBeNull();
+  });
+});
 
 describe("classifyChannel", () => {
   it("maps Tashkent city districts to г. Ташкент", () => {

@@ -141,6 +141,32 @@ const CLIENTS: Array<[string[], string]> = [
   [["turbo", "турбо"], "Внутреннее"],
 ];
 
+// Canonical Tashkent-city district names, keyed by the same stems the
+// classifier matches. Used by the geography export to split «г. Ташкент».
+const TASH_DISTRICTS: Array<[string, string]> = [
+  ["алмазар", "Алмазарский район"],
+  ["бектемир", "Бектемирский район"],
+  ["мирабад", "Мирабадский район"],
+  ["мирзо", "Мирзо-Улугбекский район"],
+  ["сергели", "Сергелийский район"],
+  ["учтепа", "Учтепинский район"],
+  ["чиланзар", "Чиланзарский район"],
+  ["шайхантахур", "Шайхантахурский район"],
+  ["шайхантаур", "Шайхантахурский район"],
+  ["юнусабад", "Юнусабадский район"],
+  ["яккасарай", "Яккасарайский район"],
+  ["яшнабад", "Яшнабадский район"],
+  ["янгихает", "Янгихаётский район"],
+];
+
+/** Canonical Tashkent-city district for a raw 1C «Район» value, or null. */
+export function tashkentDistrictOf(rayon: string | null | undefined): string | null {
+  const r = norm(rayon ?? "");
+  if (!r) return null;
+  for (const [stem, name] of TASH_DISTRICTS) if (r.includes(stem)) return name;
+  return null;
+}
+
 export type ClassifyRule = "manual" | "district" | "region" | "client" | "fallback";
 
 /** Returns the DB channel name + which rule fired.

@@ -61,6 +61,7 @@ model ClientChannelMap {
   channel     Channel?  @relation(fields: [channelId], references: [id])
   source      String    @default("auto") // "auto" | "manual"
   matchedRule String? // manual | district | region | client | fallback
+  district    String? // raw 1C «Район» as last seen (drives the Tashkent district split in exports)
   lastSeenAt  DateTime  @default(now())
   totalQty    Float     @default(0) // running qty across pulls (informational)
   deletedAt   DateTime?

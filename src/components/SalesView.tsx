@@ -163,6 +163,51 @@ function MonthBars({
   );
 }
 
+/** Экспорт: choose between the selected month and the full history (both
+ *  include the «География» sheet — Tashkent by district, chains, regions). */
+function ExportMenu({
+  monthId,
+  monthLabel,
+  locale,
+}: {
+  monthId: string;
+  monthLabel: string;
+  locale: string;
+}) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  const item =
+    "block px-3 py-2 text-[12.5px] transition-colors hover:bg-accent-soft hover:text-accent";
+  return (
+    <div className="relative">
+      <Button variant="secondary" onClick={() => setOpen((o) => !o)}>
+        <IconDownload size={14} /> {t("export")}
+      </Button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-[0_8px_24px_rgba(16,24,40,0.12)]">
+            <a
+              href={`/api/export/sales?month=${monthId}&locale=${locale}`}
+              onClick={() => setOpen(false)}
+              className={item}
+            >
+              {t("exportThisMonth")} · {monthLabel}
+            </a>
+            <a
+              href={`/api/export/sales?month=all&locale=${locale}`}
+              onClick={() => setOpen(false)}
+              className={item}
+            >
+              {t("exportAllMonths")}
+            </a>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SalesView({
   months,
   products,
@@ -545,11 +590,7 @@ export default function SalesView({
         subtitle={t("descSales")}
         right={
           <div className="flex items-center gap-2">
-            <a href={`/api/export/sales?month=${monthId}&locale=${locale}`}>
-              <Button variant="secondary">
-                <IconDownload size={14} /> {t("export")}
-              </Button>
-            </a>
+            <ExportMenu monthId={monthId} monthLabel={monthShort(monthId)} locale={locale} />
             {!readOnly && (
               <Button variant="secondary" onClick={() => setShowImport(true)}>
                 <IconUpload size={14} /> {t("salesImportCsv")}

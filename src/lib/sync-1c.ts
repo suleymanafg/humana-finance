@@ -70,7 +70,10 @@ export async function buildSync(
   const fallback = new Map<string, { client: string; qty: number; docs: number }>();
   const byRule: Record<ClassifyRule, number> = { manual: 0, district: 0, region: 0, client: 0, fallback: 0 };
   // per-client aggregates for the registry (only rows that matched a product)
-  const seenClients = new Map<string, { displayName: string; channelName: string; rule: ClassifyRule; qty: number }>();
+  const seenClients = new Map<
+    string,
+    { displayName: string; channelName: string; rule: ClassifyRule; qty: number; district: string | null }
+  >();
   // product × channel × client — the ClientSale drill-down layer
   const clientAgg = new Map<string, { productId: string; channelName: string; name1c: string; qty: number }>();
   const learnedMap = new Map<string, { productId: string; code: string }>();
@@ -120,11 +123,13 @@ export async function buildSync(
     }
     const sc =
       seenClients.get(norm(rawClient)) ??
-      { displayName: rawClient, channelName: cls.channel, rule: cls.rule, qty: 0 };
+      { displayName: rawClient, channelName: cls.channel, rule: cls.rule, qty: 0, district: null };
     sc.qty += qty;
     // rows of one client can classify differently (район varies) — keep the latest
     sc.channelName = cls.channel;
     sc.rule = cls.rule;
+    const rayonRaw = String(it.Район ?? "").trim();
+    if (rayonRaw) sc.district = rayonRaw; // latest non-blank район wins
     seenClients.set(norm(rawClient), sc);
 
     const caKey = `${productId}|${cls.channel}|${norm(rawClient)}`;
@@ -238,6 +243,7 @@ export async function buildSync(
           channelId: resolvedId,
           source: "auto",
           matchedRule: sc.rule,
+          district: sc.district,
           lastSeenAt: now,
           totalQty: sc.qty,
         },
@@ -249,6 +255,9 @@ export async function buildSync(
           displayName: sc.displayName,
           lastSeenAt: now,
           totalQty: { increment: sc.qty },
+          // district is a fact from 1C, not an assignment — refresh it even
+          // on manual rows, but never erase a known one with a blank
+          ...(sc.district ? { district: sc.district } : {}),
           ...(existing.source === "manual" ? {} : { channelId: resolvedId, matchedRule: sc.rule }),
         },
       });
