@@ -93,9 +93,15 @@ export default async function DashboardPage({
       months={dataset.months}
       monthId={monthId}
       netProfit={monthly?.netProfit ?? 0}
+      cumNetProfit={computed.monthly
+        .filter((m) => m.monthId <= monthId)
+        .reduce((a, m) => a + m.netProfit, 0)}
       priorNetProfit={prior?.netProfit ?? null}
       priorMonthId={prior?.monthId ?? null}
-      netSeries={active.map((m) => m.netProfit)}
+      // running total, so the ghost sparkline mirrors the cumulative figure
+      netSeries={active.map((_, i) =>
+        active.slice(0, i + 1).reduce((a, m) => a + m.netProfit, 0)
+      )}
       revenue={monthRevenue}
       priorRevenue={prior?.revenue ?? null}
       gpMarginPct={monthly?.gpMarginPct ?? 0}

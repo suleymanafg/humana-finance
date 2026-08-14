@@ -21,6 +21,7 @@ export default function DashboardView({
   months,
   monthId,
   netProfit,
+  cumNetProfit,
   priorNetProfit,
   priorMonthId,
   netSeries,
@@ -40,6 +41,7 @@ export default function DashboardView({
   months: MonthIn[];
   monthId: string;
   netProfit: number;
+  cumNetProfit: number;
   priorNetProfit: number | null;
   priorMonthId: string | null;
   netSeries: number[];
@@ -106,31 +108,40 @@ export default function DashboardView({
       <section className="quiet-card relative flex flex-col justify-between overflow-hidden rounded-xl p-10 md:flex-row md:items-end">
         <div className="z-10 md:w-2/3">
           <div className="label-caps mb-2">
-            {t("netProfitFor")} {monthName(monthId)}
+            {t("netProfitCum")} — {monthName(monthId)}
           </div>
           <div className="flex flex-wrap items-baseline gap-3">
             <span
-              className={`font-display text-[44px] font-bold leading-[52px] tracking-[-0.02em] md:text-[48px] ${netProfit < 0 ? "text-danger" : "text-accent"}`}
+              className={`font-display text-[44px] font-bold leading-[52px] tracking-[-0.02em] md:text-[48px] ${cumNetProfit < 0 ? "text-danger" : "text-accent"}`}
             >
-              {fmtN(netProfit)}
+              {fmtN(cumNetProfit)}
             </span>
             <span className="font-display text-[22px] font-semibold text-muted">UZS</span>
           </div>
-          {netChange != null && (
-            <div className="mt-5 flex items-center gap-3">
-              <span
-                className={`flex items-center gap-1 rounded-full px-3 py-1 text-[13px] font-medium ${
-                  netChange >= 0 ? "bg-ok-soft text-ok" : "bg-danger-soft text-danger"
-                }`}
-              >
-                {netChange >= 0 ? <IconArrowUp size={13} /> : <IconArrowDown size={13} />}
-                {Math.abs(netChange).toFixed(1)}%
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <span className="text-[13px] text-muted">
+              {t("netProfitFor")} {monthNameGen(monthId)}:{" "}
+              <span className={`num font-medium ${netProfit < 0 ? "text-danger" : "text-ink"}`}>
+                {netProfit >= 0 ? "+" : ""}
+                {fmtN(netProfit)}
               </span>
-              <span className="text-[13px] text-muted">
-                {t("relativeTo")} {monthNameGen(priorMonthId)}
-              </span>
-            </div>
-          )}
+            </span>
+            {netChange != null && (
+              <>
+                <span
+                  className={`flex items-center gap-1 rounded-full px-3 py-1 text-[13px] font-medium ${
+                    netChange >= 0 ? "bg-ok-soft text-ok" : "bg-danger-soft text-danger"
+                  }`}
+                >
+                  {netChange >= 0 ? <IconArrowUp size={13} /> : <IconArrowDown size={13} />}
+                  {Math.abs(netChange).toFixed(1)}%
+                </span>
+                <span className="text-[13px] text-muted">
+                  {t("relativeTo")} {monthNameGen(priorMonthId)}
+                </span>
+              </>
+            )}
+          </div>
         </div>
         <div className="mt-8 flex h-28 items-end justify-end md:mt-0 md:w-1/3">
           {sparkPath && (
