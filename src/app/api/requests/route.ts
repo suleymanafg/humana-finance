@@ -11,7 +11,16 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const body = (await request.json()) as {
-    action: "create" | "send" | "remind" | "revoke" | "decide" | "decideAll" | "integrate" | "delete";
+    action:
+      | "create"
+      | "update"
+      | "send"
+      | "remind"
+      | "revoke"
+      | "decide"
+      | "decideAll"
+      | "integrate"
+      | "delete";
     id?: string;
     kind?: string;
     monthId?: string;
@@ -38,6 +47,33 @@ export async function POST(request: NextRequest) {
           createdBy: session.username,
         });
         return NextResponse.json({ ok: true, id: created.id, items: created.items.length });
+      }
+
+      case "update": {
+        // note and due date are editable any time before integration; the
+        // recipient can only change while the request is still a draft
+        // (afterwards the link already belongs to the original contact)
+        if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
+        const existing = await prisma.dataRequest.findUnique({ where: { id: body.id } });
+        if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });
+        if (existing.status === "INTEGRATED")
+          return NextResponse.json({ error: "already integrated" }, { status: 400 });
+        if (body.contactId && body.contactId !== existing.contactId && existing.status !== "DRAFT")
+          return NextResponse.json(
+            { error: "recipient can only change while the request is a draft" },
+            { status: 400 }
+          );
+        await prisma.dataRequest.update({
+          where: { id: body.id },
+          data: {
+            ...(body.note !== undefined ? { note: body.note?.trim() || null } : {}),
+            ...(body.dueDate !== undefined
+              ? { dueDate: body.dueDate ? new Date(body.dueDate) : null }
+              : {}),
+            ...(body.contactId ? { contactId: body.contactId } : {}),
+          },
+        });
+        return NextResponse.json({ ok: true });
       }
 
       case "send":
