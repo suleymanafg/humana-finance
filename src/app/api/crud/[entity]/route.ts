@@ -134,6 +134,10 @@ const registry: Record<string, EntityConfig> = {
     fields: ["channelId", "source", "matchedRule"],
     softDelete: true,
   },
+  requestSchedule: {
+    delegate: () => prisma.requestSchedule,
+    fields: ["kind", "contactId", "dayOfMonth", "note", "active"],
+  },
   setting: {
     delegate: () => prisma.setting,
     fields: ["key", "value"],

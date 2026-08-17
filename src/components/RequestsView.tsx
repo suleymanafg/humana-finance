@@ -23,7 +23,19 @@ interface ContactLite {
   role: string | null;
   telegramUser: string | null;
   hasChat: boolean;
+  email: string | null;
   active: boolean;
+}
+interface ScheduleLite {
+  id: string;
+  kind: string;
+  kindLabel: string;
+  contactId: string;
+  contactName: string;
+  dayOfMonth: number;
+  note: string | null;
+  active: boolean;
+  lastRunMonthId: string | null;
 }
 interface RequestLite {
   id: string;
@@ -59,23 +71,34 @@ async function post(body: Record<string, unknown>) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  return (await res.json()) as { ok?: boolean; error?: string; delivered?: boolean; reason?: string; url?: string };
+  return (await res.json()) as {
+    ok?: boolean;
+    error?: string;
+    delivered?: boolean;
+    via?: string[];
+    reason?: string;
+    url?: string;
+  };
 }
 
 export default function RequestsView({
   readOnly,
   telegramReady,
+  emailReady,
   kinds,
   months,
   contacts,
   requests,
+  schedules,
 }: {
   readOnly: boolean;
   telegramReady: boolean;
+  emailReady: boolean;
   kinds: KindLite[];
   months: Array<{ id: string; nameRu: string; nameEn: string }>;
   contacts: ContactLite[];
   requests: RequestLite[];
+  schedules: ScheduleLite[];
 }) {
   const { locale } = useT();
   const ru = locale === "ru";
@@ -93,7 +116,10 @@ export default function RequestsView({
     if (result.error) {
       setFlash(result.error);
     } else if (result.delivered) {
-      setFlash(ru ? "Отправлено в Telegram" : "Sent on Telegram");
+      const channels = (result.via ?? [])
+        .map((v) => (v === "telegram" ? "Telegram" : "email"))
+        .join(" + ");
+      setFlash(ru ? `Отправлено: ${channels || "доставлено"}` : `Sent via ${channels || "delivered"}`);
     } else if (action !== "revoke") {
       // no automatic channel: put the link on the clipboard so sending it
       // yourself is one action rather than a hunt for the copy button
@@ -134,7 +160,7 @@ export default function RequestsView({
         </div>
       )}
 
-      {!telegramReady && (
+      {!telegramReady && !emailReady && (
         <div className="mb-4 rounded-lg border border-border bg-surface-low px-3 py-2 text-[12.5px] text-muted">
           {ru
             ? "Автоотправка не подключена — ссылку копируете и отправляете сами, любым удобным способом. Всё остальное работает как обычно."
@@ -234,6 +260,23 @@ export default function RequestsView({
         )}
       </Card>
 
+      {!readOnly && (
+        <Collapsible
+          title={ru ? "Ежемесячная автоотправка" : "Monthly auto-send"}
+          note={`${schedules.filter((s) => s.active).length} ${ru ? "активно" : "active"}${
+            emailReady ? "" : ru ? " · email не настроен" : " · email not configured"
+          }`}
+        >
+          <SchedulesPanel
+            schedules={schedules}
+            kinds={kinds}
+            contacts={contacts.filter((c) => c.active)}
+            ru={ru}
+            onFlash={setFlash}
+          />
+        </Collapsible>
+      )}
+
       <Collapsible
         title={ru ? "Контакты" : "Contacts"}
         note={
@@ -282,13 +325,14 @@ function ComposeCard({
   const [addingContact, setAddingContact] = useState(false);
   const [newName, setNewName] = useState("");
   const [newRole, setNewRole] = useState("");
+  const [newEmail, setNewEmail] = useState("");
   const router = useRouter();
 
   async function addContact() {
     const name = newName.trim();
     if (!name) return;
     const created = await crud("contact", "create", {
-      data: { name, role: newRole.trim() || null },
+      data: { name, role: newRole.trim() || null, email: newEmail.trim() || null },
     });
     if (created.error || !created.id) {
       setError(created.error ?? "error");
@@ -297,6 +341,7 @@ function ComposeCard({
     setContactId(created.id);
     setNewName("");
     setNewRole("");
+    setNewEmail("");
     setAddingContact(false);
     setError(null);
     router.refresh();
@@ -364,7 +409,7 @@ function ComposeCard({
             )}
           </span>
           {addingContact || contacts.length === 0 ? (
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               <Input
                 autoFocus
                 value={newName}
@@ -379,6 +424,13 @@ function ComposeCard({
                 onKeyDown={(e) => e.key === "Enter" && addContact()}
                 placeholder={ru ? "роль" : "role"}
                 className="w-24 min-w-0"
+              />
+              <Input
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addContact()}
+                placeholder="email"
+                className="w-44 min-w-0"
               />
               <Button variant="secondary" onClick={addContact} disabled={!newName.trim()}>
                 <IconCheck size={13} />
@@ -436,12 +488,16 @@ function ContactsPanel({
   const router = useRouter();
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
+  const [email, setEmail] = useState("");
 
   async function add() {
     if (!name.trim()) return;
-    await crud("contact", "create", { data: { name: name.trim(), role: role.trim() || null } });
+    await crud("contact", "create", {
+      data: { name: name.trim(), role: role.trim() || null, email: email.trim() || null },
+    });
     setName("");
     setRole("");
+    setEmail("");
     router.refresh();
   }
 
@@ -455,7 +511,7 @@ function ContactsPanel({
 
       <div className="space-y-1.5">
         {contacts.map((c) => (
-          <div key={c.id} className="flex items-center gap-2 text-[13px]">
+          <div key={c.id} className="flex flex-wrap items-center gap-2 text-[13px]">
             <IconUser size={14} />
             <span className="font-medium">{c.name}</span>
             {c.role && <span className="text-muted">· {c.role}</span>}
@@ -465,6 +521,11 @@ function ContactsPanel({
               ) : (
                 <Badge tone="neutral">{ru ? "нет Telegram" : "no Telegram"}</Badge>
               ))}
+            {readOnly ? (
+              c.email && <Badge tone="ok">{c.email}</Badge>
+            ) : (
+              <ContactEmailCell id={c.id} email={c.email} ru={ru} />
+            )}
           </div>
         ))}
         {contacts.length === 0 && (
@@ -486,11 +547,197 @@ function ContactsPanel({
             placeholder={ru ? "Роль (бухгалтер, склад)" : "Role"}
             className="w-52"
           />
+          <Input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="email"
+            className="w-56"
+          />
           <Button variant="secondary" onClick={add}>
             <IconPlus size={13} /> {ru ? "Добавить" : "Add"}
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Inline email on a contact row — commit on blur, empty clears the address. */
+function ContactEmailCell({ id, email, ru }: { id: string; email: string | null; ru: boolean }) {
+  const router = useRouter();
+  const [text, setText] = useState(email ?? "");
+  const [last, setLast] = useState(email ?? "");
+  if (last !== (email ?? "")) {
+    setLast(email ?? "");
+    setText(email ?? "");
+  }
+  return (
+    <input
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={async () => {
+        const v = text.trim();
+        if (v === (email ?? "")) return;
+        await crud("contact", "update", { id, data: { email: v || null } });
+        router.refresh();
+      }}
+      placeholder={ru ? "email…" : "email…"}
+      className="w-56 rounded-md border border-border bg-surface px-2 py-1 text-[12px] outline-none focus:border-accent"
+    />
+  );
+}
+
+/** Monthly auto-send: each row = one request generated per month for a contact. */
+function SchedulesPanel({
+  schedules,
+  kinds,
+  contacts,
+  ru,
+  onFlash,
+}: {
+  schedules: ScheduleLite[];
+  kinds: KindLite[];
+  contacts: ContactLite[];
+  ru: boolean;
+  onFlash: (m: string) => void;
+}) {
+  const router = useRouter();
+  const [kind, setKind] = useState(kinds[0]?.id ?? "");
+  const [contactId, setContactId] = useState(contacts[0]?.id ?? "");
+  const [day, setDay] = useState("1");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    const d = Math.min(28, Math.max(1, Number(day) || 1));
+    if (!contactId) return;
+    setBusy(true);
+    await crud("requestSchedule", "create", {
+      data: { kind, contactId, dayOfMonth: d, note: note.trim() || null, active: true },
+    });
+    setBusy(false);
+    setNote("");
+    router.refresh();
+  }
+
+  async function toggle(s: ScheduleLite) {
+    await crud("requestSchedule", "update", { id: s.id, data: { active: !s.active } });
+    router.refresh();
+  }
+
+  async function remove(id: string) {
+    if (!confirm(ru ? "Удалить расписание?" : "Delete this schedule?")) return;
+    await crud("requestSchedule", "delete", { id });
+    router.refresh();
+  }
+
+  async function runNow() {
+    setBusy(true);
+    const res = await fetch("/api/cron/requests");
+    const json = (await res.json()) as { fired?: Array<{ schedule: string; contact: string; delivered?: boolean; error?: string }> };
+    setBusy(false);
+    const fired = json.fired ?? [];
+    onFlash(
+      fired.length === 0
+        ? ru
+          ? "Проверено: сегодня отправлять нечего (или уже отправлено в этом месяце)"
+          : "Checked: nothing due today (or already sent this month)"
+        : fired
+            .map(
+              (f) =>
+                `${f.schedule} → ${f.contact}: ${
+                  f.error ? f.error : f.delivered ? (ru ? "отправлено" : "sent") : ru ? "создано, ссылка вручную" : "created, link manual"
+                }`
+            )
+            .join(" · ")
+    );
+    router.refresh();
+  }
+
+  return (
+    <div className="p-4">
+      <p className="mb-3 text-[12.5px] leading-relaxed text-muted">
+        {ru
+          ? "Каждый месяц в указанный день приложение само создаст запрос за прошедший месяц и отправит его по email/Telegram. Проверка идёт раз в день утром; повторно в том же месяце не отправляется."
+          : "On the chosen day each month the app creates the request for the month just ended and delivers it by email/Telegram. The check runs every morning; a schedule never fires twice in one month."}
+      </p>
+
+      <div className="space-y-1.5">
+        {schedules.map((s) => (
+          <div key={s.id} className="flex flex-wrap items-center gap-2 text-[13px]">
+            <button
+              onClick={() => toggle(s)}
+              title={ru ? "Включить/выключить" : "Toggle"}
+              className={`h-4 w-7 rounded-full transition-colors ${s.active ? "bg-accent" : "bg-border-strong"}`}
+            >
+              <span
+                className={`block h-3 w-3 rounded-full bg-white transition-transform ${
+                  s.active ? "translate-x-3.5" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+            <span className={`font-medium ${s.active ? "" : "text-muted line-through"}`}>{s.kindLabel}</span>
+            <span className="text-muted">→ {s.contactName}</span>
+            <Badge tone="neutral">
+              {ru ? `${s.dayOfMonth}-го числа` : `day ${s.dayOfMonth}`}
+            </Badge>
+            {s.lastRunMonthId && (
+              <span className="text-[11.5px] text-muted">
+                {ru ? "последний запуск:" : "last run:"} {s.lastRunMonthId}
+              </span>
+            )}
+            <button
+              onClick={() => remove(s.id)}
+              className="text-muted transition-colors hover:text-danger"
+              title={ru ? "Удалить" : "Delete"}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        {schedules.length === 0 && (
+          <p className="text-[13px] text-muted">{ru ? "Расписаний пока нет." : "No schedules yet."}</p>
+        )}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+        <Select value={kind} onChange={(e) => setKind(e.target.value)}>
+          {kinds.map((k) => (
+            <option key={k.id} value={k.id}>
+              {ru ? k.labelRu : k.labelEn}
+            </option>
+          ))}
+        </Select>
+        <Select value={contactId} onChange={(e) => setContactId(e.target.value)}>
+          {contacts.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+              {c.email ? "" : ru ? " (нет email)" : " (no email)"}
+            </option>
+          ))}
+        </Select>
+        <span className="flex items-center gap-1 text-[12.5px] text-muted">
+          {ru ? "числа" : "on day"}
+          <Input
+            value={day}
+            onChange={(e) => setDay(e.target.value)}
+            className="w-14 text-right"
+          />
+        </span>
+        <Input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder={ru ? "сообщение (необязательно)" : "message (optional)"}
+          className="w-56"
+        />
+        <Button variant="secondary" onClick={add} disabled={busy || contacts.length === 0}>
+          <IconPlus size={13} /> {ru ? "Добавить" : "Add"}
+        </Button>
+        <span className="flex-1" />
+        <Button variant="secondary" onClick={runNow} disabled={busy}>
+          {busy ? "…" : ru ? "Проверить сейчас" : "Run check now"}
+        </Button>
+      </div>
     </div>
   );
 }

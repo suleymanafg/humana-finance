@@ -4,51 +4,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
-import { createRequest, fillUrl, integrateRequest } from "@/lib/requests/service";
-import { kindOf } from "@/lib/requests/kinds";
-import { reminderMessage, requestMessage, sendMessage, telegramConfigured } from "@/lib/telegram";
-
-async function deliver(requestId: string, remind: boolean) {
-  const request = await prisma.dataRequest.findUnique({
-    where: { id: requestId },
-    include: { items: true, contact: true, month: true },
-  });
-  if (!request) return { ok: false as const, error: "not found" };
-  const spec = kindOf(request.kind);
-  const url = fillUrl(request.token);
-
-  // No bot token or the contact has never opened the chat: still a valid send,
-  // the UI just shows the link for the owner to paste manually.
-  if (!telegramConfigured() || !request.contact.telegramChatId) {
-    return {
-      ok: true as const,
-      url,
-      delivered: false,
-      reason: telegramConfigured() ? "contact-has-no-chat" : "no-bot-token",
-    };
-  }
-
-  const text = remind
-    ? reminderMessage({
-        kindLabel: spec?.labelRu ?? request.kind,
-        monthName: request.month.nameRu,
-        filled: request.items.filter((i) => i.value !== null).length,
-        total: request.items.length,
-        url,
-      })
-    : requestMessage({
-        contactName: request.contact.name,
-        kindLabel: spec?.labelRu ?? request.kind,
-        monthName: request.month.nameRu,
-        itemCount: request.items.length,
-        dueDate: request.dueDate,
-        note: request.note,
-        url,
-      });
-
-  const sent = await sendMessage(request.contact.telegramChatId, text);
-  return { ok: true as const, url, delivered: sent.ok, reason: sent.error };
-}
+import { createRequest, deliverRequest, integrateRequest } from "@/lib/requests/service";
 
 export async function POST(request: NextRequest) {
   const session = await requireAdmin();
@@ -87,7 +43,7 @@ export async function POST(request: NextRequest) {
       case "send":
       case "remind": {
         if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
-        const result = await deliver(body.id, body.action === "remind");
+        const result = await deliverRequest(body.id, body.action === "remind");
         if (!result.ok) return NextResponse.json({ error: result.error }, { status: 404 });
         await prisma.dataRequest.update({
           where: { id: body.id },

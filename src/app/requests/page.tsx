@@ -3,13 +3,14 @@ import { getSession } from "@/lib/auth";
 import { REQUEST_KINDS } from "@/lib/requests/kinds";
 import { fillUrl } from "@/lib/requests/service";
 import { telegramConfigured } from "@/lib/telegram";
+import { emailConfigured } from "@/lib/email";
 import RequestsView from "@/components/RequestsView";
 
 export const dynamic = "force-dynamic";
 
 export default async function RequestsPage() {
   const session = await getSession();
-  const [requests, contacts, months] = await Promise.all([
+  const [requests, contacts, months, schedules] = await Promise.all([
     prisma.dataRequest.findMany({
       orderBy: { createdAt: "desc" },
       include: {
@@ -20,12 +21,25 @@ export default async function RequestsPage() {
     }),
     prisma.contact.findMany({ orderBy: [{ active: "desc" }, { name: "asc" }] }),
     prisma.month.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.requestSchedule.findMany({ orderBy: { createdAt: "asc" }, include: { contact: true } }),
   ]);
 
   return (
     <RequestsView
       readOnly={session?.role !== "ADMIN"}
       telegramReady={telegramConfigured()}
+      emailReady={emailConfigured()}
+      schedules={schedules.map((s) => ({
+        id: s.id,
+        kind: s.kind,
+        kindLabel: REQUEST_KINDS[s.kind]?.labelRu ?? s.kind,
+        contactId: s.contactId,
+        contactName: s.contact.name,
+        dayOfMonth: s.dayOfMonth,
+        note: s.note,
+        active: s.active,
+        lastRunMonthId: s.lastRunMonthId,
+      }))}
       kinds={Object.entries(REQUEST_KINDS).map(([id, k]) => ({
         id,
         labelRu: k.labelRu,
@@ -38,6 +52,7 @@ export default async function RequestsPage() {
         role: c.role,
         telegramUser: c.telegramUser,
         hasChat: !!c.telegramChatId,
+        email: c.email,
         active: c.active,
       }))}
       requests={requests.map((r) => ({

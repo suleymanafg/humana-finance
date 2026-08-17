@@ -16,7 +16,9 @@ export function proxy(request: NextRequest) {
     pathname.startsWith("/api/import/1c") ||
     pathname.startsWith("/f/") ||
     pathname.startsWith("/api/f/") ||
-    pathname.startsWith("/api/telegram/");
+    pathname.startsWith("/api/telegram/") ||
+    // Vercel Cron authenticates with its own bearer secret inside the route
+    pathname.startsWith("/api/cron/");
   // the root layout needs the path to decide whether to render the app shell
   const withPath = () => {
     const headers = new Headers(request.headers);
