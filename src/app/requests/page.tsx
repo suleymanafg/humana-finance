@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function RequestsPage() {
   const session = await getSession();
-  const [requests, contacts, months, schedules] = await Promise.all([
+  const [requests, contacts, months] = await Promise.all([
     prisma.dataRequest.findMany({
       orderBy: { createdAt: "desc" },
       include: {
@@ -21,7 +21,6 @@ export default async function RequestsPage() {
     }),
     prisma.contact.findMany({ orderBy: [{ active: "desc" }, { name: "asc" }] }),
     prisma.month.findMany({ orderBy: { sortOrder: "asc" } }),
-    prisma.requestSchedule.findMany({ orderBy: { createdAt: "asc" }, include: { contact: true } }),
   ]);
 
   return (
@@ -29,17 +28,6 @@ export default async function RequestsPage() {
       readOnly={session?.role !== "ADMIN"}
       telegramReady={telegramConfigured()}
       emailReady={emailConfigured()}
-      schedules={schedules.map((s) => ({
-        id: s.id,
-        kind: s.kind,
-        kindLabel: REQUEST_KINDS[s.kind]?.labelRu ?? s.kind,
-        contactId: s.contactId,
-        contactName: s.contact.name,
-        dayOfMonth: s.dayOfMonth,
-        note: s.note,
-        active: s.active,
-        lastRunMonthId: s.lastRunMonthId,
-      }))}
       kinds={Object.entries(REQUEST_KINDS).map(([id, k]) => ({
         id,
         labelRu: k.labelRu,

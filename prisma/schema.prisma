@@ -354,24 +354,7 @@ model Contact {
   email          String?
   active         Boolean @default(true)
 
-  requests  DataRequest[]
-  schedules RequestSchedule[]
-}
-
-// Monthly automation: on day `dayOfMonth` (Tashkent time) the daily cron
-// creates a request of `kind` for the PREVIOUS month and delivers it by
-// email/Telegram. `lastRunMonthId` guards against double-sending within a
-// month even if the cron fires late or twice.
-model RequestSchedule {
-  id             String   @id @default(cuid())
-  kind           String // key into REQUEST_KINDS
-  contactId      String
-  contact        Contact  @relation(fields: [contactId], references: [id])
-  dayOfMonth     Int      @default(1)
-  note           String? // carried onto every generated request
-  active         Boolean  @default(true)
-  lastRunMonthId String? // month key ("2026-08") the schedule last fired in
-  createdAt      DateTime @default(now())
+  requests DataRequest[]
 }
 
 // status: DRAFT | SENT | OPENED | PARTIAL | SUBMITTED | INTEGRATED | REVOKED
