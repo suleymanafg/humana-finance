@@ -3,8 +3,8 @@
 // App shell per the approved Stitch design: fixed navy sidebar with a 4px
 // left-bar active indicator, and a sticky top bar carrying the global month
 // switcher, notifications and the greeting.
-import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { useEffect, useRef, useState, useTransition } from "react";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import type { DictKey } from "@/lib/i18n";
@@ -32,6 +32,20 @@ import {
 } from "./icons";
 
 type NavItem = { href: string; key: DictKey; icon: React.ComponentType<{ size?: number }>; adminOnly?: boolean };
+
+/** Fixed-size spinner slot inside each nav link; visible only while that
+ *  link's navigation is pending, so a click always gives instant feedback. */
+function NavSpinner() {
+  const { pending } = useLinkStatus();
+  return (
+    <span
+      aria-hidden
+      className={`h-3.5 w-3.5 shrink-0 rounded-full border-2 border-sidebar-fg/30 border-t-sidebar-fg-strong transition-opacity ${
+        pending ? "animate-spin opacity-100" : "opacity-0"
+      }`}
+    />
+  );
+}
 
 const NAV: NavItem[] = [
   { href: "/", key: "navDashboard", icon: IconDashboard },
@@ -130,6 +144,7 @@ export default function AppShell({
                       <Icon size={17} />
                     </span>
                     <span className="flex-1 truncate">{t(item.key)}</span>
+                    <NavSpinner />
                     {item.href === "/health" && healthWarnings > 0 && (
                       <span className="rounded-full bg-[#b54708]/30 px-1.5 text-[11px] font-semibold text-[#ffb85c]">
                         {healthWarnings}
@@ -226,6 +241,7 @@ function MonthSwitcher({
   const pathname = usePathname();
   const params = useSearchParams();
   const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
   const popRef = useRef<HTMLDivElement>(null);
 
   // fallbackMonth is already cookie-resolved on the server, so SSR and the
@@ -248,7 +264,7 @@ function MonthSwitcher({
     document.cookie = `${MONTH_COOKIE}=${monthId};path=/;max-age=${3600 * 24 * 90}`;
     const p = new URLSearchParams(params.toString());
     p.set("month", monthId);
-    router.push(`${pathname}?${p.toString()}`);
+    startTransition(() => router.push(`${pathname}?${p.toString()}`));
     setOpen(false);
   }
 
@@ -257,7 +273,15 @@ function MonthSwitcher({
 
   return (
     <div className="relative flex items-center gap-2" ref={popRef}>
-      <h2 className="font-display text-[20px] font-bold text-accent">{name(months[idx])}</h2>
+      <h2 className={`font-display text-[20px] font-bold text-accent transition-opacity ${pending ? "opacity-50" : ""}`}>
+        {name(months[idx])}
+      </h2>
+      <span
+        aria-hidden
+        className={`h-3.5 w-3.5 shrink-0 rounded-full border-2 border-accent/30 border-t-accent transition-opacity ${
+          pending ? "animate-spin opacity-100" : "opacity-0"
+        }`}
+      />
       <div className="ml-1 flex items-center">
         <button
           onClick={() => idx > 0 && goTo(months[idx - 1].id)}
