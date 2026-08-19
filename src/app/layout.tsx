@@ -37,7 +37,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   let shellData: {
     months: Array<{ id: string; nameRu: string; nameEn: string }>;
-    status: Array<{ monthId: string; status: "complete" | "partial" | "empty" }>;
+    status: Array<{ monthId: string; status: "complete" | "partial" | "empty"; closed: boolean }>;
     fallbackMonth: string;
     healthWarnings: number;
   } | null = null;
@@ -50,7 +50,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     const cookieMonth = store.get(MONTH_COOKIE)?.value;
     shellData = {
       months: dataset.months.map((m) => ({ id: m.id, nameRu: m.nameRu, nameEn: m.nameEn })),
-      status: status.map((s) => ({ monthId: s.monthId, status: s.status })),
+      status: status.map((s) => ({ monthId: s.monthId, status: s.status, closed: s.closed })),
       fallbackMonth:
         cookieMonth && dataset.months.some((m) => m.id === cookieMonth) ? cookieMonth : fallback,
       healthWarnings: computed.healthChecks.filter((h) => h.status === "warn" && h.severity === "warn").length,

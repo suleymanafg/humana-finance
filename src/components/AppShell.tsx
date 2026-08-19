@@ -20,6 +20,7 @@ import {
   IconDashboard,
   IconEdit,
   IconInbox,
+  IconLock,
   IconLogout,
   IconPercent,
   IconPnl,
@@ -70,6 +71,7 @@ interface MonthLite {
 interface StatusLite {
   monthId: string;
   status: "complete" | "partial" | "empty";
+  closed: boolean;
 }
 
 export default function AppShell({
@@ -236,7 +238,7 @@ function MonthSwitcher({
   status: StatusLite[];
   fallbackMonth: string;
 }) {
-  const { locale } = useT();
+  const { locale, t } = useT();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -276,6 +278,11 @@ function MonthSwitcher({
       <h2 className={`font-display text-[20px] font-bold text-accent transition-opacity ${pending ? "opacity-50" : ""}`}>
         {name(months[idx])}
       </h2>
+      {status.find((x) => x.monthId === current)?.closed && (
+        <span className="text-muted" title={t("monthClosedBadge")}>
+          <IconLock size={14} />
+        </span>
+      )}
       <span
         aria-hidden
         className={`h-3.5 w-3.5 shrink-0 rounded-full border-2 border-accent/30 border-t-accent transition-opacity ${
@@ -309,7 +316,7 @@ function MonthSwitcher({
         <div className="absolute left-0 top-11 z-50 w-72 rounded-lg border border-border bg-surface p-2 shadow-xl">
           <div className="grid grid-cols-2 gap-1">
             {months.map((m) => {
-              const s = status.find((x) => x.monthId === m.id)?.status;
+              const st = status.find((x) => x.monthId === m.id);
               const active = m.id === current;
               return (
                 <button
@@ -320,7 +327,14 @@ function MonthSwitcher({
                   }`}
                 >
                   <span className="truncate">{name(m)}</span>
-                  <span className={`ml-2 h-1.5 w-1.5 shrink-0 rounded-full ${dot(s)}`} />
+                  <span className="ml-2 flex shrink-0 items-center gap-1.5">
+                    {st?.closed && (
+                      <span className="text-muted">
+                        <IconLock size={11} />
+                      </span>
+                    )}
+                    <span className={`h-1.5 w-1.5 rounded-full ${dot(st?.status)}`} />
+                  </span>
                 </button>
               );
             })}

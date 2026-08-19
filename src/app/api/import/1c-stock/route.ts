@@ -21,6 +21,7 @@
 // Response: { imported: n, rejected: [ { row, reason } ] }.
 import { NextResponse, type NextRequest } from "next/server";
 import { commitStockRows, matchStockRows, type StockRow } from "@/lib/import-stock";
+import { closedMonthIds } from "@/lib/month-close";
 
 export async function POST(request: NextRequest) {
   const key = request.headers.get("x-api-key");
@@ -36,6 +37,15 @@ export async function POST(request: NextRequest) {
   if (!Array.isArray(body.rows)) return NextResponse.json({ error: "rows required" }, { status: 400 });
 
   const result = await matchStockRows(body.rows, body.month);
-  await commitStockRows(result.matched, "1c-api", body.fullSnapshot !== false);
-  return NextResponse.json({ imported: result.matched.length, rejected: result.rejected });
+  // closed months are frozen for the external feed: reject, never overwrite
+  const closed = await closedMonthIds();
+  const writable = result.matched.filter((r) => !closed.has(r.monthId));
+  const frozen = result.matched
+    .filter((r) => closed.has(r.monthId))
+    .map((r) => ({
+      row: { warehouse: r.warehouseName, productName: r.productName, qty: r.qty, month: r.monthId },
+      reason: "month is closed",
+    }));
+  await commitStockRows(writable, "1c-api", body.fullSnapshot !== false);
+  return NextResponse.json({ imported: writable.length, rejected: [...result.rejected, ...frozen] });
 }

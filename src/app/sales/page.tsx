@@ -1,7 +1,7 @@
 import { getComputed } from "@/lib/data";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { canEditData } from "@/lib/permissions";
+import { canEditData, canEditClosedMonth } from "@/lib/permissions";
 import SalesView from "@/components/SalesView";
 import { costProductIdOf } from "@/lib/engine/compute";
 import { resolveMonthId } from "@/lib/month";
@@ -92,7 +92,10 @@ export default async function SalesPage({
           computed.productCosts[costProductIdOf(p.id, dataset)]?.avgTiCost ?? 0,
         ])
       )}
-      readOnly={!canEditData(session?.role)}
+      readOnly={
+        !canEditData(session?.role) ||
+        (!!dataset.months.find((m) => m.id === monthId)?.closedAt && !canEditClosedMonth(session?.role))
+      }
     />
   );
 }

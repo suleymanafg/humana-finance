@@ -5,7 +5,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireDataEditor } from "@/lib/auth";
-import { canWriteEntity } from "@/lib/permissions";
+import { canWriteEntity, canEditClosedMonth } from "@/lib/permissions";
+import { isMonthClosed } from "@/lib/month-close";
 
 interface EntityConfig {
   delegate: () => unknown; // prisma model delegate
@@ -141,6 +142,56 @@ const registry: Record<string, EntityConfig> = {
   },
 };
 
+// Which field ties each figure entity to a month, for the closed-month guard.
+// shipmentLine resolves through its shipment; entities absent here are either
+// month-less (contributions, transfers) or structural (ADMIN-only anyway).
+const MONTH_FIELD: Record<string, string> = {
+  shipment: "monthId",
+  importExpense: "monthId",
+  opexTi: "monthId",
+  opexFargo: "monthId",
+  marketing: "monthId",
+  arEntry: "monthId",
+  stockCount: "monthId",
+  monthBalance: "monthId",
+  taxFiling: "bookedMonthId",
+};
+
+/** Every month a write touches: the incoming payload's month and, for
+ *  update/delete, the month the existing row already belongs to. */
+async function affectedMonths(
+  entity: string,
+  config: EntityConfig,
+  data: Record<string, unknown>,
+  id: string | undefined
+): Promise<string[]> {
+  const out = new Set<string>();
+  if (entity === "shipmentLine") {
+    const shipmentId = (data.shipmentId as string | undefined) ?? undefined;
+    if (shipmentId) {
+      const s = await prisma.shipment.findUnique({ where: { id: shipmentId }, select: { monthId: true } });
+      if (s) out.add(s.monthId);
+    }
+    if (id) {
+      const line = await prisma.shipmentLine.findUnique({
+        where: { id },
+        select: { shipment: { select: { monthId: true } } },
+      });
+      if (line) out.add(line.shipment.monthId);
+    }
+    return [...out];
+  }
+  const field = MONTH_FIELD[entity];
+  if (!field) return [];
+  if (typeof data[field] === "string") out.add(data[field] as string);
+  if (id) {
+    const delegate = config.delegate() as Delegate;
+    const row = (await delegate.findUnique({ where: { id } })) as Record<string, unknown> | null;
+    if (row && typeof row[field] === "string") out.add(row[field] as string);
+  }
+  return [...out];
+}
+
 type Delegate = {
   create: (args: unknown) => Promise<{ id?: string }>;
   update: (args: unknown) => Promise<{ id?: string }>;
@@ -179,6 +230,16 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ entity
   }
 
   try {
+    // a closed month is frozen for everyone but ADMIN
+    if (!canEditClosedMonth(session.role)) {
+      const monthIds = await affectedMonths(entity, config, data, body.id);
+      for (const monthId of monthIds) {
+        if (await isMonthClosed(monthId)) {
+          return NextResponse.json({ error: "month is closed" }, { status: 403 });
+        }
+      }
+    }
+
     let result: { id?: string } | undefined;
     if (body.action === "create") {
       result = await delegate.create({ data });

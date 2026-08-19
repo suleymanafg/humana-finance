@@ -27,6 +27,8 @@ export interface MonthIn {
   nameRu: string;
   nameEn: string;
   sortOrder: number;
+  closedAt?: Date | null; // set = month is closed (frozen for STAFF, shown on P&L)
+  closedBy?: string | null;
 }
 
 export interface SaleIn {

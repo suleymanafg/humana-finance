@@ -5,6 +5,7 @@ import type { Dataset } from "./engine/types";
 export interface MonthStatus {
   monthId: string;
   status: "complete" | "partial" | "empty";
+  closed: boolean;
   hasSales: boolean;
   hasShipments: boolean;
   hasOpexTi: boolean;
@@ -33,7 +34,7 @@ export function computeMonthStatus(dataset: Dataset): MonthStatus[] {
       : required.some(Boolean) || checks.hasAr || checks.hasShipments
         ? "partial"
         : "empty";
-    return { monthId: m.id, status, ...checks };
+    return { monthId: m.id, status, closed: !!m.closedAt, ...checks };
   });
 }
 

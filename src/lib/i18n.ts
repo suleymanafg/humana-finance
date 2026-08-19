@@ -465,6 +465,32 @@ export const dict = {
   open: { ru: "Открыть", en: "Open" },
   monthProgress: { ru: "Готовность месяца", en: "Month progress" },
 
+  // month close / reopen
+  closeMonthBtn: { ru: "Закрыть месяц", en: "Close month" },
+  reopenMonthBtn: { ru: "Открыть заново", en: "Reopen month" },
+  monthClosedBadge: { ru: "Месяц закрыт", en: "Month closed" },
+  closeMonthHint: {
+    ru: "После закрытия данные месяца фиксируются: изменять их может только администратор, а месяц появляется в P&L.",
+    en: "Closing freezes the month's figures: only an administrator can change them, and the month appears on the P&L.",
+  },
+  closeMonthConfirmIncomplete: {
+    ru: "Не все шаги заполнены. Всё равно закрыть месяц?",
+    en: "Not all steps are complete. Close the month anyway?",
+  },
+  reopenMonthConfirm: {
+    ru: "Открыть месяц заново? Он исчезнет из P&L, и сотрудники снова смогут менять данные.",
+    en: "Reopen this month? It will disappear from the P&L and staff will be able to edit it again.",
+  },
+  monthClosedReadOnly: {
+    ru: "Месяц закрыт — данные доступны только для чтения",
+    en: "This month is closed — data is read-only",
+  },
+  closedOn: { ru: "Закрыт", en: "Closed" },
+  pnlNoClosedMonths: {
+    ru: "Пока нет закрытых месяцев. P&L показывает только закрытые месяцы — закройте месяц на странице «Ввод данных».",
+    en: "No months are closed yet. The P&L shows closed months only — close a month on the Data entry page.",
+  },
+
   // nav groups & page subtitles
   navGroupOverview: { ru: "Обзор", en: "Overview" },
   navGroupData: { ru: "Данные", en: "Data" },

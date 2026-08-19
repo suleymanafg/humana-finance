@@ -10,6 +10,7 @@
 // for every unmatched name; matched rows upsert by (month, product, channel).
 import { NextResponse, type NextRequest } from "next/server";
 import { commitRows, matchRows, type ImportRow } from "@/lib/import-sales";
+import { closedMonthIds } from "@/lib/month-close";
 
 export async function POST(request: NextRequest) {
   const key = request.headers.get("x-api-key");
@@ -21,6 +22,15 @@ export async function POST(request: NextRequest) {
   if (!Array.isArray(body.rows)) return NextResponse.json({ error: "rows required" }, { status: 400 });
 
   const result = await matchRows(body.rows);
-  await commitRows(result.matched, "API", "1c-api");
-  return NextResponse.json({ imported: result.matched.length, rejected: result.rejected });
+  // closed months are frozen for the external feed: reject, never overwrite
+  const closed = await closedMonthIds();
+  const writable = result.matched.filter((r) => !closed.has(r.monthId));
+  const frozen = result.matched
+    .filter((r) => closed.has(r.monthId))
+    .map((r) => ({
+      row: { month: r.monthId, productName: r.productName, channelName: r.channelName, qty: r.qty },
+      reason: "month is closed",
+    }));
+  await commitRows(writable, "API", "1c-api");
+  return NextResponse.json({ imported: writable.length, rejected: [...result.rejected, ...frozen] });
 }

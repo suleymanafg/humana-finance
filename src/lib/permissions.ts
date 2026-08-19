@@ -27,6 +27,12 @@ export const STRUCTURAL_ENTITIES = new Set([
 /** May write figures (OPEX amounts, stock, AR, shipments, balance inputs). */
 export const canEditData = (role?: Role): boolean => role === "ADMIN" || role === "STAFF";
 
+/**
+ * A closed month is frozen: only ADMIN may still change its figures (and may
+ * reopen it). STAFF writes and the 1C token feeds are rejected.
+ */
+export const canEditClosedMonth = (role?: Role): boolean => role === "ADMIN";
+
 /** May add/rename/remove categories, products, channels, warehouses, settings. */
 export const canEditStructure = (role?: Role): boolean => role === "ADMIN";
 

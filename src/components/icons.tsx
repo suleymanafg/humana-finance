@@ -262,6 +262,13 @@ export const IconSparkles = (p: P) => (
   </Svg>
 );
 
+export const IconLock = (p: P) => (
+  <Svg {...p}>
+    <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+    <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+  </Svg>
+);
+
 export const IconMinus = (p: P) => (
   <Svg {...p}>
     <path d="M5 12h14" />

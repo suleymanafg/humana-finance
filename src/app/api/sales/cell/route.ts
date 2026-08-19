@@ -2,6 +2,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireDataEditor } from "@/lib/auth";
+import { canEditClosedMonth } from "@/lib/permissions";
+import { isMonthClosed } from "@/lib/month-close";
 
 export async function POST(request: NextRequest) {
   const session = await requireDataEditor();
@@ -15,6 +17,10 @@ export async function POST(request: NextRequest) {
   };
   if (!monthId || !productId || !channelId || typeof qty !== "number" || Number.isNaN(qty)) {
     return NextResponse.json({ error: "bad payload" }, { status: 400 });
+  }
+
+  if (!canEditClosedMonth(session.role) && (await isMonthClosed(monthId))) {
+    return NextResponse.json({ error: "month is closed" }, { status: 403 });
   }
 
   const where = { monthId_productId_channelId: { monthId, productId, channelId } };

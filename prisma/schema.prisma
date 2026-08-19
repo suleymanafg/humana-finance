@@ -91,10 +91,14 @@ model ClientSale {
 
 // id is the month code, e.g. "2025-08" — used by CSV/1C import and sorting.
 model Month {
-  id        String @id
+  id        String    @id
   nameRu    String
   nameEn    String
   sortOrder Int
+  // month close: set → figures are frozen for STAFF and external feeds, and
+  // the month becomes visible on the P&L. Admin may still edit and reopen.
+  closedAt  DateTime?
+  closedBy  String?
 
   sales          Sale[]
   shipments      Shipment[]

@@ -2,7 +2,11 @@
 
 // Ввод данных (monthly close): a guided six-step checklist for one month.
 // Each step shows its status and opens the focused place to enter that data.
+// Once the data is in, ADMIN closes the month here — freezing it for STAFF
+// and the 1C feeds and putting it onto the P&L — and can reopen it later.
 import Link from "next/link";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import { fmtN } from "@/lib/format";
 import { IconCheck, IconChevronRight } from "./icons";
@@ -16,13 +20,41 @@ export default function CloseView({
   monthId,
   status,
   summary,
+  closedInfo,
+  isAdmin,
 }: {
   months: MonthIn[];
   monthId: string;
   status: MonthStatus | null;
   summary: { revenue: number; totalOpex: number; netProfit: number };
+  closedInfo: { closed: boolean; closedBy: string | null; closedAt: string | null };
+  isAdmin: boolean;
 }) {
   const { t, locale } = useT();
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
+
+  async function setClosed(action: "close" | "reopen") {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/close-month", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ monthId, action }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        setError(body?.error ?? "error");
+        return;
+      }
+      startTransition(() => router.refresh());
+    } finally {
+      setBusy(false);
+    }
+  }
   const monthName = (() => {
     const m = months.find((x) => x.id === monthId);
     return m ? (locale === "ru" ? m.nameRu : m.nameEn) : monthId;
@@ -110,6 +142,60 @@ export default function CloseView({
             <span className="num">{fmtN(summary.netProfit)}</span>
           </div>
         )}
+      </div>
+
+      {/* close / reopen */}
+      <div className="quiet-card rounded-xl p-6">
+        {closedInfo.closed ? (
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[15px] font-semibold text-ok">
+                <IconCheck size={16} /> {t("monthClosedBadge")}
+              </div>
+              <p className="mt-1 text-[13px] text-muted">
+                {t("closedOn")}
+                {closedInfo.closedBy ? ` · ${closedInfo.closedBy}` : ""}
+                {closedInfo.closedAt
+                  ? ` · ${new Date(closedInfo.closedAt).toLocaleDateString(
+                      locale === "ru" ? "ru-RU" : "en-GB",
+                      { day: "numeric", month: "long", year: "numeric" }
+                    )}`
+                  : ""}
+              </p>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  if (confirm(t("reopenMonthConfirm"))) void setClosed("reopen");
+                }}
+                disabled={busy || pending}
+                className="rounded-lg border border-border px-4 py-2 text-[13.5px] font-medium transition-colors hover:border-border-strong hover:bg-surface-low disabled:opacity-50"
+              >
+                {t("reopenMonthBtn")}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="min-w-0 max-w-xl">
+              <div className="text-[15px] font-medium">{t("closeMonthBtn")}</div>
+              <p className="mt-1 text-[13px] text-muted">{t("closeMonthHint")}</p>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  if (progress < 1 && !confirm(t("closeMonthConfirmIncomplete"))) return;
+                  void setClosed("close");
+                }}
+                disabled={busy || pending}
+                className="rounded-lg bg-accent px-4 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+              >
+                {busy || pending ? t("saving") : t("closeMonthBtn")}
+              </button>
+            )}
+          </div>
+        )}
+        {error && <p className="mt-3 text-[13px] text-danger">{error}</p>}
       </div>
 
       {/* steps */}

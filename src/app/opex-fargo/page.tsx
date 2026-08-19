@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getComputed } from "@/lib/data";
 import { getSession } from "@/lib/auth";
-import { canEditData, canEditStructure } from "@/lib/permissions";
+import { canEditData, canEditStructure, canEditClosedMonth } from "@/lib/permissions";
 import { resolveMonthId } from "@/lib/month";
 import OpexView from "@/components/OpexView";
 
@@ -48,7 +48,10 @@ export default async function OpexFargoPage({
         bank: r.amount,
         cash: 0,
       }))}
-      readOnly={!canEditData(session?.role)}
+      readOnly={
+        !canEditData(session?.role) ||
+        (!!dataset.months.find((m) => m.id === monthId)?.closedAt && !canEditClosedMonth(session?.role))
+      }
       canManage={canEditStructure(session?.role)}
     />
   );
