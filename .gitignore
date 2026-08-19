@@ -58,3 +58,6 @@ PRODUCTION-SECRETS.txt
 
 # generated account hand-off files, never commit
 NEW-ACCOUNT-*.txt
+
+# local diagnostic scripts, kept out of the repo
+/prisma/debug-*.ts
