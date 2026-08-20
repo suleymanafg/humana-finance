@@ -128,6 +128,11 @@ export default function BalanceView({
       rows: [{ label: monthName(monthId), value: monthBalance?.tiBank ?? 0 }],
       href: entryHref,
     }),
+    tiCash: () => ({
+      title: t("tiCashBalance"),
+      rows: [{ label: monthName(monthId), value: monthBalance?.tiCash ?? 0 }],
+      href: entryHref,
+    }),
     vatPrepay: () => ({
       title: t("vatPrepayment"),
       rows: [{ label: monthName(monthId), value: monthBalance?.vatPrepayment ?? 0 }],
@@ -236,6 +241,7 @@ export default function BalanceView({
         [t("goodsInTransit"), sheet.goodsInTransit],
         [t("accountsReceivable"), sheet.arTotal],
         [t("tiBankBalance"), sheet.tiBank],
+        [t("tiCashBalance"), sheet.tiCash],
         [t("vatPrepayment"), sheet.vatPrepayment],
       ] as Array<[string, number]>).filter(([, v]) => v > 0)
     : [];
@@ -300,6 +306,7 @@ export default function BalanceView({
               {line("goodsInTransit", sheet.goodsInTransit, { traceKey: "transit" })}
               {line("accountsReceivable", sheet.arTotal, { traceKey: "ar" })}
               {line("tiBankBalance", sheet.tiBank, { traceKey: "tiBank" })}
+              {line("tiCashBalance", sheet.tiCash, { traceKey: "tiCash" })}
               {line("vatPrepayment", sheet.vatPrepayment, { traceKey: "vatPrepay" })}
               <div className="mx-4 mt-1 border-t-2 border-border-strong" />
               {line("total", sheet.assetsTotal, { strong: true })}

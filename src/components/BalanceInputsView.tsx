@@ -592,6 +592,7 @@ function ArStep({
 // ── 3 · other monthly inputs ─────────────────────────────────────
 const MB_FIELDS: Array<{ field: keyof Omit<MonthBalanceIn, "monthId">; key: DictKey; liability?: boolean }> = [
   { field: "tiBank", key: "tiBankBalance" },
+  { field: "tiCash", key: "tiCashBalance" },
   { field: "goodsInTransit", key: "goodsInTransit" },
   { field: "vatPrepayment", key: "vatPrepayment" },
   { field: "priorVatBalance", key: "priorVatBalance", liability: true },

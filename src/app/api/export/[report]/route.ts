@@ -448,6 +448,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
     item(t("goodsInTransit"), b.goodsInTransit);
     item(t("accountsReceivable"), b.arTotal);
     item(t("tiBankBalance"), b.tiBank);
+    item(t("tiCashBalance"), b.tiCash);
     item(t("vatPrepayment"), b.vatPrepayment);
     total(t("total"), b.assetsTotal);
     section(t("liabilities"));

@@ -252,6 +252,7 @@ export async function runAiTool(
           goodsInTransit: r(b.goodsInTransit),
           accountsReceivable: r(b.arTotal),
           tiBank: r(b.tiBank),
+          tiCash: r(b.tiCash),
           vatPrepayment: r(b.vatPrepayment),
           settlementReceivable: r(b.settlementReceivable),
           total: r(b.assetsTotal),
@@ -426,14 +427,14 @@ export const AI_WRITE_TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: "set_month_balance",
     description:
-      "Устанавливает один из ручных балансовых вводов месяца: tiBank (счёт TI в банке), goodsInTransit (товары в пути), vatPrepayment (предоплата НДС), priorVatBalance (сальдо НДС, обязательство), nutribenLoan (займ Nutriben).",
+      "Устанавливает один из ручных балансовых вводов месяца: tiBank (счёт TI в банке), tiCash (касса TI, наличные), goodsInTransit (товары в пути), vatPrepayment (предоплата НДС), priorVatBalance (сальдо НДС, обязательство), nutribenLoan (займ Nutriben).",
     input_schema: {
       type: "object",
       properties: {
         month: { type: "string", description: "YYYY-MM" },
         field: {
           type: "string",
-          enum: ["tiBank", "goodsInTransit", "vatPrepayment", "priorVatBalance", "nutribenLoan"],
+          enum: ["tiBank", "tiCash", "goodsInTransit", "vatPrepayment", "priorVatBalance", "nutribenLoan"],
         },
         value: { type: "number" },
       },
@@ -654,6 +655,7 @@ export async function runAiWriteTool(
       if (value === null) return { error: "укажите value" };
       const FIELDS = [
         "tiBank",
+        "tiCash",
         "goodsInTransit",
         "vatPrepayment",
         "priorVatBalance",
@@ -668,6 +670,7 @@ export async function runAiWriteTool(
         create: {
           monthId: month,
           tiBank: 0,
+          tiCash: 0,
           goodsInTransit: 0,
           vatPrepayment: 0,
           priorVatBalance: 0,

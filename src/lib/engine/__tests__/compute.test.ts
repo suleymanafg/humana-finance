@@ -90,6 +90,7 @@ function fixture(): Dataset {
       {
         monthId: "2025-08",
         tiBank: 500_000,
+        tiCash: 0,
         goodsInTransit: 200_000,
         vatPrepayment: 10_000,
         priorVatBalance: 20_000,

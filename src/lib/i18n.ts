@@ -215,6 +215,7 @@ export const dict = {
   goodsInTransit: { ru: "Товары в пути (предоплаты)", en: "Goods in transit (prepayments)" },
   accountsReceivable: { ru: "Дебиторская задолженность", en: "Accounts receivable" },
   tiBankBalance: { ru: "Счёт TI в банке", en: "TI bank account" },
+  tiCashBalance: { ru: "Касса TI (наличные)", en: "TI cash on hand" },
   vatPrepayment: { ru: "Предоплата НДС", en: "VAT prepayment" },
   settlementReceivable: { ru: "Задолженность Fargo перед TI", en: "Fargo settlement receivable" },
   taxPayable: { ru: "Налоги к уплате", en: "Tax payable" },

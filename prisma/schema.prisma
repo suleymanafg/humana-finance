@@ -307,6 +307,7 @@ model MonthBalance {
   monthId         String @id
   month           Month  @relation(fields: [monthId], references: [id])
   tiBank          Float  @default(0)
+  tiCash          Float  @default(0) // TI cash on hand (наличные в кассе)
   goodsInTransit  Float  @default(0) // prepayments to Germany
   vatPrepayment   Float  @default(0)
   priorVatBalance Float  @default(0) // liability

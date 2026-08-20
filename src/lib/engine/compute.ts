@@ -346,6 +346,7 @@ export function computeBalanceSheets(
       (mb?.goodsInTransit ?? 0) +
       arTotal +
       (mb?.tiBank ?? 0) +
+      (mb?.tiCash ?? 0) +
       (mb?.vatPrepayment ?? 0) +
       settlementReceivable;
     // Assumption (documented in README): tax payable = current month's accrued taxes.
@@ -358,6 +359,7 @@ export function computeBalanceSheets(
       goodsInTransit: mb?.goodsInTransit ?? 0,
       arTotal,
       tiBank: mb?.tiBank ?? 0,
+      tiCash: mb?.tiCash ?? 0,
       vatPrepayment: mb?.vatPrepayment ?? 0,
       settlementReceivable,
       assetsTotal,

@@ -121,6 +121,7 @@ export interface StockCountIn {
 export interface MonthBalanceIn {
   monthId: string;
   tiBank: number;
+  tiCash: number;
   goodsInTransit: number;
   vatPrepayment: number;
   priorVatBalance: number;
@@ -283,6 +284,7 @@ export interface BalanceSheetRow {
   goodsInTransit: number;
   arTotal: number;
   tiBank: number;
+  tiCash: number;
   vatPrepayment: number;
   settlementReceivable: number;
   assetsTotal: number;

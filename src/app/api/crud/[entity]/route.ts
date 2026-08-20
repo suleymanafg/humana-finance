@@ -86,7 +86,7 @@ const registry: Record<string, EntityConfig> = {
   },
   monthBalance: {
     delegate: () => prisma.monthBalance,
-    fields: ["monthId", "tiBank", "goodsInTransit", "vatPrepayment", "priorVatBalance", "nutribenLoan"],
+    fields: ["monthId", "tiBank", "tiCash", "goodsInTransit", "vatPrepayment", "priorVatBalance", "nutribenLoan"],
     upsertWhere: (d) => ({ monthId: d.monthId }),
   },
   product: {
