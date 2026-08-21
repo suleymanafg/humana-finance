@@ -45,7 +45,7 @@ export const canWriteEntity = (role: Role | undefined, entity: string): boolean 
  * request/collection workflow, and the 1C sync that lives on the close page.
  * Guarded server-side in proxy.ts as well as hidden from the nav.
  */
-export const ADMIN_ONLY_PATHS = ["/settings", "/health", "/requests"];
+export const ADMIN_ONLY_PATHS = ["/settings", "/health", "/requests", "/planning"];
 
 export const canAccessPath = (role: Role | undefined, pathname: string): boolean =>
   ADMIN_ONLY_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))

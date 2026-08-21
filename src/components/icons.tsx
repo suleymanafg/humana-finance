@@ -31,6 +31,14 @@ export const IconDashboard = (p: P) => (
   </Svg>
 );
 
+export const IconClipboard = (p: P) => (
+  <Svg {...p}>
+    <rect x="5" y="4" width="14" height="17" rx="2" />
+    <path d="M9 4a3 3 0 0 1 6 0" />
+    <path d="M9 10h6M9 14h6M9 18h3" />
+  </Svg>
+);
+
 export const IconPnl = (p: P) => (
   <Svg {...p}>
     <path d="M3 3v18h18" />

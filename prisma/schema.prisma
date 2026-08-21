@@ -33,6 +33,96 @@ model Product {
   shipmentLines ShipmentLine[]
   stockCounts   StockCount[]
   clientSales   ClientSale[]
+  planningSku   PlanningSku?
+}
+
+// ───────────────── Supply planning (Планирование закупок) ─────────────────
+// SKU registry Germany orders against. Linked to a P&L product where one
+// exists; planning-only items (benelife FS) have productId = null until they
+// enter the P&L. monthKey strings ("2026-09") are deliberately NOT tied to
+// the Month table — the planning horizon runs past the P&L's month list.
+
+model PlanningSku {
+  id              String  @id @default(cuid())
+  article         String  @unique // Germany's current Product ID (e.g. 70987)
+  altArticles     String? // superseded article numbers, comma-separated (70836,…)
+  name            String // Germany's item description
+  productId       String? @unique
+  product         Product? @relation(fields: [productId], references: [id])
+  pcsPerCarton    Int     @default(0)
+  pcsPerLayer     Int     @default(0)
+  pcsPerPallet    Int     @default(0)
+  layersPerPallet Int     @default(0)
+  grossKgPerUnit  Float   @default(0)
+  netKgPerUnit    Float   @default(0)
+  priceEur        Float   @default(0)
+  sortOrder       Int     @default(0)
+  active          Boolean @default(true)
+
+  forecasts     PlanningForecast[]
+  contractLines PlanningContractLine[]
+  purchases     PlanningPurchase[]
+}
+
+// Own forecast per SKU per month (the "Partner Forecast Input" we send to IBP).
+model PlanningForecast {
+  id        String      @id @default(cuid())
+  skuId     String
+  sku       PlanningSku @relation(fields: [skuId], references: [id])
+  monthKey  String // "2026-09"
+  qty       Float       @default(0)
+  updatedAt DateTime    @updatedAt
+
+  @@unique([skuId, monthKey])
+}
+
+// Committed purchase per SKU per ship-from-Germany month — the de facto order
+// entered into Humana's IBP by the 20th four months ahead. This, not the
+// paper contract, is what supply planning trusts. Arrival ≈ shipMonth + 1.
+model PlanningPurchase {
+  id        String      @id @default(cuid())
+  skuId     String
+  sku       PlanningSku @relation(fields: [skuId], references: [id])
+  shipMonth String // "2026-12"
+  qty       Float       @default(0)
+  updatedAt DateTime    @updatedAt
+
+  @@unique([skuId, shipMonth])
+}
+
+// Verified prescriptions per month (foil tracking) — one baby recruited per
+// prescription. Fuel for the cohort demand model.
+model PlanningRecruitment {
+  monthKey  String   @id // "2025-11"
+  babies    Float    @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+// An order placed with Germany (their "contract"): ships in shipMonth,
+// arrives ~a month later. Trucks pick up against it; openQty = not yet shipped.
+model PlanningContract {
+  id           String   @id @default(cuid())
+  code         String? // Humana contract number (40098604) once known
+  label        String // "sales 12-2026"
+  shipMonth    String // "2026-12"
+  arrivalMonth String // usually shipMonth + 1
+  status       String   @default("PLACED") // DRAFT | PLACED | CLOSED
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  lines PlanningContractLine[]
+}
+
+model PlanningContractLine {
+  id         String           @id @default(cuid())
+  contractId String
+  contract   PlanningContract @relation(fields: [contractId], references: [id])
+  skuId      String
+  sku        PlanningSku      @relation(fields: [skuId], references: [id])
+  qty        Float            @default(0) // contracted pcs
+  openQty    Float            @default(0) // pcs not yet picked up
+
+  @@unique([contractId, skuId])
 }
 
 model Channel {
@@ -190,6 +280,10 @@ model Shipment {
   code      String    @unique // "Авиа №1", "Фура №2", ...
   monthId   String
   month     Month     @relation(fields: [monthId], references: [id])
+  // TRANSIT trucks are visible to supply planning (arriving ~etaDate) but are
+  // EXCLUDED from COGS/stock flow until marked ARRIVED.
+  status    String    @default("ARRIVED") // TRANSIT | ARRIVED
+  etaDate   DateTime? // estimated warehouse arrival while in transit
   notes     String?
   deletedAt DateTime?
   createdAt DateTime  @default(now())

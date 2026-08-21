@@ -40,7 +40,9 @@ export const loadDataset = cache(async (): Promise<Dataset> => {
       select: { monthId: true, productId: true, channelId: true, qty: true, amount: true },
     }),
     prisma.shipment.findMany({
-      where: { deletedAt: null },
+      // TRANSIT trucks are planning-only: excluded from COGS and stock flow
+      // until marked ARRIVED
+      where: { deletedAt: null, status: "ARRIVED" },
       include: { lines: { where: { deletedAt: null } } },
       orderBy: { createdAt: "asc" },
     }),

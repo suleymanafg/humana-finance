@@ -19,7 +19,8 @@ interface EntityConfig {
 const registry: Record<string, EntityConfig> = {
   shipment: {
     delegate: () => prisma.shipment,
-    fields: ["code", "monthId", "notes"],
+    fields: ["code", "monthId", "notes", "status", "etaDate"],
+    dateFields: ["etaDate"],
     softDelete: true,
   },
   shipmentLine: {

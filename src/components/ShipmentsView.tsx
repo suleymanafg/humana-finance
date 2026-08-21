@@ -9,7 +9,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Modal, Num, PageTitle, Select } from "./ui";
-import { IconAlert, IconChevronDown, IconChevronRight, IconDownload, IconPlus, IconTrash } from "./icons";
+import { IconAlert, IconCheck, IconChevronDown, IconChevronRight, IconDownload, IconPlus, IconTrash, IconTruck } from "./icons";
 import {
   Collapsible,
   MetricStrip,
@@ -302,6 +302,214 @@ function AddExpenseRow({
   );
 }
 
+/** One truck in the «В пути» strip: editable ETA + the arrived action. */
+function TransitRow({
+  shipment,
+  readOnly,
+  ru,
+  currentMonthId,
+  onSaved,
+}: {
+  shipment: { id: string; code: string; etaDate: string | null; totalUnits: number };
+  readOnly: boolean;
+  ru: boolean;
+  currentMonthId: string;
+  onSaved: () => void;
+}) {
+  const [eta, setEta] = useState(shipment.etaDate ?? "");
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <div className="flex flex-wrap items-center gap-4 bg-surface/60 px-4 py-2.5">
+      <span className="text-[13px] font-semibold">{shipment.code}</span>
+      <span className="num text-[12.5px] text-muted">{fmtN(shipment.totalUnits)} {ru ? "шт" : "pcs"}</span>
+      <span className="flex items-center gap-1.5">
+        <span className="text-[11.5px] text-muted">{ru ? "приход ~" : "ETA ~"}</span>
+        {readOnly ? (
+          <span className="num text-[12.5px]">
+            {shipment.etaDate
+              ? new Date(shipment.etaDate + "T00:00:00").toLocaleDateString(ru ? "ru-RU" : "en-GB", {
+                  day: "numeric",
+                  month: "long",
+                })
+              : ru ? "не указан" : "not set"}
+          </span>
+        ) : (
+          <>
+            <Input type="date" value={eta} onChange={(e) => setEta(e.target.value)} className="w-36" />
+            {eta !== (shipment.etaDate ?? "") && (
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await crud("shipment", "update", { id: shipment.id, data: { etaDate: eta || null } });
+                  setBusy(false);
+                  onSaved();
+                }}
+              >
+                {busy ? "…" : ru ? "Сохранить" : "Save"}
+              </Button>
+            )}
+          </>
+        )}
+      </span>
+      {!readOnly && (
+        <span className="ml-auto">
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={async () => {
+              if (
+                !confirm(
+                  ru
+                    ? `Отметить «${shipment.code}» как прибывшую? Поставка попадёт в себестоимость текущего месяца.`
+                    : `Mark "${shipment.code}" as arrived? It will enter this month's COGS.`
+                )
+              )
+                return;
+              setBusy(true);
+              await crud("shipment", "update", {
+                id: shipment.id,
+                data: { status: "ARRIVED", monthId: currentMonthId, etaDate: null },
+              });
+              setBusy(false);
+              onSaved();
+            }}
+          >
+            <IconCheck size={13} /> {ru ? "Прибыла" : "Arrived"}
+          </Button>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Status of one shipment, editable in its expanded detail: flip between
+ *  arrived (in COGS) and in-transit (planning-only, with an ETA). */
+function ShipmentStatusEdit({
+  shipmentId,
+  status,
+  etaDate,
+  readOnly,
+  ru,
+  onSaved,
+}: {
+  shipmentId: string;
+  status: string;
+  etaDate: string | null;
+  readOnly: boolean;
+  ru: boolean;
+  onSaved: () => void;
+}) {
+  const transit = status === "TRANSIT";
+  const [eta, setEta] = useState(etaDate ?? "");
+  const [busy, setBusy] = useState(false);
+  // switching to TRANSIT is two-step: pick the ETA first, then confirm
+  const [pendingTransit, setPendingTransit] = useState(false);
+
+  async function setStatus(next: "ARRIVED" | "TRANSIT") {
+    if (busy || next === status) return;
+    if (next === "TRANSIT") {
+      setPendingTransit(true);
+      return;
+    }
+    setBusy(true);
+    await crud("shipment", "update", { id: shipmentId, data: { status: next, etaDate: null } });
+    setBusy(false);
+    onSaved();
+  }
+
+  async function confirmTransit() {
+    if (busy) return;
+    setBusy(true);
+    await crud("shipment", "update", {
+      id: shipmentId,
+      data: { status: "TRANSIT", etaDate: eta || null },
+    });
+    setBusy(false);
+    setPendingTransit(false);
+    onSaved();
+  }
+
+  async function saveEta() {
+    if (busy) return;
+    setBusy(true);
+    await crud("shipment", "update", { id: shipmentId, data: { etaDate: eta || null } });
+    setBusy(false);
+    onSaved();
+  }
+
+  if (readOnly) {
+    return (
+      <Badge tone={transit ? "accent" : "ok"}>{transit ? (ru ? "В пути" : "In transit") : ru ? "Прибыла" : "Arrived"}</Badge>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="label-caps">{ru ? "Статус" : "Status"}</span>
+      <div className="flex rounded-lg border border-border bg-surface p-0.5">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setPendingTransit(false);
+            void setStatus("ARRIVED");
+          }}
+          className={`rounded-md px-3 py-1 text-[12px] font-medium transition-colors ${
+            !transit && !pendingTransit ? "bg-ok-soft text-ok" : "text-muted hover:text-foreground"
+          }`}
+        >
+          {ru ? "Прибыла" : "Arrived"}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void setStatus("TRANSIT")}
+          className={`rounded-md px-3 py-1 text-[12px] font-medium transition-colors ${
+            transit || pendingTransit ? "bg-accent-soft-bg text-accent" : "text-muted hover:text-foreground"
+          }`}
+        >
+          {ru ? "В пути" : "In transit"}
+        </button>
+      </div>
+      {(transit || pendingTransit) && (
+        <>
+          <span className="text-[11.5px] text-muted">{ru ? "приход ~" : "ETA ~"}</span>
+          <Input type="date" value={eta} onChange={(e) => setEta(e.target.value)} className="w-36" />
+        </>
+      )}
+      {pendingTransit && (
+        <>
+          <Button disabled={busy} onClick={() => void confirmTransit()}>
+            {busy ? "…" : ru ? "Перевести в путь" : "Confirm in transit"}
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => setPendingTransit(false)}>
+            {ru ? "Отмена" : "Cancel"}
+          </Button>
+          <span className="text-[11px] text-warn">
+            {ru
+              ? "поставка будет исключена из себестоимости и остатков до прибытия"
+              : "will be excluded from COGS and stock until arrival"}
+          </span>
+        </>
+      )}
+      {transit && !pendingTransit && (
+        <>
+          {eta !== (etaDate ?? "") && (
+            <Button variant="secondary" disabled={busy} onClick={() => void saveEta()}>
+              {busy ? "…" : ru ? "Сохранить дату" : "Save date"}
+            </Button>
+          )}
+          <span className="text-[11px] text-muted">
+            {ru ? "вне себестоимости до прибытия" : "outside COGS until arrival"}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── the «Новая поставка» modal: whole shipment entered in one place ──
 interface DraftLine {
   productId: string;
@@ -332,6 +540,8 @@ function NewShipmentModal({
   const [code, setCode] = useState("");
   const [monthId, setMonthId] = useState(defaultMonthId);
   const [rate, setRate] = useState("");
+  const [inTransit, setInTransit] = useState(false);
+  const [eta, setEta] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([{ productId: "", qty: "", priceEur: "" }]);
   const [exps, setExps] = useState<DraftExpense[]>([{ categoryId: "", amount: "" }]);
   const [busy, setBusy] = useState(false);
@@ -357,7 +567,14 @@ function NewShipmentModal({
     if (!canSave || busy) return;
     setBusy(true);
     setError(null);
-    const created = await crud("shipment", "create", { data: { code: code.trim(), monthId } });
+    const created = await crud("shipment", "create", {
+      data: {
+        code: code.trim(),
+        monthId,
+        status: inTransit ? "TRANSIT" : "ARRIVED",
+        etaDate: inTransit && eta ? eta : null,
+      },
+    });
     if (created.error || !created.id) {
       setError(created.error ?? "error");
       setBusy(false);
@@ -428,6 +645,44 @@ function NewShipmentModal({
                 className="w-32 text-right"
               />
             </label>
+            <div className="block">
+              <span className="label-caps mb-1 block">{ru ? "Статус" : "Status"}</span>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-lg border border-border p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setInTransit(false)}
+                    className={`rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                      !inTransit ? "bg-accent-soft-bg text-accent" : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {ru ? "Прибыла" : "Arrived"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInTransit(true)}
+                    className={`rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                      inTransit ? "bg-accent-soft-bg text-accent" : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {ru ? "В пути" : "In transit"}
+                  </button>
+                </div>
+                {inTransit && (
+                  <label className="flex items-center gap-1.5">
+                    <span className="text-[11.5px] text-muted">{ru ? "приход ~" : "ETA ~"}</span>
+                    <Input type="date" value={eta} onChange={(e) => setEta(e.target.value)} className="w-36" />
+                  </label>
+                )}
+              </div>
+              {inTransit && (
+                <div className="mt-1 text-[10.5px] text-muted">
+                  {ru
+                    ? "В пути: учитывается в планировании, но не в себестоимости до прибытия"
+                    : "In transit: counts in planning, not in COGS until arrival"}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* product lines */}
@@ -614,6 +869,9 @@ export default function ShipmentsView({
   ytdGpMargin,
   expenses,
   importCategories,
+  transit,
+  statusById,
+  currentMonthId,
   readOnly,
 }: {
   months: MonthIn[];
@@ -627,6 +885,11 @@ export default function ShipmentsView({
   ytdGpMargin: number;
   expenses: ExpenseRow[];
   importCategories: Array<{ id: string; name: string }>;
+  /** trucks still on the road — planning-only until marked arrived */
+  transit: Array<{ id: string; code: string; etaDate: string | null; totalUnits: number }>;
+  /** shipmentId -> live status/eta for every non-deleted shipment */
+  statusById: Record<string, { status: string; etaDate: string | null }>;
+  currentMonthId: string;
   readOnly: boolean;
 }) {
   const { t, locale } = useT();
@@ -822,6 +1085,35 @@ export default function ShipmentsView({
 
       <MetricStrip metrics={metrics} />
 
+      {/* trucks in transit — visible to planning, outside COGS until arrival */}
+      {transit.length > 0 && (
+        <div className="mb-5 overflow-hidden rounded-xl border border-accent-soft bg-accent-soft-bg/60">
+          <div className="flex items-center gap-2 border-b border-accent-soft px-4 py-2.5">
+            <IconTruck size={15} className="text-accent" />
+            <span className="text-[13px] font-semibold text-accent">
+              {ru ? "В пути" : "In transit"} · {transit.length}
+            </span>
+            <span className="text-[11.5px] text-muted">
+              {ru
+                ? "учитываются в планировании; в себестоимость попадут после отметки «Прибыла»"
+                : "counted in planning; enters COGS once marked arrived"}
+            </span>
+          </div>
+          <div className="divide-y divide-accent-soft/70">
+            {transit.map((s) => (
+              <TransitRow
+                key={s.id}
+                shipment={s}
+                readOnly={readOnly}
+                ru={ru}
+                currentMonthId={currentMonthId}
+                onSaved={() => router.refresh()}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {missingFargoCount > 0 && (
         <div className="mb-5 flex items-start gap-2 rounded-xl border border-warn/20 bg-warn-soft px-4 py-3 text-[13px] text-warn">
           <IconAlert size={15} />
@@ -898,16 +1190,29 @@ export default function ShipmentsView({
                     </td>
                     <td className="num text-right">×{s.loadFactor.toFixed(3)}</td>
                     <td className="text-right">
-                      {s.hasMissingFargoCost ? (
-                        <Badge tone="warn">Fargo —</Badge>
-                      ) : (
-                        <Badge tone="ok">✓</Badge>
-                      )}
+                      <span className="inline-flex items-center gap-1.5">
+                        <Badge tone={statusById[s.shipmentId]?.status === "TRANSIT" ? "accent" : "ok"}>
+                          {statusById[s.shipmentId]?.status === "TRANSIT"
+                            ? ru ? "В пути" : "Transit"
+                            : ru ? "Прибыла" : "Arrived"}
+                        </Badge>
+                        {s.hasMissingFargoCost && <Badge tone="warn">Fargo —</Badge>}
+                      </span>
                     </td>
                   </tr>,
                   open && (
                     <tr key={`${s.shipmentId}-detail`}>
                       <td colSpan={9} className="!bg-surface-low/60 !p-0">
+                        <div className="border-b border-border/70 px-4 py-2.5">
+                          <ShipmentStatusEdit
+                            shipmentId={s.shipmentId}
+                            status={statusById[s.shipmentId]?.status ?? "ARRIVED"}
+                            etaDate={statusById[s.shipmentId]?.etaDate ?? null}
+                            readOnly={readOnly}
+                            ru={ru}
+                            onSaved={() => router.refresh()}
+                          />
+                        </div>
                         <div className="grid gap-5 p-4 lg:grid-cols-[3fr_2fr]">
                           {/* product lines */}
                           <div className="min-w-0">

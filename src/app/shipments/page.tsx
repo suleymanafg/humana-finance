@@ -16,6 +16,18 @@ export default async function ShipmentsPage() {
     where: { deletedAt: null },
     include: { category: true, shipment: true },
   });
+  // trucks on the road: planning-visible, outside the engine until arrival
+  const transitShipments = await prisma.shipment.findMany({
+    where: { deletedAt: null, status: "TRANSIT" },
+    include: { lines: { where: { deletedAt: null } } },
+    orderBy: { etaDate: "asc" },
+  });
+  const shipmentMeta = await prisma.shipment.findMany({
+    where: { deletedAt: null },
+    select: { id: true, status: true, etaDate: true },
+  });
+  const now = new Date();
+  const currentMonthId = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
   // sold-to-date per product, for the purchased-vs-sold balance
   const soldQty: Record<string, number> = {};
@@ -56,6 +68,23 @@ export default async function ShipmentsPage() {
         notes: e.notes,
       }))}
       importCategories={importCategories.map((c) => ({ id: c.id, name: c.name }))}
+      transit={transitShipments.map((s) => ({
+        id: s.id,
+        code: s.code,
+        etaDate: s.etaDate ? s.etaDate.toISOString().slice(0, 10) : null,
+        totalUnits: s.lines.reduce((sum, l) => sum + l.qty, 0),
+      }))}
+      statusById={Object.fromEntries(
+        shipmentMeta.map((s) => [
+          s.id,
+          { status: s.status, etaDate: s.etaDate ? s.etaDate.toISOString().slice(0, 10) : null },
+        ])
+      )}
+      currentMonthId={
+        dataset.months.some((m) => m.id === currentMonthId)
+          ? currentMonthId
+          : dataset.months.at(-1)?.id ?? currentMonthId
+      }
       readOnly={!canEditData(session?.role)}
     />
   );
