@@ -19,12 +19,25 @@ export interface Column {
   numFmt?: string;
 }
 
+/** A live Excel formula with its cached result (shown until recalculation). */
+export interface FormulaCell {
+  formula: string;
+  result?: number;
+}
+export const isFormula = (v: unknown): v is FormulaCell =>
+  typeof v === "object" && v !== null && "formula" in v;
+
+export type CellValue = string | number | null | FormulaCell;
+
+/** 1-based worksheet row of data row 0 (after title, optional subtitle, header). */
+export const firstDataRow = (hasSubtitle: boolean) => (hasSubtitle ? 4 : 3);
+
 export interface SheetSpec {
   name: string;
   title: string;
   subtitle?: string;
   columns: Column[];
-  rows: Array<Array<string | number | null>>;
+  rows: Array<Array<CellValue>>;
   /** 0-based indexes of rows that are totals/subtotals (bold + top rule) */
   boldRows?: number[];
   /** 0-based indexes of rows that are section headings (indigo, no numbers) */
@@ -81,15 +94,20 @@ export function buildWorkbook(sheets: SheetSpec[]): ExcelJS.Workbook {
       row.forEach((value, i) => {
         const col = spec.columns[i];
         const cell = excelRow.getCell(i + 1);
-        cell.value = value === "" ? null : value;
+        const numeric = typeof value === "number" || isFormula(value);
+        if (isFormula(value)) {
+          cell.value = { formula: value.formula, result: value.result } as ExcelJS.CellFormulaValue;
+        } else {
+          cell.value = value === "" ? null : value;
+        }
         cell.font = {
           name: "Calibri",
           size: 10,
           bold: isBold || isSection,
           color: { argb: isSection ? ACCENT : "FF0B1C30" },
         };
-        if (typeof value === "number" && col?.numFmt) cell.numFmt = col.numFmt;
-        cell.alignment = { horizontal: typeof value === "number" ? "right" : "left" };
+        if (numeric && col?.numFmt) cell.numFmt = col.numFmt;
+        cell.alignment = { horizontal: numeric ? "right" : "left" };
         if (isBold) cell.border = { top: { style: "thin", color: { argb: RULE } } };
         if (isSection) {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7F7FB" } };

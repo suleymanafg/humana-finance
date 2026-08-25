@@ -13,7 +13,16 @@ import { getSession } from "@/lib/auth";
 import { dict, type DictKey, type Locale } from "@/lib/i18n";
 import { GROUP_LABELS } from "@/lib/groups";
 import { tashkentDistrictOf } from "@/lib/sync-1c-core";
-import { MONEY, MONEY2, PCT, buildWorkbook, workbookResponse, type SheetSpec } from "@/lib/excel";
+import {
+  MONEY,
+  MONEY2,
+  PCT,
+  buildWorkbook,
+  firstDataRow,
+  workbookResponse,
+  type CellValue,
+  type SheetSpec,
+} from "@/lib/excel";
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ report: string }> }) {
   const session = await getSession();
@@ -373,10 +382,20 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
     ];
     filename = all ? "sales-all-months.xlsx" : `sales-${monthId}.xlsx`;
   } else if (report === "shipments") {
-    const rows: Array<Array<string | number | null>> = [];
+    // Live formulas: line amount = qty × €price × rate, totals = SUMs, unit
+    // costs derive from the load factor — the sheet recalculates when edited.
+    // Columns: D qty · E priceEur · F rate · G amount · H loadFactor · I tiUnitCost
+    const rows: Array<Array<CellValue>> = [];
     const boldRows: number[] = [];
+    const XL = (r: number) => r + firstDataRow(true); // sheet has a subtitle
     for (const s of computed.shipmentCosts) {
+      const expenses = dataset.importExpenses.filter((x) => x.shipmentId === s.shipmentId);
+      const lineStart = rows.length;
+      const totalRow = lineStart + s.lines.length; // «Итого · закупка»
+      const expStart = totalRow + 1;
+      const landedRow = expStart + expenses.length; // «Итого с расходами»
       for (const l of s.lines) {
+        const r = XL(rows.length);
         rows.push([
           s.code,
           monthName(s.monthId),
@@ -384,9 +403,9 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
           l.qty,
           l.priceEur,
           l.rate,
-          l.purchaseAmount,
-          s.loadFactor,
-          l.tiUnitCost,
+          { formula: `D${r}*E${r}*F${r}`, result: l.purchaseAmount },
+          { formula: `$H$${XL(totalRow)}`, result: s.loadFactor },
+          { formula: `G${r}*H${r}/D${r}`, result: l.tiUnitCost },
           l.fargoUnitCost ?? null,
         ]);
       }
@@ -395,28 +414,17 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
         s.code,
         monthName(s.monthId),
         `${t("total")} · ${t("purchaseAmount")}`,
-        s.lines.reduce((a, l) => a + l.qty, 0),
+        { formula: `SUM(D${XL(lineStart)}:D${XL(totalRow - 1)})`, result: s.lines.reduce((a, l) => a + l.qty, 0) },
         null,
         null,
-        s.purchaseTotal,
-        s.loadFactor,
+        { formula: `SUM(G${XL(lineStart)}:G${XL(totalRow - 1)})`, result: s.purchaseTotal },
+        { formula: `G${XL(landedRow)}/G${XL(totalRow)}`, result: s.loadFactor },
         null,
         null,
       ]);
       // the shipment's import expenses, itemized by category
-      for (const e of dataset.importExpenses.filter((x) => x.shipmentId === s.shipmentId)) {
-        rows.push([
-          s.code,
-          monthName(s.monthId),
-          `— ${e.categoryName}`,
-          null,
-          null,
-          null,
-          e.amount,
-          null,
-          null,
-          null,
-        ]);
+      for (const e of expenses) {
+        rows.push([s.code, monthName(s.monthId), `— ${e.categoryName}`, null, null, null, e.amount, null, null, null]);
       }
       boldRows.push(rows.length);
       rows.push([
@@ -426,7 +434,13 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
         null,
         null,
         null,
-        s.purchaseTotal + s.expenseTotal,
+        {
+          formula:
+            expenses.length > 0
+              ? `G${XL(totalRow)}+SUM(G${XL(expStart)}:G${XL(landedRow - 1)})`
+              : `G${XL(totalRow)}`,
+          result: s.purchaseTotal + s.expenseTotal,
+        },
         null,
         null,
         null,
