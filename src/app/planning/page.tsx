@@ -28,7 +28,7 @@ export default async function PlanningPage() {
       purchases={data.purchases}
       recruitment={data.recruitment}
       model={data.model}
-      actualArrivals={data.actualArrivals}
+      pickups={data.pickups}
       isAdmin={session?.role === "ADMIN"}
     />
   );

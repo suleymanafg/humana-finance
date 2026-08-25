@@ -67,6 +67,7 @@ export default function BalanceView({
   contributions,
   monthlyNet,
   taxParts,
+  settlementSeries,
 }: {
   months: MonthIn[];
   monthId: string;
@@ -80,6 +81,7 @@ export default function BalanceView({
   contributions: ContributionIn[];
   monthlyNet: Array<{ monthId: string; netProfit: number }>;
   taxParts: { fargoVat: number; tiIncomeTax: number; fargoIncomeTax: number };
+  settlementSeries: SettlementRow[];
 }) {
   const { t, locale } = useT();
   const ru = locale === "ru";
@@ -162,11 +164,12 @@ export default function BalanceView({
     taxPayable: () => ({
       title: `${t("taxPayable")} — ${monthName(monthId)}`,
       rows: [
-        { label: t("fargoVat"), value: taxParts.fargoVat },
         { label: t("tiIncomeTax"), value: taxParts.tiIncomeTax },
-        { label: t("fargoIncomeTax"), value: taxParts.fargoIncomeTax },
         { label: t("total"), value: sheet?.taxPayable ?? 0, strong: true },
       ],
+      note: ru
+        ? `НДС Fargo (${fmtN(taxParts.fargoVat)}) и налог Fargo (${fmtN(taxParts.fargoIncomeTax)}) здесь не показываются: они уже удержаны в расчёте «Осталось за Fargo» и второй раз в обязательствах не считаются.`
+        : `Fargo's VAT (${fmtN(taxParts.fargoVat)}) and income tax (${fmtN(taxParts.fargoIncomeTax)}) are not listed here: they are already withheld inside the Fargo settlement receivable and are not counted twice as liabilities.`,
       href: `/taxes?month=${monthId}`,
     }),
     priorVat: () => ({
@@ -248,6 +251,23 @@ export default function BalanceView({
   const mixTotal = mix.reduce((s, [, v]) => s + v, 0);
 
   const missingInputs = current ? !current.hasInputs || !current.hasStock : false;
+
+  // Fargo payment discipline, month by month: what accrued to TI vs what was
+  // actually transferred, and the debt it left behind — the shareholder case.
+  const dynamics = (() => {
+    const upto = settlementSeries.filter((s) => s.monthId <= monthId);
+    return upto
+      .map((s, i) => {
+        const prev = i > 0 ? upto[i - 1] : null;
+        const accrued = s.dueToTi - (prev?.dueToTi ?? 0);
+        const paid =
+          s.cumTransfersCash +
+          s.cumTransfersBank -
+          ((prev?.cumTransfersCash ?? 0) + (prev?.cumTransfersBank ?? 0));
+        return { monthId: s.monthId, accrued, paid, delta: accrued - paid, remaining: s.remaining };
+      })
+      .slice(-8);
+  })();
 
   return (
     <div className="pb-16">
@@ -344,7 +364,7 @@ export default function BalanceView({
             {/* liabilities + equity */}
             <div className="border-t border-border py-2 lg:border-t-0">
               <SectionHead label={t("liabilities")} total={sheet.liabilitiesTotal} />
-              {line("taxPayable", sheet.taxPayable, { traceKey: "taxPayable" })}
+              {line("tiIncomeTax", sheet.taxPayable, { traceKey: "taxPayable" })}
               {line("priorVatBalance", sheet.priorVatBalance, { traceKey: "priorVat" })}
               {line("nutribenLoan", sheet.nutribenLoan, { traceKey: "loan" })}
 
@@ -398,6 +418,56 @@ export default function BalanceView({
               strong
             />
           </div>
+
+          {dynamics.length > 1 && (
+            <div className="border-t border-border px-4 py-3">
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+                {ru ? "Платёжная дисциплина Fargo по месяцам" : "Fargo payment discipline by month"}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th className="text-left">{ru ? "Месяц" : "Month"}</th>
+                      <th className="text-right">{ru ? "Начислено" : "Accrued"}</th>
+                      <th className="text-right">{ru ? "Перечислено" : "Transferred"}</th>
+                      <th className="text-right">{ru ? "Δ долга" : "Debt Δ"}</th>
+                      <th className="text-right">{ru ? "Долг на конец" : "Debt at month end"}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dynamics.map((d) => (
+                      <tr key={d.monthId}>
+                        <td>{monthName(d.monthId)}</td>
+                        <td className="text-right">
+                          <Num v={d.accrued} />
+                        </td>
+                        <td className="text-right">
+                          <Num v={d.paid} />
+                        </td>
+                        <td
+                          className={`num text-right font-medium ${
+                            d.delta > 0 ? "text-danger" : d.delta < 0 ? "text-ok" : ""
+                          }`}
+                        >
+                          {d.delta > 0 ? "+" : ""}
+                          {fmtN(Math.round(d.delta))}
+                        </td>
+                        <td className="text-right">
+                          <Num v={d.remaining} strong />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-[11.5px] leading-relaxed text-muted">
+                {ru
+                  ? "Начислено = выручка Fargo за месяц минус его расходы, ретро-бонусы и налоги. Положительная Δ (красным) — Fargo в этом месяце удержал деньги; «Долг на конец» — сколько Fargo должен TI нарастающим итогом."
+                  : "Accrued = Fargo's monthly revenue minus its expenses, retro bonuses and taxes. A positive Δ (red) means Fargo held cash that month; the last column is Fargo's running debt to TI."}
+              </p>
+            </div>
+          )}
         </Card>
       )}
 

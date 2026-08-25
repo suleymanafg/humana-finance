@@ -23,6 +23,7 @@ const sku: PlanningSkuIn = {
   grossKgPerUnit: 0.5,
   priceEur: 4.63,
   active: true,
+  openOrderQty: 0,
 };
 
 const baseSit: SkuSituation = {

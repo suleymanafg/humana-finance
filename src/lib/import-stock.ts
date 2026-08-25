@@ -45,6 +45,7 @@ export async function matchStockRows(
     productByName.set(norm(p.nameRu), p.id);
     if (p.nameEn) productByName.set(norm(p.nameEn), p.id);
     if (p.code1c) productByName.set(norm(p.code1c), p.id);
+    if (p.codeSales1c) productByName.set(norm(p.codeSales1c), p.id);
   }
   const warehouseByKey = new Map<string, string>();
   for (const w of warehouses) {

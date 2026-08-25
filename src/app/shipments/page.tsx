@@ -24,7 +24,7 @@ export default async function ShipmentsPage() {
   });
   const shipmentMeta = await prisma.shipment.findMany({
     where: { deletedAt: null },
-    select: { id: true, status: true, etaDate: true },
+    select: { id: true, status: true, etaDate: true, dispatchDate: true },
   });
   const now = new Date();
   const currentMonthId = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -77,7 +77,11 @@ export default async function ShipmentsPage() {
       statusById={Object.fromEntries(
         shipmentMeta.map((s) => [
           s.id,
-          { status: s.status, etaDate: s.etaDate ? s.etaDate.toISOString().slice(0, 10) : null },
+          {
+            status: s.status,
+            etaDate: s.etaDate ? s.etaDate.toISOString().slice(0, 10) : null,
+            dispatchDate: s.dispatchDate ? s.dispatchDate.toISOString().slice(0, 10) : null,
+          },
         ])
       )}
       currentMonthId={

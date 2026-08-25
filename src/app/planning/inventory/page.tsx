@@ -43,14 +43,17 @@ export default async function InventoryPage() {
     const proj = projectSku(sit, startMonth, HORIZON, data.settings);
     if (proj.currentStock <= 0 && proj.runRatePerMonth <= 0 && proj.avgDemandPerMonth <= 0) continue;
 
-    // pipeline events: trucks on the road + committed orders still to ship
+    // pipeline events: trucks on the road, the pickable backlog, and
+    // committed orders still to ship (strictly future — matches the engine)
     const events: PipelineEvent[] = [];
     for (const t of data.transit) {
       const q = t.units[sku.id] ?? 0;
       if (q > 0) events.push({ month: t.etaMonth, qty: q, kind: "transit", label: t.code });
     }
+    if (sku.openOrderQty > 0)
+      events.push({ month: addMonths(startMonth, 1), qty: sku.openOrderQty, kind: "order", label: "Open Orders" });
     for (const [ship, q] of Object.entries(data.purchases[sku.id] ?? {})) {
-      if (ship >= startMonth && q > 0) events.push({ month: addMonths(ship, 1), qty: q, kind: "order", label: null });
+      if (ship > startMonth && q > 0) events.push({ month: addMonths(ship, 1), qty: q, kind: "order", label: null });
     }
     events.sort((a, b) => a.month.localeCompare(b.month));
 

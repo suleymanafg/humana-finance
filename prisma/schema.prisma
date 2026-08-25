@@ -58,6 +58,9 @@ model PlanningSku {
   priceEur        Float   @default(0)
   sortOrder       Int     @default(0)
   active          Boolean @default(true)
+  // committed to DMK but not yet delivered ("Open Orders" in the IBP export) —
+  // snapshot units, synced by prisma/import-ibp-sync.ts
+  openOrderQty    Int     @default(0)
 
   forecasts     PlanningForecast[]
   contractLines PlanningContractLine[]
@@ -284,6 +287,10 @@ model Shipment {
   // EXCLUDED from COGS/stock flow until marked ARRIVED.
   status    String    @default("ARRIVED") // TRANSIT | ARRIVED
   etaDate   DateTime? // estimated warehouse arrival while in transit
+  // invoice/dispatch date — when the truck loaded at DMK. Partner Purchase
+  // and Open Orders count the pickup in THIS month; when absent the engine
+  // assumes dispatch = arrival − 1 month.
+  dispatchDate DateTime?
   notes     String?
   deletedAt DateTime?
   createdAt DateTime  @default(now())

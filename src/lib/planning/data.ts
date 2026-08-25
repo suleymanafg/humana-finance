@@ -34,8 +34,13 @@ export interface PlanningData {
   model: DemandModelResult;
   /** actual truck arrivals per product per month (for committed-vs-actual) */
   actualArrivals: Record<string, Record<string, number>>; // skuId -> monthKey -> units
+  /** units picked up at DMK per SKU per DISPATCH month — real dispatchDate
+   *  when entered, else assumed arrival − 1 (ETA − 1 for transit) */
+  pickups: Record<string, Record<string, number>>;
   /** trucks currently on the road — planning-only until marked ARRIVED */
   transit: TransitShipment[];
+  /** date of the last IBP export sync (Setting planning.ibpSyncedAt) */
+  ibpSyncedAt: string | null;
 }
 
 /** Germany's names are long; the app shows a compact form. */
@@ -131,24 +136,41 @@ export async function loadPlanning(): Promise<PlanningData> {
     }
   }
 
-  // committed purchases: supply pipeline; arrival ≈ ship + 1 month
+  // committed purchases: supply pipeline; arrival ≈ ship + 1 month.
+  // Only STRICTLY future ship months project arrivals — commitments at the
+  // current month or earlier are either delivered (stock/transit) or still
+  // undelivered, and the undelivered part is the live backlog booked below.
   const purchasesBySku: Record<string, Record<string, number>> = {};
   const thisMonth = monthKeyOf(new Date());
   for (const p of purchases) {
     (purchasesBySku[p.skuId] ??= {})[p.shipMonth] = p.qty;
     const sit = situations[p.skuId];
-    if (!sit || p.qty <= 0) continue;
+    if (!sit || p.qty <= 0 || p.shipMonth <= thisMonth) continue;
     const arrival = ((k: string) => {
       const [y, m] = k.split("-").map(Number);
       return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
     })(p.shipMonth);
-    if (arrival >= thisMonth) sit.arrivals[arrival] = (sit.arrivals[arrival] ?? 0) + p.qty;
+    sit.arrivals[arrival] = (sit.arrivals[arrival] ?? 0) + p.qty;
   }
 
   // actual truck arrivals per planning sku per month (committed-vs-actual);
   // TRANSIT trucks instead feed future arrivals at their ETA month
   const actualArrivals: Record<string, Record<string, number>> = {};
+  const pickups: Record<string, Record<string, number>> = {};
   const transit: TransitShipment[] = [];
+  // units shipped AFTER the last IBP sync — every such truck reduces the
+  // synced Open Orders backlog (DMK dispatches backlog first)
+  const ibpSyncedAt = settings.find((s) => s.key === "planning.ibpSyncedAt")?.value ?? null;
+  const shippedSinceSync: Record<string, number> = {};
+  for (const sh of shipments) {
+    if (ibpSyncedAt && sh.createdAt.toISOString().slice(0, 10) > ibpSyncedAt) {
+      for (const l of sh.lines) {
+        const regular = regularOf.get(l.productId) ?? l.productId;
+        const skuId = skuByProduct.get(regular);
+        if (skuId) shippedSinceSync[skuId] = (shippedSinceSync[skuId] ?? 0) + l.qty;
+      }
+    }
+  }
   for (const sh of shipments) {
     if (sh.status === "TRANSIT") {
       const etaMonth = sh.etaDate ? monthKeyOf(sh.etaDate) : addMonths(thisMonth, 1);
@@ -160,23 +182,44 @@ export async function loadPlanning(): Promise<PlanningData> {
         units: {},
         totalUnits: 0,
       };
+      const dispatchMonth = sh.dispatchDate ? monthKeyOf(sh.dispatchDate) : addMonths(t.etaMonth, -1);
       for (const l of sh.lines) {
         const regular = regularOf.get(l.productId) ?? l.productId;
         const skuId = skuByProduct.get(regular);
         if (!skuId) continue;
         t.units[skuId] = (t.units[skuId] ?? 0) + l.qty;
         t.totalUnits += l.qty;
+        (pickups[skuId] ??= {})[dispatchMonth] = ((pickups[skuId] ?? {})[dispatchMonth] ?? 0) + l.qty;
         const sit = situations[skuId];
         if (sit) sit.arrivals[t.etaMonth] = (sit.arrivals[t.etaMonth] ?? 0) + l.qty;
       }
       transit.push(t);
       continue;
     }
+    const dispatchMonth = sh.dispatchDate ? monthKeyOf(sh.dispatchDate) : addMonths(sh.monthId, -1);
     for (const l of sh.lines) {
       const regular = regularOf.get(l.productId) ?? l.productId;
       const skuId = skuByProduct.get(regular);
       if (!skuId) continue;
       (actualArrivals[skuId] ??= {})[sh.monthId] = ((actualArrivals[skuId] ?? {})[sh.monthId] ?? 0) + l.qty;
+      (pickups[skuId] ??= {})[dispatchMonth] = ((pickups[skuId] ?? {})[dispatchMonth] ?? 0) + l.qty;
+    }
+  }
+
+  // live backlog = synced Open Orders − everything shipped since the sync
+  // (clamped at 0). Falls as pickup trucks are created; re-anchors to DMK's
+  // truth at every re-sync. Booked as supply arriving next month so
+  // recommendations never re-order what is already committed — and since a
+  // pickup truck reduces it the moment it exists, its transit units are
+  // never counted twice.
+  const backlogMonth = addMonths(thisMonth, 1);
+  const backlogLive: Record<string, number> = {};
+  for (const s of skus) {
+    const live = Math.max(0, s.openOrderQty - (shippedSinceSync[s.id] ?? 0));
+    backlogLive[s.id] = live;
+    if (live > 0) {
+      const sit = situations[s.id];
+      sit.arrivals[backlogMonth] = (sit.arrivals[backlogMonth] ?? 0) + live;
     }
   }
 
@@ -195,6 +238,7 @@ export async function loadPlanning(): Promise<PlanningData> {
     grossKgPerUnit: s.grossKgPerUnit,
     priceEur: s.priceEur,
     active: s.active,
+    openOrderQty: backlogLive[s.id] ?? 0,
   }));
 
   const model = buildDemandModel(
@@ -203,7 +247,8 @@ export async function loadPlanning(): Promise<PlanningData> {
     recruitment,
     thisMonth,
     18,
-    cohortParams
+    cohortParams,
+    13 // retrodict a year back so the План history months show the model too
   );
   for (const s of skuList) situations[s.id].model = model.series[s.id];
 
@@ -217,6 +262,8 @@ export async function loadPlanning(): Promise<PlanningData> {
     purchases: purchasesBySku,
     model,
     actualArrivals,
+    pickups,
     transit,
+    ibpSyncedAt,
   };
 }

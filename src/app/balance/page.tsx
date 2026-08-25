@@ -53,6 +53,7 @@ export default async function BalancePage({
         tiIncomeTax: monthly?.tiIncomeTax ?? 0,
         fargoIncomeTax: monthly?.fargoIncomeTax ?? 0,
       }}
+      settlementSeries={computed.settlement}
     />
   );
 }

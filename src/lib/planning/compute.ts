@@ -13,6 +13,10 @@ export interface PlanningSkuIn {
   grossKgPerUnit: number;
   priceEur: number;
   active: boolean;
+  /** committed to DMK, not yet delivered — LIVE backlog: the synced IBP
+   *  "Open Orders" minus every shipment created since the sync. Pickable
+   *  right away; no production lead applies. */
+  openOrderQty: number;
 }
 
 /** Per-SKU inputs assembled by the server loader. */

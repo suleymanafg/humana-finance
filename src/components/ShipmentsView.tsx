@@ -9,7 +9,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Modal, Num, PageTitle, Select } from "./ui";
-import { IconAlert, IconCheck, IconChevronDown, IconChevronRight, IconDownload, IconPlus, IconTrash, IconTruck } from "./icons";
+import { IconAlert, IconCheck, IconChevronDown, IconChevronRight, IconDownload, IconPlus, IconTrash, IconTruck, IconUpload } from "./icons";
 import {
   Collapsible,
   MetricStrip,
@@ -386,11 +386,13 @@ function TransitRow({
 }
 
 /** Status of one shipment, editable in its expanded detail: flip between
- *  arrived (in COGS) and in-transit (planning-only, with an ETA). */
+ *  arrived (in COGS) and in-transit (planning-only, with an ETA). Also holds
+ *  the invoice/dispatch date — the month planning counts the pickup in. */
 function ShipmentStatusEdit({
   shipmentId,
   status,
   etaDate,
+  dispatchDate,
   readOnly,
   ru,
   onSaved,
@@ -398,15 +400,25 @@ function ShipmentStatusEdit({
   shipmentId: string;
   status: string;
   etaDate: string | null;
+  dispatchDate: string | null;
   readOnly: boolean;
   ru: boolean;
   onSaved: () => void;
 }) {
   const transit = status === "TRANSIT";
   const [eta, setEta] = useState(etaDate ?? "");
+  const [disp, setDisp] = useState(dispatchDate ?? "");
   const [busy, setBusy] = useState(false);
   // switching to TRANSIT is two-step: pick the ETA first, then confirm
   const [pendingTransit, setPendingTransit] = useState(false);
+
+  async function saveDispatch() {
+    if (busy) return;
+    setBusy(true);
+    await crud("shipment", "update", { id: shipmentId, data: { dispatchDate: disp || null } });
+    setBusy(false);
+    onSaved();
+  }
 
   async function setStatus(next: "ARRIVED" | "TRANSIT") {
     if (busy || next === status) return;
@@ -506,6 +518,29 @@ function ShipmentStatusEdit({
           </span>
         </>
       )}
+      <span
+        className={`ml-2 border-l border-border pl-3 text-[11.5px] ${
+          disp === "" ? "font-medium text-warn" : "text-muted"
+        }`}
+      >
+        {ru ? "отгрузка из DMK (инвойс)*" : "DMK dispatch (invoice)*"}
+      </span>
+      <Input
+        type="date"
+        value={disp}
+        onChange={(e) => setDisp(e.target.value)}
+        className={`w-36 ${disp === "" ? "border-warn/60" : ""}`}
+        title={
+          ru
+            ? "Обязательное поле: месяц этой даты — месяц вывоза в Partner Purchase и Open Orders"
+            : "Required: this date's month is the pickup month in Partner Purchase and Open Orders"
+        }
+      />
+      {disp !== (dispatchDate ?? "") && disp !== "" && (
+        <Button variant="secondary" disabled={busy} onClick={() => void saveDispatch()}>
+          {busy ? "…" : ru ? "Сохранить" : "Save"}
+        </Button>
+      )}
     </div>
   );
 }
@@ -542,10 +577,70 @@ function NewShipmentModal({
   const [rate, setRate] = useState("");
   const [inTransit, setInTransit] = useState(false);
   const [eta, setEta] = useState("");
+  const [dispatch, setDispatch] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([{ productId: "", qty: "", priceEur: "" }]);
   const [exps, setExps] = useState<DraftExpense[]>([{ categoryId: "", amount: "" }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
+  const [invoiceNote, setInvoiceNote] = useState<string | null>(null);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+
+  /** Sends the PDF to the extraction endpoint and prefills the draft. */
+  async function readInvoice(file: File) {
+    setInvoiceBusy(true);
+    setInvoiceNote(null);
+    setInvoiceError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/import/invoice", { method: "POST", body: fd });
+      const data = (await res.json()) as {
+        error?: string;
+        invoiceNumber?: string | null;
+        invoiceDate?: string | null;
+        totalAmount?: number | null;
+        unmatched?: number;
+        lines?: Array<{
+          productId: string | null;
+          description: string;
+          qty: number;
+          unitPrice: number | null;
+        }>;
+      };
+      if (!res.ok || data.error) {
+        setInvoiceError(data.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      const matched = (data.lines ?? []).filter((l) => l.productId);
+      if (matched.length > 0) {
+        setLines(
+          matched.map((l) => ({
+            productId: l.productId as string,
+            qty: String(l.qty),
+            priceEur: l.unitPrice !== null && l.unitPrice !== undefined ? String(l.unitPrice) : "",
+          }))
+        );
+      }
+      if (data.invoiceDate) setDispatch(data.invoiceDate);
+      const parts: string[] = [];
+      if (data.invoiceNumber) parts.push(ru ? `Инвойс №${data.invoiceNumber}` : `Invoice #${data.invoiceNumber}`);
+      if (data.invoiceDate) parts.push(ru ? `от ${data.invoiceDate}` : `dated ${data.invoiceDate}`);
+      parts.push(ru ? `${matched.length} позиций` : `${matched.length} lines`);
+      if (data.totalAmount) parts.push(`${data.totalAmount.toLocaleString()} EUR`);
+      if ((data.unmatched ?? 0) > 0)
+        parts.push(
+          ru
+            ? `⚠ ${data.unmatched} не сопоставлено — добавьте вручную`
+            : `⚠ ${data.unmatched} unmatched — add manually`
+        );
+      setInvoiceNote(parts.join(" · "));
+    } catch {
+      setInvoiceError(ru ? "Не удалось прочитать инвойс" : "Could not read the invoice");
+    } finally {
+      setInvoiceBusy(false);
+    }
+  }
 
   const setLine = (i: number, patch: Partial<DraftLine>) =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -559,7 +654,7 @@ function NewShipmentModal({
   const purchaseUzs = purchaseEur * rateN;
   const expensesSum = validExps.reduce((a, x) => a + num(x.amount), 0);
   const coeff = purchaseUzs > 0 ? 1 + expensesSum / purchaseUzs : 1;
-  const canSave = code.trim() !== "" && rateN > 0 && validLines.length > 0;
+  const canSave = code.trim() !== "" && rateN > 0 && validLines.length > 0 && dispatch !== "";
 
   const productName = (id: string) => productOptions.find((o) => o.value === id)?.label ?? id;
 
@@ -573,6 +668,7 @@ function NewShipmentModal({
         monthId,
         status: inTransit ? "TRANSIT" : "ARRIVED",
         etaDate: inTransit && eta ? eta : null,
+        dispatchDate: dispatch || null,
       },
     });
     if (created.error || !created.id) {
@@ -615,6 +711,43 @@ function NewShipmentModal({
     <Modal title={t("addShipment")} onClose={onClose} wide>
       <div className="grid gap-5 lg:grid-cols-[3fr_2fr]">
         <div className="min-w-0 space-y-4">
+          {/* invoice upload: reads the PDF and prefills the form for review */}
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-border-strong bg-surface-low/40 px-4 py-3">
+            <label
+              className={`flex cursor-pointer items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] font-medium transition-colors hover:border-accent/40 hover:text-accent ${
+                invoiceBusy ? "pointer-events-none opacity-50" : ""
+              }`}
+            >
+              <IconUpload size={14} />
+              {invoiceBusy
+                ? ru
+                  ? "Читаю инвойс…"
+                  : "Reading invoice…"
+                : ru
+                  ? "Загрузить инвойс (PDF)"
+                  : "Upload invoice (PDF)"}
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                disabled={invoiceBusy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void readInvoice(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {invoiceNote && <span className="text-[12px] text-muted">{invoiceNote}</span>}
+            {invoiceError && <span className="text-[12px] font-medium text-danger">{invoiceError}</span>}
+            {!invoiceBusy && !invoiceNote && !invoiceError && (
+              <span className="text-[11.5px] text-muted">
+                {ru
+                  ? "Позиции, количества, цены и дата отгрузки заполнятся сами — останется проверить"
+                  : "Lines, quantities, prices and the dispatch date fill in automatically — just review"}
+              </span>
+            )}
+          </div>
           {/* header fields */}
           <div className="flex flex-wrap gap-3">
             <label className="block">
@@ -674,6 +807,24 @@ function NewShipmentModal({
                     <Input type="date" value={eta} onChange={(e) => setEta(e.target.value)} className="w-36" />
                   </label>
                 )}
+                <label
+                  className="flex items-center gap-1.5"
+                  title={
+                    ru
+                      ? "Обязательное поле: месяц этой даты — месяц вывоза в планировании"
+                      : "Required: this date's month is the pickup month in planning"
+                  }
+                >
+                  <span className={`text-[11.5px] ${dispatch === "" ? "font-medium text-warn" : "text-muted"}`}>
+                    {ru ? "отгрузка DMK (инвойс)*" : "DMK dispatch (invoice)*"}
+                  </span>
+                  <Input
+                    type="date"
+                    value={dispatch}
+                    onChange={(e) => setDispatch(e.target.value)}
+                    className={`w-36 ${dispatch === "" ? "border-warn/60" : ""}`}
+                  />
+                </label>
               </div>
               {inTransit && (
                 <div className="mt-1 text-[10.5px] text-muted">
@@ -888,7 +1039,7 @@ export default function ShipmentsView({
   /** trucks still on the road — planning-only until marked arrived */
   transit: Array<{ id: string; code: string; etaDate: string | null; totalUnits: number }>;
   /** shipmentId -> live status/eta for every non-deleted shipment */
-  statusById: Record<string, { status: string; etaDate: string | null }>;
+  statusById: Record<string, { status: string; etaDate: string | null; dispatchDate: string | null }>;
   currentMonthId: string;
   readOnly: boolean;
 }) {
@@ -1208,6 +1359,7 @@ export default function ShipmentsView({
                             shipmentId={s.shipmentId}
                             status={statusById[s.shipmentId]?.status ?? "ARRIVED"}
                             etaDate={statusById[s.shipmentId]?.etaDate ?? null}
+                            dispatchDate={statusById[s.shipmentId]?.dispatchDate ?? null}
                             readOnly={readOnly}
                             ru={ru}
                             onSaved={() => router.refresh()}

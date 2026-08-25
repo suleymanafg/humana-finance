@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  // OCR stack spawns worker threads and loads WASM at runtime — keep it out
+  // of the bundle (invoice upload endpoint)
+  serverExternalPackages: ["tesseract.js", "pdf-parse"],
 };
 
 export default nextConfig;

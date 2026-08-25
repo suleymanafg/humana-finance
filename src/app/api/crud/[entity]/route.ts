@@ -12,6 +12,7 @@ interface EntityConfig {
   delegate: () => unknown; // prisma model delegate
   fields: string[]; // whitelisted writable fields
   dateFields?: string[]; // coerced to Date
+  requiredFields?: string[]; // must be set on create; cannot be cleared on update
   softDelete?: boolean;
   upsertWhere?: (data: Record<string, unknown>) => Record<string, unknown>;
 }
@@ -19,8 +20,9 @@ interface EntityConfig {
 const registry: Record<string, EntityConfig> = {
   shipment: {
     delegate: () => prisma.shipment,
-    fields: ["code", "monthId", "notes", "status", "etaDate"],
-    dateFields: ["etaDate"],
+    fields: ["code", "monthId", "notes", "status", "etaDate", "dispatchDate"],
+    dateFields: ["etaDate", "dispatchDate"],
+    requiredFields: ["dispatchDate"],
     softDelete: true,
   },
   shipmentLine: {
@@ -220,6 +222,18 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ entity
     data?: Record<string, unknown>;
   };
   const delegate = config.delegate() as Delegate;
+
+  // required fields: must arrive with create, cannot be cleared by update
+  for (const f of config.requiredFields ?? []) {
+    const raw = body.data?.[f];
+    const empty = raw === undefined || raw === null || raw === "";
+    const violates =
+      (body.action === "create" && empty) ||
+      (body.action === "update" && body.data !== undefined && f in body.data && empty);
+    if (violates) {
+      return NextResponse.json({ error: `${f} is required` }, { status: 400 });
+    }
+  }
 
   const data: Record<string, unknown> = {};
   for (const f of config.fields) {

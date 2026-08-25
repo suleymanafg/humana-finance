@@ -61,3 +61,6 @@ NEW-ACCOUNT-*.txt
 
 # local diagnostic scripts, kept out of the repo
 /prisma/debug-*.ts
+
+# tesseract OCR language cache (downloaded at runtime)
+*.traineddata

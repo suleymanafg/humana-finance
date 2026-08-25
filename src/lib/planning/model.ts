@@ -38,10 +38,13 @@ export function buildDemandModel(
   recruitment: Record<string, number>,
   startMonth: string, // first projection month (current month)
   horizonMonths: number,
-  params: CohortParams
+  params: CohortParams,
+  backMonths = 1 // months emitted BEFORE startMonth (retrodiction with today's calibration)
 ): DemandModelResult {
   const lastCompleteMonth = addMonths(startMonth, -1);
-  const months = Array.from({ length: horizonMonths + 1 }, (_, i) => addMonths(startMonth, i - 1));
+  const months = Array.from({ length: horizonMonths + backMonths }, (_, i) =>
+    addMonths(startMonth, i - backMonths)
+  );
 
   const stageBySku: Record<string, Stage | null> = {};
   for (const s of skus) stageBySku[s.id] = stageOf(s.name);

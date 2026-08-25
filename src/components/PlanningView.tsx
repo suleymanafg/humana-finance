@@ -1,16 +1,17 @@
 "use client";
 
-// «План (IBP)» — a clean mirror of the IBP workflow, four layers per SKU:
-//   Partner Forecast  — our demand forecast (editable; what goes into IBP)
-//   Model Forecast    — the cohort model's estimate (computed; click to apply)
-//   Partner Order     — committed orders by SHIP month (editable ahead; the
-//                       deadline column is the current slot)
-//   Partner Purchase  — actual buys: units that really arrived (history)
-// Stock intelligence lives on the «Запасы» tab, decisions on «Решения».
+// «План (IBP)» — a month-focused worksheet. One month is in focus at a time,
+// picked on the month rail (history plain · closed months indigo with a lock ·
+// open months green · the deadline month badged). Below it, one row per SKU
+// with the four IBP numbers side by side:
+//   Model Forecast → Partner Forecast → Partner Order → Partner Purchase
+// Open months edit in place; a closed month opens only via «Изменить» and its
+// inputs turn amber to mark the override. Stock intelligence lives on
+// «Запасы», decisions on «Решения».
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardHeader, PageTitle } from "./ui";
-import { IconAlert } from "./icons";
+import { Badge, Button, Card, PageTitle } from "./ui";
+import { IconCheck, IconLock, IconPencil } from "./icons";
 import PlanningTabs from "./PlanningTabs";
 import { useT } from "@/lib/locale-context";
 import { fmtN } from "@/lib/format";
@@ -22,7 +23,6 @@ import {
   type SkuProjection,
   type SkuSituation,
 } from "@/lib/planning/compute";
-import type { Stage } from "@/lib/planning/cohort";
 import type { DemandModelResult } from "@/lib/planning/model";
 
 const MONTH_RU = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
@@ -31,6 +31,9 @@ const MONTH_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
 function monthLabel(key: string, ru: boolean): string {
   const [y, m] = key.split("-").map(Number);
   return `${(ru ? MONTH_RU : MONTH_EN)[m - 1]} '${String(y).slice(2)}`;
+}
+function monthShort(key: string, ru: boolean): string {
+  return (ru ? MONTH_RU : MONTH_EN)[Number(key.split("-")[1]) - 1];
 }
 
 // edits are keyed "skuId|monthKey" and hold the raw input string
@@ -44,31 +47,6 @@ function parseQty(raw: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Everything the grid rows need besides their own SKU data. */
-interface GridCtx {
-  ru: boolean;
-  isAdmin: boolean;
-  startMonth: string;
-  months: string[]; // the visible 12-month window (past + future mixed)
-  slot: OrderSlot;
-  forecastEdits: Edits;
-  orderEdits: Edits;
-  setForecast: (skuId: string, m: string, v: string) => void;
-  setOrder: (skuId: string, m: string, v: string) => void;
-  applyModel: (skuId: string, m: string, qty: number) => void;
-}
-
-/** Column accents: past/future divider + the deadline's ship-month tint. */
-function colCls(m: string, ctx: GridCtx): string {
-  let s = "";
-  if (m === ctx.startMonth) s += "border-l border-border/70 ";
-  if (m < ctx.startMonth) s += "bg-surface-low/40 ";
-  if (m === ctx.slot.shipMonth) s += "bg-accent-soft-bg/50 ";
-  return s;
-}
-
-const EMPTY_REC: Record<string, number> = {};
-
 export interface PlanningViewProps {
   skus: PlanningSkuIn[];
   situations: Record<string, SkuSituation>;
@@ -80,8 +58,18 @@ export interface PlanningViewProps {
   purchases: Record<string, Record<string, number>>; // skuId -> shipMonth -> committed qty
   recruitment: Record<string, number>;
   model: DemandModelResult;
-  actualArrivals: Record<string, Record<string, number>>; // skuId -> arrival month -> units
+  pickups: Record<string, Record<string, number>>; // skuId -> DISPATCH month -> units picked up
   isAdmin: boolean;
+}
+
+// cumulative Open Orders start here — the owner confirmed 2025 nets to zero
+const BACKLOG_EPOCH = "2026-01";
+
+/** A month's place in the IBP cycle. */
+type MonthState = "history" | "closed" | "open";
+function monthState(m: string, startMonth: string, shipMonth: string): MonthState {
+  if (m < startMonth) return "history";
+  return m < shipMonth ? "closed" : "open";
 }
 
 export default function PlanningView({
@@ -92,7 +80,7 @@ export default function PlanningView({
   purchases,
   recruitment,
   model,
-  actualArrivals,
+  pickups,
   isAdmin,
 }: PlanningViewProps) {
   const { locale } = useT();
@@ -101,121 +89,159 @@ export default function PlanningView({
   const [forecastEdits, setForecastEdits] = useState<Edits>({});
   const [orderEdits, setOrderEdits] = useState<Edits>({});
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  // closed months a deliberate «Изменить» has opened for correction
+  const [unlockedMonths, setUnlockedMonths] = useState<Set<string>>(new Set());
 
   const active = skus.filter((s) => s.active);
 
-  // a navigable 12-month window: back to the first data month, forward to the
-  // model's horizon; ‹ › page by quarters, «сегодня» recenters
-  const WINDOW = 12;
+  // ── the month rail: 12 visible, pageable, deadline month in focus ──
+  const RAIL = 12;
   const MIN_MONTH = "2025-08";
-  const defaultStart = addMonths(startMonth, -4);
-  const maxStart = addMonths(startMonth, 6);
-  const [windowStart, setWindowStart] = useState(defaultStart);
-  const allMonths = useMemo(
-    () => Array.from({ length: WINDOW }, (_, i) => addMonths(windowStart, i)),
-    [windowStart]
-  );
-  const clampStart = (m: string) => (m < MIN_MONTH ? MIN_MONTH : m > maxStart ? maxStart : m);
+  const defaultRailStart = addMonths(startMonth, -4);
+  const maxRailStart = addMonths(startMonth, 6);
+  const [railStart, setRailStart] = useState(defaultRailStart);
+  const railMonths = useMemo(() => Array.from({ length: RAIL }, (_, i) => addMonths(railStart, i)), [railStart]);
+  const clampRail = (m: string) => (m < MIN_MONTH ? MIN_MONTH : m > maxRailStart ? maxRailStart : m);
+  const [selected, setSelected] = useState(slot.shipMonth);
 
-  // ── pending edits vs committed values ─────────────────────────
+  const selState = monthState(selected, startMonth, slot.shipMonth);
+  const selUnlocked = unlockedMonths.has(selected);
+  const selEditable = isAdmin && (selState === "open" || selUnlocked);
+
+  // ── pending edits vs committed values (locked months never save) ──
   const dirty = useMemo(() => {
+    const editable = (m: string) => m >= slot.shipMonth || unlockedMonths.has(m);
     const fc: Array<{ skuId: string; monthKey: string; qty: number }> = [];
     for (const [key, raw] of Object.entries(forecastEdits)) {
       const [skuId, m] = key.split("|");
       const qty = parseQty(raw);
-      if ((situations[skuId]?.forecast[m] ?? 0) !== qty) fc.push({ skuId, monthKey: m, qty });
+      if (editable(m) && (situations[skuId]?.forecast[m] ?? 0) !== qty) fc.push({ skuId, monthKey: m, qty });
     }
     const po: Array<{ skuId: string; shipMonth: string; qty: number }> = [];
     for (const [key, raw] of Object.entries(orderEdits)) {
       const [skuId, m] = key.split("|");
       const qty = parseQty(raw);
-      if ((purchases[skuId]?.[m] ?? 0) !== qty) po.push({ skuId, shipMonth: m, qty });
+      if (editable(m) && (purchases[skuId]?.[m] ?? 0) !== qty) po.push({ skuId, shipMonth: m, qty });
     }
     return { fc, po, count: fc.length + po.length };
-  }, [forecastEdits, orderEdits, situations, purchases]);
+  }, [forecastEdits, orderEdits, situations, purchases, slot.shipMonth, unlockedMonths]);
+
+  function discardAll() {
+    setForecastEdits({});
+    setOrderEdits({});
+    setUnlockedMonths(new Set());
+    setSaveError(false);
+  }
+
+  /** Re-locks one month, dropping its pending edits with it. */
+  function relock(m: string) {
+    setUnlockedMonths((prev) => {
+      const next = new Set(prev);
+      next.delete(m);
+      return next;
+    });
+    const strip = (e: Edits): Edits => {
+      const next: Edits = {};
+      for (const [k, v] of Object.entries(e)) if (!k.endsWith(`|${m}`)) next[k] = v;
+      return next;
+    };
+    setForecastEdits(strip);
+    setOrderEdits(strip);
+  }
 
   async function saveAll() {
     setSaving(true);
+    setSaveError(false);
     try {
       for (const f of dirty.fc) {
-        await fetch("/api/planning/forecast", {
+        const res = await fetch("/api/planning/forecast", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(f),
         });
+        if (!res.ok) throw new Error(`forecast ${res.status}`);
       }
       const byMonth: Record<string, Array<{ skuId: string; qty: number }>> = {};
       for (const p of dirty.po) (byMonth[p.shipMonth] ??= []).push({ skuId: p.skuId, qty: p.qty });
       for (const [shipMonth, lines] of Object.entries(byMonth)) {
-        await fetch("/api/planning/purchase", {
+        const res = await fetch("/api/planning/purchase", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ shipMonth, lines }),
         });
+        if (!res.ok) throw new Error(`purchase ${res.status}`);
       }
-      setForecastEdits({});
-      setOrderEdits({});
+      discardAll();
       router.refresh();
+    } catch {
+      // keep the edits; already-saved months re-save harmlessly on retry
+      setSaveError(true);
     } finally {
       setSaving(false);
     }
   }
 
-  const ctx: GridCtx = {
-    ru,
-    isAdmin,
-    startMonth,
-    months: allMonths,
-    slot,
-    forecastEdits,
-    orderEdits,
-    setForecast: (skuId, m, v) => setForecastEdits((e) => ({ ...e, [cellKey(skuId, m)]: v })),
-    setOrder: (skuId, m, v) => setOrderEdits((e) => ({ ...e, [cellKey(skuId, m)]: v })),
-    applyModel: (skuId, m, qty) => setForecastEdits((e) => ({ ...e, [cellKey(skuId, m)]: String(qty) })),
-  };
+  // the card: the same rule as the column, taken at the current month —
+  // Σ positive (Partner Order − Partner Purchase)
+  const ledgerOpenTotal = active.reduce((s, sku) => s + Math.max(0, cumOpenAt(sku.id, startMonth)), 0);
 
-  // the stage-2 wave note, shown on the first P2 block
-  const p2Wave = useMemo(() => {
-    const ids = active.filter((s) => model.stageBySku[s.id] === "P2").map((s) => s.id);
-    if (ids.length === 0) return null;
-    const total = (m: string) => ids.reduce((sum, id) => sum + (model.series[id]?.[m] ?? 0), 0);
-    const from = total(startMonth);
-    let to = from;
-    let toMonth = startMonth;
-    for (let i = 1; i <= 14; i++) {
-      const m = addMonths(startMonth, i);
-      const t = total(m);
-      if (t > to) {
-        to = t;
-        toMonth = m;
-      }
+  // Open Orders — ONE rule for every month (the owner's ruling): cumulative
+  // Partner Order − Partner Purchase (pickups at dispatch) since the epoch.
+  // Positive = ordered but not collected; negative = collected beyond orders.
+  // DMK's own ERP figure stays as a secondary reference on the card (it is
+  // what the ordering engine books as incoming supply — the safe assumption).
+  function cumOpenAt(skuId: string, m: string): number {
+    let cum = 0;
+    for (let t = BACKLOG_EPOCH; t <= m; t = addMonths(t, 1)) {
+      cum += purchases[skuId]?.[t] ?? 0;
+      cum -= pickups[skuId]?.[t] ?? 0;
     }
-    return { from, to, toMonth };
-  }, [active, model, startMonth]);
-  const firstP2Id = active.find((s) => model.stageBySku[s.id] === "P2")?.id ?? null;
+    return cum;
+  }
 
-  // Partner Orders whose ship month has passed but the goods never (fully)
-  // arrived — the "not picked up" exposure. Estimate: arrival = ship + 1 mo.
-  const unpicked = useMemo(() => {
-    const byMonth: Record<string, number> = {};
-    let total = 0;
-    for (const s of active) {
-      const ord = purchases[s.id] ?? EMPTY_REC;
-      for (const [ship, q] of Object.entries(ord)) {
-        if (ship >= startMonth || q <= 0) continue;
-        const arrived = actualArrivals[s.id]?.[addMonths(ship, 1)] ?? 0;
-        const miss = Math.max(0, q - arrived);
-        if (miss > 0) {
-          byMonth[ship] = (byMonth[ship] ?? 0) + miss;
-          total += miss;
-        }
-      }
-    }
-    return { byMonth, total };
-  }, [active, purchases, actualArrivals, startMonth]);
+  // per-SKU numbers for the selected month, live with pending edits
+  const rows = active.map((sku) => {
+    const sit = situations[sku.id];
+    const rawModel = sit.model?.[selected];
+    const modelQty = rawModel !== undefined ? Math.round(rawModel) : null;
+    const fRaw = forecastEdits[cellKey(sku.id, selected)];
+    const oRaw = orderEdits[cellKey(sku.id, selected)];
+    const forecast = fRaw !== undefined ? parseQty(fRaw) : (sit.forecast[selected] ?? 0);
+    const order = oRaw !== undefined ? parseQty(oRaw) : (purchases[sku.id]?.[selected] ?? 0);
+    // pickup ex-works, DMK's convention: real dispatchDate when the truck has
+    // one, else assumed arrival − 1 (ETA − 1 while in transit)
+    const purchase = pickups[sku.id]?.[selected] ?? 0;
+    const openCum = selected >= BACKLOG_EPOCH ? cumOpenAt(sku.id, selected) : null;
+    const open = openCum !== null ? Math.max(0, openCum) : 0;
+    return { sku, sit, modelQty, forecast, order, purchase, fRaw, oRaw, open, openCum };
+  });
+  const totals = rows.reduce(
+    (t, r) => ({
+      model: t.model + (r.modelQty ?? 0),
+      forecast: t.forecast + r.forecast,
+      order: t.order + r.order,
+      backlog: t.backlog + r.open,
+      purchase: t.purchase + r.purchase,
+    }),
+    { model: 0, forecast: 0, order: 0, backlog: 0, purchase: 0 }
+  );
 
-  const [, dlMm, dlDd] = slot.deadline.split("-");
-  const deadlineShort = `${dlDd}.${dlMm}`;
+  const deadlineDate = new Date(slot.deadline + "T00:00:00").toLocaleDateString(ru ? "ru-RU" : "en-GB", {
+    day: "numeric",
+    month: "long",
+  });
+
+  const inputCls = (dirtyCell: boolean, forced: boolean) =>
+    `num h-9 w-24 rounded-md border bg-surface px-2 text-right text-[14px] font-medium focus:outline-none ${
+      forced
+        ? dirtyCell
+          ? "border-warn bg-warn-soft/40 text-warn"
+          : "border-warn/50 text-warn focus:border-warn"
+        : dirtyCell
+          ? "border-accent bg-accent-soft/30"
+          : "border-border focus:border-accent"
+    }`;
 
   return (
     <div className="pb-16">
@@ -226,180 +252,337 @@ export default function PlanningView({
             ? "IBP: прогноз и заказы — вносится в систему Humana до 20-го числа"
             : "IBP: forecast and orders — entered into Humana's system by the 20th"
         }
-        right={
-          /* the order-slot pipeline, read left to right like the workflow */
-          <div className="flex items-center rounded-[10px] border border-border bg-surface py-3">
-            <div className="border-r border-border px-5">
-              <div className="label-caps">{ru ? "Дедлайн слота" : "Slot deadline"}</div>
-              <div className="mt-0.5 flex items-baseline gap-2">
-                <span className="num font-display text-[17px] font-extrabold text-accent">
-                  {new Date(slot.deadline + "T00:00:00").toLocaleDateString(ru ? "ru-RU" : "en-GB", {
-                    day: "numeric",
-                    month: "long",
-                  })}
-                </span>
-                <span
-                  className={`num rounded-full px-2 py-px text-[10.5px] font-bold text-white ${
-                    slot.daysLeft <= 3 ? "bg-danger" : "bg-accent"
-                  }`}
-                >
-                  {slot.daysLeft === 0 ? (ru ? "сегодня" : "today") : `${slot.daysLeft} ${ru ? "дн." : "d"}`}
-                </span>
-              </div>
-            </div>
-            <div className="border-r border-border px-5">
-              <div className="label-caps">{ru ? "Производство" : "Production"}</div>
-              <div className="num mt-0.5 text-[13.5px] font-semibold">
-                {monthLabel(addMonths(slot.orderMonth, 1), ru).split(" ")[0].toLowerCase()} –{" "}
-                {monthLabel(addMonths(slot.shipMonth, -1), ru).split(" ")[0].toLowerCase()}
-              </div>
-            </div>
-            <div className="border-r border-border px-5">
-              <div className="label-caps">{ru ? "Отгрузка" : "Ships"}</div>
-              <div className="num mt-0.5 text-[13.5px] font-semibold">{monthLabel(slot.shipMonth, ru)}</div>
-            </div>
-            <div className="px-5">
-              <div className="label-caps">{ru ? "На складе" : "In warehouse"}</div>
-              <div className="num mt-0.5 text-[13.5px] font-semibold text-ok">~{monthLabel(slot.arrivalMonth, ru)}</div>
-            </div>
-          </div>
-        }
       />
       <PlanningTabs />
 
-      {/* unpicked Partner Orders — committed, ship month passed, goods absent */}
-      {unpicked.total > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-warn/25 bg-warn-soft px-4 py-2.5 text-[12.5px] text-warn">
-          <span className="flex items-center gap-1.5 font-semibold">
-            <IconAlert size={14} />
-            {ru ? "Не выбрано из Partner Orders:" : "Not picked up from Partner Orders:"}{" "}
-            <span className="num">~{fmtN(unpicked.total)} {ru ? "шт" : "pcs"}</span>
-          </span>
-          {Object.entries(unpicked.byMonth)
-            .sort()
-            .map(([m, q]) => (
-              <span key={m} className="num rounded-md bg-surface px-2 py-0.5 font-medium">
-                {ru ? "отгрузка" : "ship"} {monthLabel(m, ru)}: {fmtN(q)}
-              </span>
-            ))}
-          <span className="text-[11px] text-warn/80">
-            {ru ? "оценка: приход = отгрузка + 1 мес" : "estimate: arrival = ship + 1 mo"}
-          </span>
-        </div>
-      )}
-
-      {/* the IBP grid */}
-      <Card className="overflow-hidden">
-        <CardHeader
-          title={ru ? "IBP по SKU" : "IBP by SKU"}
-          desc={
-            ru
-              ? "Partner Forecast — ваш прогноз спроса (кликните значение Model Forecast, чтобы применить его). Partner Order — заказ по месяцу ОТГРУЗКИ, колонка дедлайна выделена. Partner Purchase — фактический приход."
-              : "Partner Forecast — your demand forecast (click a Model Forecast value to apply it). Partner Order — by SHIP month, the deadline column is highlighted. Partner Purchase — actual arrivals."
-          }
-          right={
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                disabled={windowStart <= MIN_MONTH}
-                onClick={() => setWindowStart((w) => clampStart(addMonths(w, -3)))}
-                className="rounded-md border border-border px-2.5 py-1 text-[13px] text-muted transition-colors hover:text-accent disabled:opacity-30"
-              >
-                ‹
-              </button>
-              <span className="num min-w-32 text-center text-[12px] font-medium text-muted">
-                {monthLabel(allMonths[0], ru)} — {monthLabel(allMonths[allMonths.length - 1], ru)}
-              </span>
-              <button
-                type="button"
-                disabled={windowStart >= maxStart}
-                onClick={() => setWindowStart((w) => clampStart(addMonths(w, 3)))}
-                className="rounded-md border border-border px-2.5 py-1 text-[13px] text-muted transition-colors hover:text-accent disabled:opacity-30"
-              >
-                ›
-              </button>
-              {windowStart !== defaultStart && (
-                <button
-                  type="button"
-                  onClick={() => setWindowStart(defaultStart)}
-                  className="rounded-md px-2 py-1 text-[12px] font-medium text-accent hover:underline"
-                >
-                  {ru ? "сегодня" : "today"}
-                </button>
-              )}
+      {/* two things to know before touching the worksheet */}
+      <div className="mb-4 grid gap-4 sm:grid-cols-2">
+        <Card className="px-5 py-4">
+          <div className="label-caps">{ru ? "Открытый слот" : "Open slot"}</div>
+          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+            <span className="num font-display text-[22px] font-extrabold">{monthLabel(slot.shipMonth, ru)}</span>
+            <span className="text-[13px] text-muted">{ru ? "отгрузка из Германии" : "ships from Germany"}</span>
+          </div>
+          <div className="mt-1.5 text-[13px]">
+            {ru ? "Заказ до" : "Order by"} <span className="num font-semibold text-accent">{deadlineDate}</span>{" "}
+            <span
+              className={`num ml-1 rounded-full px-2 py-px text-[11px] font-bold text-white ${
+                slot.daysLeft <= 3 ? "bg-danger" : "bg-accent"
+              }`}
+            >
+              {slot.daysLeft === 0 ? (ru ? "сегодня" : "today") : `${slot.daysLeft} ${ru ? "дн." : "d"}`}
+            </span>
+            <span className="ml-2 text-muted">
+              {ru ? "на складе" : "in stock"} ~{monthLabel(slot.arrivalMonth, ru)}
+            </span>
+          </div>
+        </Card>
+        <Card className="px-5 py-4">
+          <div className="label-caps">{ru ? "Заказано, но не получено" : "Ordered, not received"}</div>
+          {ledgerOpenTotal > 0 ? (
+            <>
+              <div className="mt-1.5 flex items-baseline gap-2">
+                <span className="num font-display text-[22px] font-extrabold text-warn">{fmtN(ledgerOpenTotal)}</span>
+                <span className="text-[13px] text-muted">
+                  {ru ? "шт — Partner Order − Partner Purchase" : "pcs — Partner Order − Partner Purchase"}
+                </span>
+              </div>
+              <div className="mt-1.5 text-[12.5px] text-muted">
+                {ru
+                  ? "Накопленно с янв '26 — уменьшается с каждой новой фурой"
+                  : "Cumulative since Jan '26 — every new truck reduces it"}
+              </div>
+            </>
+          ) : (
+            <div className="mt-1.5 flex items-center gap-2 text-[14px] text-ok">
+              <IconCheck size={16} />
+              {ru ? "Все заказы получены" : "All orders received"}
             </div>
-          }
-        />
+          )}
+        </Card>
+      </div>
+
+      {/* the worksheet: month rail + four numbers per SKU */}
+      <Card className="overflow-hidden">
+        {/* month rail — the cycle itself: history · closed (lock) · open (green) */}
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <button
+            type="button"
+            disabled={railStart <= MIN_MONTH}
+            onClick={() => setRailStart((w) => clampRail(addMonths(w, -3)))}
+            className="rounded-md border border-border px-2 py-1.5 text-[13px] text-muted transition-colors hover:text-accent disabled:opacity-30"
+          >
+            ‹
+          </button>
+          <div className="flex flex-1 gap-1 overflow-x-auto">
+            {railMonths.map((m) => {
+              const st = monthState(m, startMonth, slot.shipMonth);
+              const isSel = m === selected;
+              const base =
+                st === "closed"
+                  ? "bg-accent-soft-bg/70 text-accent/80"
+                  : st === "open"
+                    ? "bg-ok-soft text-ok"
+                    : "text-muted hover:bg-surface-low";
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setSelected(m)}
+                  className={`flex min-w-16 flex-1 flex-col items-center gap-0.5 rounded-lg px-1 py-1.5 transition-shadow ${base} ${
+                    isSel ? "ring-2 ring-accent" : ""
+                  }`}
+                >
+                  <span className={`flex items-center gap-1 text-[12.5px] ${isSel ? "font-bold" : "font-medium"}`}>
+                    {st === "closed" && <IconLock size={10} />}
+                    {monthShort(m, ru)}
+                    {(m.endsWith("-01") || m === railMonths[0]) && (
+                      <span className="text-[10px] opacity-60">’{m.slice(2, 4)}</span>
+                    )}
+                  </span>
+                  {m === slot.shipMonth ? (
+                    <span className="num rounded-full bg-accent px-1.5 text-[9px] font-bold leading-4 text-white">
+                      {ru ? "дедлайн" : "deadline"}
+                    </span>
+                  ) : (
+                    <span className="text-[9px] leading-4 opacity-70">
+                      {st === "closed" ? (ru ? "закрыт" : "closed") : st === "open" ? (ru ? "открыт" : "open") : " "}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            disabled={railStart >= maxRailStart}
+            onClick={() => setRailStart((w) => clampRail(addMonths(w, 3)))}
+            className="rounded-md border border-border px-2 py-1.5 text-[13px] text-muted transition-colors hover:text-accent disabled:opacity-30"
+          >
+            ›
+          </button>
+        </div>
+
+        {/* the selected month's standing in the cycle, and the override control */}
+        <div
+          className={`flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-5 py-2.5 ${
+            selUnlocked ? "bg-warn-soft/50" : selState === "closed" ? "bg-accent-soft-bg/40" : ""
+          }`}
+        >
+          <span className="num font-display text-[15px] font-bold">{monthLabel(selected, ru)}</span>
+          {selState === "history" && (
+            <span className="text-[13px] text-muted">{ru ? "история — только просмотр" : "history — view only"}</span>
+          )}
+          {selState === "open" && (
+            <span className="flex items-center gap-1.5 text-[13px] font-medium text-ok">
+              <span className="inline-block h-2 w-2 rounded-full bg-ok" />
+              {ru ? "открыт для ввода" : "open for entry"}
+              {selected === slot.shipMonth && (
+                <span className="text-muted">
+                  · {ru ? "заказ до" : "order by"} {deadlineDate}
+                </span>
+              )}
+            </span>
+          )}
+          {selState === "closed" && !selUnlocked && (
+            <span className="flex items-center gap-1.5 text-[13px] font-medium text-accent">
+              <IconLock size={13} />
+              {ru ? "закрыт — заказ уже в производстве" : "closed — the order is in production"}
+            </span>
+          )}
+          {selUnlocked && (
+            <span className="flex items-center gap-1.5 text-[13px] font-semibold text-warn">
+              <IconPencil size={13} />
+              {ru ? "открыт вручную — правки будут сохранены" : "opened manually — edits will be saved"}
+            </span>
+          )}
+          {isAdmin && selState === "closed" && (
+            <button
+              type="button"
+              onClick={() => (selUnlocked ? relock(selected) : setUnlockedMonths((p) => new Set(p).add(selected)))}
+              className={`ml-auto flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors ${
+                selUnlocked
+                  ? "bg-warn text-white hover:bg-warn/90"
+                  : "border border-border bg-surface text-muted hover:border-warn/50 hover:text-warn"
+              }`}
+            >
+              {selUnlocked ? <IconLock size={12} /> : <IconPencil size={12} />}
+              {selUnlocked ? (ru ? "Закрыть снова" : "Re-lock") : ru ? "Изменить" : "Edit"}
+            </button>
+          )}
+        </div>
+
+        {/* one row per SKU, the four IBP numbers side by side */}
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-[12px]">
+          <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-border">
-                <th className="sticky left-0 z-20 min-w-48 bg-surface px-4 py-2 text-left font-medium text-muted">
-                  {ru ? "Товар" : "Product"}
-                </th>
-                {allMonths.map((m) => (
-                  <th
-                    key={m}
-                    className={`min-w-16 whitespace-nowrap px-1.5 py-2 text-center font-medium ${
-                      m < startMonth ? "text-muted/60" : "text-muted"
-                    } ${colCls(m, ctx)}`}
-                  >
-                    {monthLabel(m, ru)}
-                    {m === slot.shipMonth && (
-                      <div className="mt-0.5">
-                        <span className="inline-block rounded-full bg-accent px-1.5 py-px text-[9px] font-semibold text-white">
-                          {ru ? "дедлайн" : "deadline"} {deadlineShort}
-                        </span>
-                      </div>
-                    )}
-                    {m === slot.arrivalMonth && (
-                      <div className="text-[9px] uppercase tracking-wide text-ok">
-                        {ru ? "приход" : "arrival"}
-                      </div>
-                    )}
-                  </th>
-                ))}
+              <tr className="border-b border-border text-left">
+                <th className="min-w-52 px-5 py-3 text-[12px] font-medium text-muted">{ru ? "Товар" : "Product"}</th>
+                <Th title="Model Forecast" sub={ru ? "модель спроса" : "demand model"} />
+                <Th title="Partner Forecast" sub={ru ? "внесено в IBP" : "entered in IBP"} />
+                <Th title="Partner Order" sub={ru ? "заказ — отгрузка в этом мес." : "order — ships this month"} />
+                <Th title="Open Orders" sub={ru ? "заказано − вывезено · накопленно" : "ordered − picked up · cumulative"} />
+                <Th title="Partner Purchase" sub={ru ? "фактический вывоз у DMK" : "actual pickup ex-works"} />
               </tr>
             </thead>
             <tbody>
-              {active.map((sku) => (
-                <SkuBlock
-                  key={sku.id}
-                  sku={sku}
-                  sit={situations[sku.id]}
-                  orders={purchases[sku.id] ?? EMPTY_REC}
-                  arrivals={actualArrivals[sku.id] ?? EMPTY_REC}
-                  stage={model.stageBySku[sku.id] ?? null}
-                  waveNote={
-                    sku.id === firstP2Id && p2Wave && p2Wave.to > p2Wave.from * 1.15
-                      ? ru
-                        ? `Волна 2-й ступени: модель ждёт ${fmtN(Math.round(p2Wave.from))} → ${fmtN(Math.round(p2Wave.to))}/мес к ${monthLabel(p2Wave.toMonth, ru)}`
-                        : `Stage-2 wave: model expects ${fmtN(Math.round(p2Wave.from))} → ${fmtN(Math.round(p2Wave.to))}/mo by ${monthLabel(p2Wave.toMonth, ru)}`
-                      : null
-                  }
-                  ctx={ctx}
-                />
-              ))}
+              {rows.map(({ sku, modelQty, forecast, order, purchase, fRaw, oRaw, open, openCum }) => {
+                const stage = model.stageBySku[sku.id] ?? null;
+                const origF = situations[sku.id].forecast[selected] ?? 0;
+                const origO = purchases[sku.id]?.[selected] ?? 0;
+                return (
+                  <tr key={sku.id} className="border-b border-border/50 last:border-b-0">
+                    <td className="px-5 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13.5px] font-semibold">{sku.name}</span>
+                        <Badge tone={stage ? "accent" : "neutral"}>{stage ?? "Expert"}</Badge>
+                      </div>
+                      <div className="num mt-0.5 text-[11px] text-muted">
+                        {ru ? "Арт." : "Art."} {sku.article}
+                      </div>
+                    </td>
+                    {/* Model Forecast + apply */}
+                    <td className="px-3 py-2.5 text-right">
+                      <span className="num text-[14px] italic text-muted">
+                        {modelQty !== null && modelQty > 0 ? fmtN(modelQty) : "—"}
+                      </span>
+                      {selEditable && modelQty !== null && modelQty > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setForecastEdits((e) => ({ ...e, [cellKey(sku.id, selected)]: String(modelQty) }))
+                          }
+                          title={ru ? "Применить в Partner Forecast" : "Apply to Partner Forecast"}
+                          className="ml-1.5 rounded px-1 text-[12px] font-semibold text-accent hover:bg-accent-soft/50"
+                        >
+                          →
+                        </button>
+                      )}
+                    </td>
+                    {/* Partner Forecast */}
+                    <td className="px-3 py-2.5 text-right">
+                      {selEditable ? (
+                        <input
+                          className={inputCls(fRaw !== undefined && parseQty(fRaw) !== origF, selUnlocked)}
+                          value={fRaw ?? (origF > 0 ? String(origF) : "")}
+                          onChange={(e) =>
+                            setForecastEdits((ed) => ({ ...ed, [cellKey(sku.id, selected)]: e.target.value }))
+                          }
+                          placeholder="0"
+                          inputMode="numeric"
+                        />
+                      ) : (
+                        <span className={`num text-[14px] ${forecast > 0 ? "font-medium" : "text-muted/50"}`}>
+                          {forecast > 0 ? fmtN(forecast) : "—"}
+                        </span>
+                      )}
+                    </td>
+                    {/* Partner Order */}
+                    <td className="px-3 py-2.5 text-right">
+                      {selEditable ? (
+                        <input
+                          className={inputCls(oRaw !== undefined && parseQty(oRaw) !== origO, selUnlocked)}
+                          value={oRaw ?? (origO > 0 ? String(origO) : "")}
+                          onChange={(e) =>
+                            setOrderEdits((ed) => ({ ...ed, [cellKey(sku.id, selected)]: e.target.value }))
+                          }
+                          placeholder="0"
+                          inputMode="numeric"
+                        />
+                      ) : (
+                        <span
+                          className={`num text-[14px] ${order > 0 ? "font-semibold text-accent" : "text-muted/50"}`}
+                        >
+                          {order > 0 ? fmtN(order) : "—"}
+                        </span>
+                      )}
+                    </td>
+                    {/* Open Orders — history: cumulative through the month (amber = still
+                        to pick up, green = picked up beyond orders); today: DMK live */}
+                    <td className="px-3 py-2.5 text-right">
+                      <span
+                        className={`num text-[14px] ${
+                          open > 0
+                            ? "font-semibold text-warn"
+                            : openCum !== null && openCum < 0
+                              ? "font-semibold text-ok"
+                              : "text-muted/40"
+                        }`}
+                      title={
+                          openCum !== null
+                            ? ru
+                              ? `Partner Order − Partner Purchase, накопленно с янв '26 к концу ${monthLabel(selected, ru)}${
+                                  openCum < 0 ? `. Вывезено на ${fmtN(-openCum)} шт больше заказов.` : ""
+                                }`
+                              : `Partner Order − Partner Purchase, cumulative since Jan '26 through ${monthLabel(selected, ru)}${
+                                  openCum < 0 ? `. ${fmtN(-openCum)} pcs picked up beyond orders.` : ""
+                                }`
+                            : undefined
+                        }
+                      >
+                        {open > 0 ? fmtN(open) : openCum !== null && openCum < 0 ? `+${fmtN(-openCum)}` : "—"}
+                      </span>
+                    </td>
+                    {/* Partner Purchase — by pickup month (DMK's convention) */}
+                    <td className="px-3 py-2.5 pr-5 text-right">
+                      <span
+                        className={`num text-[14px] ${purchase > 0 ? "font-medium" : "text-muted/50"}`}
+                        title={
+                          purchase > 0
+                            ? ru
+                              ? "Вывоз со склада DMK в этом месяце; приход в Ташкент — примерно на месяц позже"
+                              : "Picked up from DMK this month; arrives in Tashkent about a month later"
+                            : undefined
+                        }
+                      >
+                        {purchase > 0 ? fmtN(purchase) : "—"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
+            <tfoot>
+              <tr className="border-t border-border bg-surface-low/40">
+                <td className="px-5 py-2.5 text-[12px] font-semibold uppercase tracking-[0.05em] text-muted">
+                  {ru ? "Итого" : "Total"}
+                </td>
+                <td className="num px-3 py-2.5 text-right text-[14px] font-semibold italic text-muted">
+                  {totals.model > 0 ? fmtN(totals.model) : "—"}
+                </td>
+                <td className="num px-3 py-2.5 text-right text-[14px] font-bold">
+                  {totals.forecast > 0 ? fmtN(totals.forecast) : "—"}
+                </td>
+                <td className="num px-3 py-2.5 text-right text-[14px] font-bold text-accent">
+                  {totals.order > 0 ? fmtN(totals.order) : "—"}
+                </td>
+                <td className="num px-3 py-2.5 text-right text-[14px] font-bold text-warn">
+                  {totals.backlog > 0 ? fmtN(totals.backlog) : "—"}
+                </td>
+                <td className="num px-3 py-2.5 pr-5 text-right text-[14px] font-bold">
+                  {totals.purchase > 0 ? fmtN(totals.purchase) : "—"}
+                </td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </Card>
 
       <RecruitmentCard recruitment={recruitment} ru={ru} isAdmin={isAdmin} onSaved={() => router.refresh()} />
 
-      {/* sticky save bar for pending grid edits */}
+      {/* sticky save bar: appears as soon as anything is pending */}
       {isAdmin && dirty.count > 0 && (
         <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-surface px-4 py-2.5 shadow-[0_8px_30px_rgba(15,23,42,0.18)]">
-          <span className="text-[13px]">
+          <span className="flex items-center gap-1.5 text-[13px]">
+            <IconPencil size={13} className="text-accent" />
             {ru ? "Изменено" : "Changed"}: <span className="num font-semibold">{dirty.count}</span>
           </span>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setForecastEdits({});
-              setOrderEdits({});
-            }}
-          >
+          {saveError && (
+            <span className="text-[12px] font-medium text-danger">
+              {ru ? "Не сохранилось — попробуйте ещё раз" : "Save failed — try again"}
+            </span>
+          )}
+          <Button variant="ghost" onClick={discardAll}>
             {ru ? "Отменить" : "Discard"}
           </Button>
           <Button disabled={saving} onClick={() => void saveAll()}>
@@ -411,230 +594,18 @@ export default function PlanningView({
   );
 }
 
-/** Frozen row-label cell of one grid row. */
-function RowLabel({ children, tone }: { children: React.ReactNode; tone?: string }) {
+/** Column header: the IBP field name over a quiet explainer. */
+function Th({ title, sub }: { title: string; sub: string }) {
   return (
-    <td
-      className={`sticky left-0 z-10 whitespace-nowrap bg-surface py-1 pl-7 pr-4 text-left text-[10px] uppercase tracking-[0.06em] ${tone ?? "text-muted"}`}
-    >
-      {children}
-    </td>
+    <th className="min-w-32 px-3 py-3 text-right last:pr-5">
+      <div className="text-[12px] font-semibold text-foreground">{title}</div>
+      <div className="text-[10.5px] font-normal text-muted">{sub}</div>
+    </th>
   );
 }
 
-/** One SKU: header line + the four IBP layers. */
-function SkuBlock({
-  sku,
-  sit,
-  orders,
-  arrivals,
-  stage,
-  waveNote,
-  ctx,
-}: {
-  sku: PlanningSkuIn;
-  sit: SkuSituation;
-  orders: Record<string, number>;
-  arrivals: Record<string, number>;
-  stage: Stage | null;
-  waveNote?: string | null;
-  ctx: GridCtx;
-}) {
-  return (
-    <>
-      <tr className="border-t border-border">
-        <td className="sticky left-0 z-10 min-w-48 bg-surface px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold">{sku.name}</span>
-            <Badge tone={stage ? "accent" : "neutral"}>{stage ?? "Expert"}</Badge>
-          </div>
-          <div className="num mt-0.5 text-[10.5px] text-muted">
-            {ctx.ru ? "Арт." : "Art."} {sku.article}
-          </div>
-        </td>
-        <td colSpan={ctx.months.length} className="bg-surface-low/25 px-3 text-right">
-          {waveNote && (
-            <span className="inline-block rounded-md bg-accent-soft-bg px-2.5 py-0.5 text-[10.5px] font-medium text-accent">
-              {waveNote}
-            </span>
-          )}
-        </td>
-      </tr>
-      <ForecastRow sku={sku} sit={sit} ctx={ctx} />
-      <ModelRow sku={sku} sit={sit} ctx={ctx} />
-      <OrderRow skuId={sku.id} orders={orders} arrivals={arrivals} ctx={ctx} />
-      <PurchaseRow arrivals={arrivals} ctx={ctx} />
-    </>
-  );
-}
-
-/** Partner Forecast — our demand forecast, editable per future month. */
-function ForecastRow({ sku, sit, ctx }: { sku: PlanningSkuIn; sit: SkuSituation; ctx: GridCtx }) {
-  return (
-    <tr>
-      <RowLabel>Partner Forecast</RowLabel>
-      {ctx.months.map((m) => {
-        if (m < ctx.startMonth) {
-          const q = sit.forecast[m];
-          return (
-            <td key={m} className={`px-1 py-1 text-center ${colCls(m, ctx)}`}>
-              <span className="num text-[12px] text-muted/70">{q !== undefined && q > 0 ? fmtN(q) : "—"}</span>
-            </td>
-          );
-        }
-        const orig = sit.forecast[m] ?? 0;
-        if (!ctx.isAdmin) {
-          return (
-            <td key={m} className={`px-1 py-1 text-center ${colCls(m, ctx)}`}>
-              <span className="num text-[12px] font-medium">{orig > 0 ? fmtN(orig) : "—"}</span>
-            </td>
-          );
-        }
-        const raw = ctx.forecastEdits[cellKey(sku.id, m)];
-        const dirtyCell = raw !== undefined && parseQty(raw) !== orig;
-        return (
-          <td key={m} className={`px-1 py-1 text-center ${colCls(m, ctx)}`}>
-            <input
-              className={`num h-7 w-[60px] rounded border bg-surface px-1 text-right text-[12px] font-medium focus:border-accent focus:outline-none ${
-                dirtyCell ? "border-accent bg-accent-soft/30" : "border-border"
-              }`}
-              value={raw ?? (orig > 0 ? String(orig) : "")}
-              onChange={(e) => ctx.setForecast(sku.id, m, e.target.value)}
-              placeholder="0"
-              inputMode="numeric"
-            />
-          </td>
-        );
-      })}
-    </tr>
-  );
-}
-
-/** Model Forecast — the cohort model's demand; a click applies it to the forecast. */
-function ModelRow({ sku, sit, ctx }: { sku: PlanningSkuIn; sit: SkuSituation; ctx: GridCtx }) {
-  const { ru } = ctx;
-  return (
-    <tr>
-      <RowLabel tone="text-muted/70">Model Forecast</RowLabel>
-      {ctx.months.map((m) => {
-        if (m < ctx.startMonth) {
-          return (
-            <td key={m} className={`px-1 py-0.5 text-center ${colCls(m, ctx)}`}>
-              <span className="text-[11.5px] text-muted/40">—</span>
-            </td>
-          );
-        }
-        const q = Math.round(sit.model?.[m] ?? 0);
-        return (
-          <td key={m} className={`px-1 py-0.5 text-center ${colCls(m, ctx)}`}>
-            {ctx.isAdmin && q > 0 ? (
-              <button
-                type="button"
-                className="num rounded px-1 text-[11.5px] italic text-muted underline decoration-border decoration-dotted underline-offset-2 transition-colors hover:bg-accent-soft/40 hover:text-accent"
-                title={ru ? "Применить в Partner Forecast" : "Apply to Partner Forecast"}
-                onClick={() => ctx.applyModel(sku.id, m, q)}
-              >
-                {fmtN(q)}
-              </button>
-            ) : (
-              <span className="num text-[11.5px] italic text-muted/80">{q > 0 ? fmtN(q) : "—"}</span>
-            )}
-          </td>
-        );
-      })}
-    </tr>
-  );
-}
-
-/** Partner Order — committed orders by SHIP month; editable ahead of the deadline. */
-function OrderRow({
-  skuId,
-  orders,
-  arrivals,
-  ctx,
-}: {
-  skuId: string;
-  orders: Record<string, number>;
-  arrivals: Record<string, number>;
-  ctx: GridCtx;
-}) {
-  const { ru } = ctx;
-  return (
-    <tr>
-      <RowLabel tone="text-accent">Partner Order</RowLabel>
-      {ctx.months.map((m) => {
-        const committed = orders[m] ?? 0;
-        const cls = `px-1 py-1 text-center align-middle ${colCls(m, ctx)}`;
-        if (m < ctx.startMonth || !ctx.isAdmin) {
-          // past ship month: flag orders the trucks never (fully) picked up
-          const arrived = arrivals[addMonths(m, 1)] ?? 0;
-          const miss = m < ctx.startMonth ? Math.max(0, committed - arrived) : 0;
-          return (
-            <td key={m} className={cls}>
-              <span
-                className={`num text-[12px] ${
-                  miss > 0 ? "font-semibold text-warn" : committed > 0 ? "font-semibold text-accent" : "text-muted/40"
-                }`}
-                title={
-                  miss > 0
-                    ? ru
-                      ? `не выбрано ~${fmtN(miss)} шт (пришло ${fmtN(arrived)})`
-                      : `~${fmtN(miss)} pcs not picked up (arrived ${fmtN(arrived)})`
-                    : undefined
-                }
-              >
-                {committed > 0 ? fmtN(committed) : "—"}
-                {miss > 0 && <span className="ml-0.5 align-super text-[9px]">!</span>}
-              </span>
-            </td>
-          );
-        }
-        const raw = ctx.orderEdits[cellKey(skuId, m)];
-        const dirtyCell = raw !== undefined && parseQty(raw) !== committed;
-        return (
-          <td key={m} className={cls}>
-            <input
-              className={`num h-7 w-[60px] rounded border bg-surface px-1 text-right text-[12px] font-semibold text-accent focus:border-accent focus:outline-none ${
-                dirtyCell
-                  ? "border-accent bg-accent-soft/30"
-                  : m === ctx.slot.shipMonth
-                    ? "border-accent/50"
-                    : "border-border"
-              }`}
-              value={raw ?? (committed > 0 ? String(committed) : "")}
-              onChange={(e) => ctx.setOrder(skuId, m, e.target.value)}
-              placeholder="0"
-              inputMode="numeric"
-            />
-          </td>
-        );
-      })}
-    </tr>
-  );
-}
-
-/** Partner Purchase — actual units that arrived, per month (history). */
-function PurchaseRow({ arrivals, ctx }: { arrivals: Record<string, number>; ctx: GridCtx }) {
-  return (
-    <tr className="border-b border-border/60">
-      <RowLabel>Partner Purchase</RowLabel>
-      {ctx.months.map((m) => {
-        const act = arrivals[m] ?? 0;
-        const future = m >= ctx.startMonth;
-        return (
-          <td key={m} className={`px-1 py-1 text-center ${colCls(m, ctx)}`}>
-            <span className={`num text-[12px] ${future ? "text-muted/40" : act > 0 ? "font-medium" : "text-muted/40"}`}>
-              {!future && act > 0 ? fmtN(act) : "—"}
-            </span>
-          </td>
-        );
-      })}
-    </tr>
-  );
-}
-
-/** Verified prescriptions by month — the demand engine behind the model.
- *  Admin can correct a month inline (click the value, Enter saves). */
+/** Verified prescriptions — the demand driver. New month goes in directly;
+ *  correcting history takes the pencil toggle first. */
 function RecruitmentCard({
   recruitment,
   ru,
@@ -646,27 +617,34 @@ function RecruitmentCard({
   isAdmin: boolean;
   onSaved: () => void;
 }) {
+  const [editOn, setEditOn] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [val, setVal] = useState("");
+  const [newVal, setNewVal] = useState("");
   const [busy, setBusy] = useState(false);
+  const canEdit = isAdmin && editOn;
 
   const recorded = Object.keys(recruitment).sort();
-  const months = recorded.slice(-9);
-  // one open slot for the next month, so a new count can always be typed in
+  const months = recorded.slice(-6);
   const nextKey = recorded.length > 0 ? addMonths(recorded[recorded.length - 1], 1) : null;
   const max = Math.max(...months.map((m) => recruitment[m]), 1);
-  const tail = months.slice(-3);
-  const ahead = tail.length > 0 ? tail.reduce((s, m) => s + recruitment[m], 0) / tail.length : 0;
+  const last = recorded[recorded.length - 1];
+  const prev = recorded[recorded.length - 2];
+  const trend =
+    last && prev && recruitment[prev] > 0
+      ? ((recruitment[last] - recruitment[prev]) / recruitment[prev]) * 100
+      : null;
 
-  async function save(m: string) {
+  async function save(m: string, raw: string) {
     setBusy(true);
     try {
       await fetch("/api/planning/recruitment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ monthKey: m, babies: parseQty(val) }),
+        body: JSON.stringify({ monthKey: m, babies: parseQty(raw) }),
       });
       setEditing(null);
+      setNewVal("");
       onSaved();
     } finally {
       setBusy(false);
@@ -674,16 +652,20 @@ function RecruitmentCard({
   }
 
   return (
-    <Card className="mt-4 overflow-hidden">
-      <CardHeader
-        title={ru ? "Медицинский канал" : "Medical channel"}
-        desc={
-          ru
-            ? "Подтверждённые рецепты — вход модели спроса. Будущие месяцы считаются по среднему за последние 3 мес."
-            : "Verified prescriptions — the demand model's input. Forward months assume the trailing 3-month average."
-        }
-      />
-      <div className="flex flex-wrap items-end gap-8 px-5 py-4">
+    <Card className="mt-4 px-5 py-4">
+      <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-3">
+        <div>
+          <div className="label-caps">{ru ? "Медицинский канал" : "Medical channel"}</div>
+          <div className="mt-0.5 text-[12.5px] text-muted">
+            {ru ? "Подтверждённые рецепты — драйвер модели спроса" : "Verified prescriptions — the demand model's driver"}
+            {trend !== null && (
+              <span className={`num ml-2 font-semibold ${trend >= 0 ? "text-ok" : "text-danger"}`}>
+                {trend >= 0 ? "+" : ""}
+                {trend.toFixed(1)}% {ru ? "к прошлому мес." : "vs last mo."}
+              </span>
+            )}
+          </div>
+        </div>
         <div className="flex items-end gap-2">
           {months.map((m) => (
             <div key={m} className="flex flex-col items-center gap-0.5">
@@ -695,7 +677,7 @@ function RecruitmentCard({
                   disabled={busy}
                   onChange={(e) => setVal(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void save(m);
+                    if (e.key === "Enter") void save(m, val);
                     if (e.key === "Escape") setEditing(null);
                   }}
                   onBlur={() => {
@@ -706,13 +688,13 @@ function RecruitmentCard({
                 <button
                   type="button"
                   className={`num text-[10px] text-muted ${
-                    isAdmin
+                    canEdit
                       ? "underline decoration-border-strong decoration-dashed underline-offset-2 hover:text-accent"
                       : "cursor-default"
                   }`}
-                  title={isAdmin ? (ru ? "Изменить (Enter — сохранить)" : "Edit (Enter saves)") : undefined}
+                  title={canEdit ? (ru ? "Изменить (Enter — сохранить)" : "Edit (Enter saves)") : undefined}
                   onClick={
-                    isAdmin
+                    canEdit
                       ? () => {
                           setEditing(m);
                           setVal(String(recruitment[m]));
@@ -724,55 +706,53 @@ function RecruitmentCard({
                 </button>
               )}
               <div
-                className="w-7 rounded-t bg-accent/60"
-                style={{ height: `${6 + (recruitment[m] / max) * 44}px` }}
+                className="w-8 rounded-t bg-accent/60"
+                style={{ height: `${5 + (recruitment[m] / max) * 30}px` }}
                 title={`${monthLabel(m, ru)}: ${fmtN(recruitment[m])}`}
               />
-              <span className="text-[9px] text-muted">{monthLabel(m, ru)}</span>
+              <span className="text-[9px] text-muted">{monthShort(m, ru)}</span>
             </div>
           ))}
+        </div>
+        <div className="flex items-center gap-2">
           {isAdmin && nextKey && (
-            <div className="flex flex-col items-center gap-0.5">
-              {editing === nextKey ? (
+            <>
+              <div>
+                <div className="label-caps">{ru ? `Рецепты за ${monthLabel(nextKey, ru)}` : `Rx for ${monthLabel(nextKey, ru)}`}</div>
                 <input
-                  autoFocus
-                  className="num h-6 w-14 rounded border border-accent bg-surface px-1 text-right text-[11px] focus:outline-none"
-                  value={val}
+                  className="num mt-1 h-8 w-28 rounded-md border border-border bg-surface px-2 text-right text-[13px] focus:border-accent focus:outline-none"
+                  value={newVal}
                   disabled={busy}
                   placeholder="0"
-                  onChange={(e) => setVal(e.target.value)}
+                  inputMode="numeric"
+                  onChange={(e) => setNewVal(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void save(nextKey);
-                    if (e.key === "Escape") setEditing(null);
-                  }}
-                  onBlur={() => {
-                    if (!busy) setEditing(null);
+                    if (e.key === "Enter" && parseQty(newVal) > 0) void save(nextKey, newVal);
                   }}
                 />
-              ) : (
-                <button
-                  type="button"
-                  className="text-[10px] font-semibold text-accent hover:underline"
-                  title={ru ? "Внести число за этот месяц" : "Enter this month's count"}
-                  onClick={() => {
-                    setEditing(nextKey);
-                    setVal("");
-                  }}
-                >
-                  +
-                </button>
-              )}
-              <div className="h-[6px] w-7 rounded-t border border-dashed border-border-strong" />
-              <span className="text-[9px] text-muted">{monthLabel(nextKey, ru)}</span>
-            </div>
+              </div>
+              <Button disabled={busy || parseQty(newVal) <= 0} onClick={() => void save(nextKey, newVal)}>
+                {busy ? "…" : ru ? "Внести" : "Add"}
+              </Button>
+            </>
           )}
-        </div>
-        <div className="border-l border-border pb-1 pl-6">
-          <div className="label-caps">{ru ? "Прогноз набора" : "Recruitment ahead"}</div>
-          <div className="mt-0.5 flex items-baseline gap-1.5">
-            <span className="num font-display text-[19px] font-extrabold">{fmtN(Math.round(ahead))}</span>
-            <span className="text-[11px] text-muted">{ru ? "рецептов/мес" : "Rx/mo"}</span>
-          </div>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditOn((v) => !v);
+                setEditing(null);
+              }}
+              title={ru ? "Исправить прошлые месяцы" : "Correct past months"}
+              className={`self-end rounded-md px-2 py-1.5 text-[11.5px] font-medium transition-colors ${
+                editOn
+                  ? "bg-accent-soft-bg font-semibold text-accent"
+                  : "border border-border text-muted hover:border-accent/40 hover:text-accent"
+              }`}
+            >
+              <IconPencil size={11} />
+            </button>
+          )}
         </div>
       </div>
     </Card>

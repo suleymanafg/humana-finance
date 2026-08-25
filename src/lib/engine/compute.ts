@@ -350,7 +350,11 @@ export function computeBalanceSheets(
       (mb?.vatPrepayment ?? 0) +
       settlementReceivable;
     // Assumption (documented in README): tax payable = current month's accrued taxes.
-    const taxPayable = m.taxesTotal;
+    // Tax payable = TI's own accrued profit tax only. Fargo's VAT and income
+    // tax are already withheld inside the settlement receivable (dueToTi
+    // subtracts them), so listing them here again would double-count them
+    // as liabilities — owner's ruling 2026-08-25.
+    const taxPayable = m.tiIncomeTax;
     const liabilitiesTotal = taxPayable + (mb?.priorVatBalance ?? 0) + (mb?.nutribenLoan ?? 0);
     const plug = assetsTotal - liabilitiesTotal - (tiCapital + fargoCapital + retained);
     rows.push({
