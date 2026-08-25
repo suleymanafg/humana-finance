@@ -394,12 +394,40 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
       rows.push([
         s.code,
         monthName(s.monthId),
-        `${t("total")} · ${t("importExpenses")} ${Math.round(s.expenseTotal).toLocaleString("en-US")}`,
+        `${t("total")} · ${t("purchaseAmount")}`,
         s.lines.reduce((a, l) => a + l.qty, 0),
         null,
         null,
         s.purchaseTotal,
         s.loadFactor,
+        null,
+        null,
+      ]);
+      // the shipment's import expenses, itemized by category
+      for (const e of dataset.importExpenses.filter((x) => x.shipmentId === s.shipmentId)) {
+        rows.push([
+          s.code,
+          monthName(s.monthId),
+          `— ${e.categoryName}`,
+          null,
+          null,
+          null,
+          e.amount,
+          null,
+          null,
+          null,
+        ]);
+      }
+      boldRows.push(rows.length);
+      rows.push([
+        s.code,
+        monthName(s.monthId),
+        locale === "ru" ? "Итого с расходами импорта" : "Total incl. import expenses",
+        null,
+        null,
+        null,
+        s.purchaseTotal + s.expenseTotal,
+        null,
         null,
         null,
       ]);
