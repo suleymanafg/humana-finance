@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/import/invoice": [
       "./node_modules/pdf-parse/dist/**",
+      "./node_modules/pdfjs-dist/**",
       "./node_modules/@napi-rs/canvas/**",
       "./node_modules/@napi-rs/canvas-linux-x64-gnu/**",
       "./node_modules/tesseract.js/**",
