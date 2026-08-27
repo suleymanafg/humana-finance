@@ -27,8 +27,11 @@ export async function POST(request: NextRequest) {
   let parsed;
   try {
     parsed = await extractInvoice(Buffer.from(await file.arrayBuffer()));
-  } catch {
-    return NextResponse.json({ error: "could not read the PDF" }, { status: 502 });
+  } catch (e) {
+    // surface the real cause in the function logs AND to the admin's screen
+    console.error("invoice extraction failed:", e);
+    const msg = e instanceof Error ? e.message : "unknown error";
+    return NextResponse.json({ error: `could not read the PDF: ${msg}` }, { status: 502 });
   }
   if (parsed.lines.length === 0) {
     return NextResponse.json(

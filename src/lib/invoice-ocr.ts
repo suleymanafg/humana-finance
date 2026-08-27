@@ -9,6 +9,21 @@ import os from "os";
 import { PDFParse } from "pdf-parse";
 import Tesseract from "tesseract.js";
 
+// pdf.js requires Promise.withResolvers (Node 22+); polyfill for runtimes
+// that don't have it, e.g. serverless images still on Node 20
+type WR<T> = { promise: Promise<T>; resolve: (v: T) => void; reject: (r?: unknown) => void };
+if (typeof (Promise as { withResolvers?: unknown }).withResolvers !== "function") {
+  (Promise as unknown as { withResolvers: <T>() => WR<T> }).withResolvers = <T>(): WR<T> => {
+    let resolve!: (v: T) => void;
+    let reject!: (r?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+}
+
 export interface InvoiceLine {
   article: string | null;
   description: string;
