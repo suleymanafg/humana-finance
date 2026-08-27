@@ -6,8 +6,28 @@
 //   ST 4,00 ST/KAR 1.000 ST 457,00 EUR/100 ST 4.570,00
 //   batch 7520018070 250,000 KAR best before date 13.02.2028
 import os from "os";
-import { PDFParse } from "pdf-parse";
 import Tesseract from "tesseract.js";
+
+// pdf.js references DOM graphics classes at module init. Normally it
+// polyfills them via @napi-rs/canvas (bundled through
+// outputFileTracingIncludes); if canvas is ever unavailable, these guarded
+// stubs keep the module loadable so text extraction still works and image
+// paths fail into our catch instead of killing the whole function.
+const g = globalThis as Record<string, unknown>;
+if (typeof g.DOMMatrix === "undefined") {
+  g.DOMMatrix = class DOMMatrix {
+    a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
+  };
+}
+if (typeof g.ImageData === "undefined") g.ImageData = class ImageData {};
+if (typeof g.Path2D === "undefined") g.Path2D = class Path2D {};
+
+// loaded lazily so the polyfills above are guaranteed to be in place first
+let pdfParseModule: typeof import("pdf-parse") | null = null;
+async function getPDFParse() {
+  if (!pdfParseModule) pdfParseModule = await import("pdf-parse");
+  return pdfParseModule.PDFParse;
+}
 
 // pdf.js requires Promise.withResolvers (Node 22+); polyfill for runtimes
 // that don't have it, e.g. serverless images still on Node 20
@@ -50,6 +70,7 @@ function toIso(d: string): string {
  *  the embedded page images. The line items ("EUR/100") are the signal that
  *  the text layer is real and complete. */
 export async function pdfText(pdf: Buffer): Promise<string> {
+  const PDFParse = await getPDFParse();
   const parser = new PDFParse({ data: new Uint8Array(pdf) });
   try {
     const textRes = await parser.getText();
