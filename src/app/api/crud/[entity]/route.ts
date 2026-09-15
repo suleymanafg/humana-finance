@@ -239,7 +239,16 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ entity
   for (const f of config.fields) {
     if (body.data && f in body.data) {
       let v = body.data[f];
-      if (v !== null && config.dateFields?.includes(f)) v = new Date(v as string);
+      if (v !== null && config.dateFields?.includes(f)) {
+        const d = new Date(v as string);
+        // a typo'd year (e.g. 20206) stores fine but breaks toISOString() on
+        // every subsequent page load — reject it at the door
+        const year = d.getFullYear();
+        if (Number.isNaN(d.getTime()) || year < 1990 || year > 2100) {
+          return NextResponse.json({ error: `${f}: недопустимая дата «${v}»` }, { status: 400 });
+        }
+        v = d;
+      }
       data[f] = v;
     }
   }
