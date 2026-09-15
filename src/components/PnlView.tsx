@@ -312,7 +312,15 @@ export default function PnlView({
       return {
         title: `${t("retroBonus")} — ${title}`,
         monthId: m.monthId,
-        rows: Object.entries(m.retroByChannel).map(([ch, v]) => ({ label: channelNames[ch] ?? ch, value: v })),
+        rows: Object.entries(m.retroByChannel)
+          .sort((a, b) => b[1] - a[1])
+          .map(([ch, v]) => ({
+            label: channelNames[ch] ?? ch,
+            value: v,
+            note: m.revenueByChannel[ch]
+              ? `${fmtPct(v / m.revenueByChannel[ch])} × ${fmtN(m.revenueByChannel[ch])}`
+              : undefined,
+          })),
       };
     }
     if (rowKey.startsWith("ti:")) {
@@ -482,6 +490,14 @@ export default function PnlView({
     () => [...ytd.cogsRows].sort((a, b) => b.amount - a.amount).map((r) => r.productId),
     [ytd]
   );
+  const retroChannelIds = useMemo(
+    () =>
+      Object.entries(ytd.retroByChannel)
+        .filter(([, v]) => v !== 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([ch]) => ch),
+    [ytd]
+  );
   const matrixSpecs: MatrixRowSpec[] = useMemo(() => {
     const specs: MatrixRowSpec[] = [];
     specs.push({
@@ -541,7 +557,24 @@ export default function PnlView({
             negate: true,
             indent: 1,
           });
-      specs.push({ id: "retro", label: t("retroBonus"), drill: "retro", get: (m) => m.retroBonus, negate: true, indent: 1 });
+      specs.push({
+        id: "retro",
+        label: t("retroBonus"),
+        drill: "retro",
+        get: (m) => m.retroBonus,
+        negate: true,
+        indent: 1,
+        toggle: { expanded: !!open["mx:retro"], onToggle: () => toggle("mx:retro") },
+      });
+      if (open["mx:retro"])
+        for (const ch of retroChannelIds)
+          specs.push({
+            id: `retro:${ch}`,
+            label: channelNames[ch] ?? ch,
+            get: (m) => m.retroByChannel[ch] ?? 0,
+            negate: true,
+            indent: 2,
+          });
     }
     specs.push({ id: "ebitda", label: t("ebitda"), get: (m) => m.ebitda, kind: "subtotal", section: true });
     specs.push({ id: "ebitdaPct", label: t("ebitdaMargin"), get: (m) => m.ebitdaMarginPct, kind: "pct" });
@@ -563,7 +596,7 @@ export default function PnlView({
     specs.push({ id: "netPct", label: t("netMargin"), get: (m) => m.netMarginPct, kind: "pct" });
     return specs;
      
-  }, [open, channelIds, cogsProductIds, matrixCols, channelNames, productNames, locale, t]);
+  }, [open, channelIds, cogsProductIds, retroChannelIds, matrixCols, channelNames, productNames, locale, t]);
 
   const modeBtn = (m: "month" | "matrix", label: string) => (
     <button
