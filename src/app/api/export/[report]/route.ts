@@ -10,6 +10,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { getComputed } from "@/lib/data";
 import { getSession } from "@/lib/auth";
+import { monthIdOfDate } from "@/lib/engine/compute";
 import { dict, type DictKey, type Locale } from "@/lib/i18n";
 import { GROUP_LABELS } from "@/lib/groups";
 import { tashkentDistrictOf } from "@/lib/sync-1c-core";
@@ -521,6 +522,157 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
       },
     ];
     filename = `balance-${monthId}.xlsx`;
+  } else if (report === "transfers") {
+    // Payments reconciliation to hand to Fargo: month-by-month accrual vs
+    // payment from the settlement model, plus the full register of transfers
+    // to TI. Figures match the Balance page exactly; the only live formulas
+    // are self-evident ones (Δ, line totals, running cumulative).
+    const ru = locale === "ru";
+    const fmtDate = (iso: string) =>
+      new Date(iso).toLocaleDateString(ru ? "ru-RU" : "en-US", { timeZone: "UTC" });
+
+    // sheet 1 — monthly reconciliation (mirrors «Платёжная дисциплина»)
+    const series = computed.settlement;
+    const monthlyRecon = series
+      .map((s, i) => {
+        const prev = i > 0 ? series[i - 1] : null;
+        const accrued = s.dueToTi - (prev?.dueToTi ?? 0);
+        const paid =
+          s.cumTransfersCash +
+          s.cumTransfersBank -
+          ((prev?.cumTransfersCash ?? 0) + (prev?.cumTransfersBank ?? 0));
+        return { monthId: s.monthId, accrued, paid, remaining: s.remaining };
+      })
+      .filter((d) => Math.round(d.accrued) !== 0 || Math.round(d.paid) !== 0);
+    const last = series.filter((s) => monthlyRecon.some((d) => d.monthId === s.monthId)).at(-1);
+
+    const reconRows: Array<Array<CellValue>> = [];
+    const reconBold: number[] = [];
+    const reconSection: number[] = [];
+    const r1 = firstDataRow(true);
+    monthlyRecon.forEach((d, i) => {
+      const r = r1 + i;
+      reconRows.push([
+        monthName(d.monthId),
+        Math.round(d.accrued),
+        Math.round(d.paid),
+        { formula: `B${r}-C${r}`, result: Math.round(d.accrued - d.paid) },
+        Math.round(d.remaining),
+      ]);
+    });
+    if (last && monthlyRecon.length > 0) {
+      const rLast = r1 + monthlyRecon.length - 1;
+      reconBold.push(reconRows.length);
+      reconRows.push([
+        t("total"),
+        { formula: `SUM(B${r1}:B${rLast})`, result: Math.round(last.dueToTi) },
+        {
+          formula: `SUM(C${r1}:C${rLast})`,
+          result: Math.round(last.cumTransfersCash + last.cumTransfersBank),
+        },
+        {
+          formula: `SUM(D${r1}:D${rLast})`,
+          result: Math.round(last.dueToTi - last.cumTransfersCash - last.cumTransfersBank),
+        },
+        null,
+      ]);
+    }
+    if (last) {
+      reconSection.push(reconRows.length);
+      reconRows.push([
+        `${ru ? "Итог на" : "As of"} ${monthName(last.monthId)}`,
+        null,
+        null,
+        null,
+        null,
+      ]);
+      reconRows.push([`    ${ru ? "Начислено всего (доля TI)" : "Total accrued (due to TI)"}`, Math.round(last.dueToTi), null, null, null]);
+      reconRows.push([
+        `    ${ru ? "Перечислено всего" : "Total transferred"}`,
+        Math.round(last.cumTransfersCash + last.cumTransfersBank),
+        null,
+        null,
+        null,
+      ]);
+      reconRows.push([
+        `    ${ru ? "Не собрано с клиентов (дебиторка)" : "Not yet collected from clients (AR)"}`,
+        Math.round(last.outstandingAr),
+        null,
+        null,
+        null,
+      ]);
+      reconBold.push(reconRows.length);
+      reconRows.push([t("remainingBalance"), Math.round(last.remaining), null, null, null]);
+    }
+
+    // sheet 2 — every payment to TI, date order, with a running cumulative
+    const transfers = [...dataset.transfers].sort((a, b) => a.date.localeCompare(b.date));
+    const payRows: Array<Array<CellValue>> = [];
+    const payBold: number[] = [];
+    let cum = 0;
+    transfers.forEach((tr, i) => {
+      const r = r1 + i;
+      const lineTotal = tr.cashAmount + tr.bankAmount;
+      cum += lineTotal;
+      payRows.push([
+        i + 1,
+        fmtDate(tr.date),
+        monthName(monthIdOfDate(tr.date)),
+        tr.cashAmount,
+        tr.bankAmount,
+        { formula: `D${r}+E${r}`, result: lineTotal },
+        i === 0 ? { formula: `F${r}`, result: cum } : { formula: `G${r - 1}+F${r}`, result: cum },
+      ]);
+    });
+    if (transfers.length > 0) {
+      const pLast = r1 + transfers.length - 1;
+      payBold.push(payRows.length);
+      payRows.push([
+        null,
+        t("total"),
+        null,
+        { formula: `SUM(D${r1}:D${pLast})`, result: transfers.reduce((s, x) => s + x.cashAmount, 0) },
+        { formula: `SUM(E${r1}:E${pLast})`, result: transfers.reduce((s, x) => s + x.bankAmount, 0) },
+        { formula: `SUM(F${r1}:F${pLast})`, result: cum },
+        null,
+      ]);
+    }
+
+    sheets = [
+      {
+        name: ru ? "Сверка по месяцам" : "Monthly reconciliation",
+        title: ru ? "Сверка расчётов Fargo → Turbo Impex" : "Fargo → Turbo Impex reconciliation",
+        subtitle: generated,
+        columns: [
+          { header: ru ? "Месяц" : "Month", width: 20 },
+          { header: ru ? "Начислено (доля TI)" : "Accrued (due to TI)", numFmt: MONEY, width: 20 },
+          { header: ru ? "Перечислено TI" : "Transferred to TI", numFmt: MONEY, width: 20 },
+          { header: ru ? "Δ за месяц" : "Δ for month", numFmt: MONEY, width: 17 },
+          { header: ru ? "Долг на конец" : "Debt at month end", numFmt: MONEY, width: 20 },
+        ],
+        rows: reconRows,
+        boldRows: reconBold,
+        sectionRows: reconSection,
+      },
+      {
+        name: ru ? "Платежи" : "Payments",
+        title: ru ? "Платежи Fargo в адрес Turbo Impex" : "Payments from Fargo to Turbo Impex",
+        subtitle: generated,
+        columns: [
+          { header: "№", width: 6 },
+          { header: ru ? "Дата" : "Date", width: 14 },
+          { header: ru ? "Месяц" : "Month", width: 20 },
+          { header: ru ? "Наличные" : "Cash", numFmt: MONEY, width: 17 },
+          { header: ru ? "Банк" : "Bank", numFmt: MONEY, width: 17 },
+          { header: ru ? "Итого" : "Total", numFmt: MONEY, width: 17 },
+          { header: ru ? "Накопительно" : "Cumulative", numFmt: MONEY, width: 18 },
+        ],
+        rows: payRows,
+        boldRows: payBold,
+        freezeCols: 2,
+      },
+    ];
+    filename = "fargo-reconciliation.xlsx";
   } else {
     return NextResponse.json({ error: "unknown report" }, { status: 404 });
   }

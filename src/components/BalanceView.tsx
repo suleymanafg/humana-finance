@@ -419,8 +419,17 @@ export default function BalanceView({
 
           {dynamics.length > 1 && (
             <div className="border-t border-border px-4 py-3">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
-                {ru ? "Платёжная дисциплина Fargo по месяцам" : "Fargo payment discipline by month"}
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+                  {ru ? "Платёжная дисциплина Fargo по месяцам" : "Fargo payment discipline by month"}
+                </div>
+                <a
+                  href={`/api/export/transfers?locale=${locale}`}
+                  className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-accent hover:underline"
+                >
+                  <IconDownload size={12} />
+                  {ru ? "Сверка для Fargo (Excel)" : "Fargo reconciliation (Excel)"}
+                </a>
               </div>
               <div className="overflow-x-auto">
                 <table className="tbl">
