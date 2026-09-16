@@ -26,7 +26,6 @@ export default async function SettingsPage() {
         id: c.id,
         name: c.name,
         code1c: c.code1c ?? "",
-        retroPct: c.retroPct,
         cashPct: c.cashPct,
         bankPct: 1 - c.cashPct,
         sortOrder: c.sortOrder,

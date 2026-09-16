@@ -19,8 +19,8 @@ function fixture(): Dataset {
       { id: "B", nameRu: "B", price: 135_800, isPromo: false, regularProductId: null, sortOrder: 2 },
     ],
     channels: [
-      { id: "C1", name: "Город", retroPct: 0.1, cashPct: 0.5, sortOrder: 0 },
-      { id: "C2", name: "Корзинка", retroPct: 0, cashPct: 0, sortOrder: 1 },
+      { id: "C1", name: "Город", cashPct: 0.5, sortOrder: 0 },
+      { id: "C2", name: "Корзинка", cashPct: 0, sortOrder: 1 },
     ],
     months: [
       { id: "2025-08", nameRu: "Август 2025", nameEn: "August 2025", sortOrder: 0 },
@@ -126,8 +126,8 @@ describe("landed cost (3.1)", () => {
   });
 });
 
-describe("revenue & retro (3.2)", () => {
-  it("computes revenue with promo prices, cash/bank/retro splits per channel", () => {
+describe("revenue (3.2)", () => {
+  it("computes revenue with promo prices, cash/bank splits per channel", () => {
     const c = compute(fixture());
     const aug = c.monthly.find((m) => m.monthId === "2025-08")!;
     expect(aug.revenue).toBe(1_979_000); // 10×100k + 4×75k + 5×135.8k
@@ -135,7 +135,6 @@ describe("revenue & retro (3.2)", () => {
     expect(aug.revenueByChannel["C2"]).toBe(679_000);
     expect(aug.cashRevenue).toBeCloseTo(650_000, 6);
     expect(aug.bankRevenue).toBeCloseTo(1_329_000, 6);
-    expect(aug.retroBonus).toBeCloseTo(130_000, 6);
   });
 });
 
@@ -154,8 +153,7 @@ describe("invoiced amount overrides list price", () => {
     expect(aug.revenueByChannel["C1"]).toBe(1_200_000);
     // quantities are untouched, so COGS still costs 14 units at 76 000
     expect(aug.cogs).toBeCloseTo(14 * 76_000, 6);
-    // retro and cash/bank splits follow the invoiced revenue
-    expect(aug.retroBonus).toBeCloseTo(1_200_000 * 0.1, 6);
+    // cash/bank splits follow the invoiced revenue
     expect(aug.cashRevenue).toBeCloseTo(600_000, 6);
   });
 
@@ -217,8 +215,8 @@ describe("P&L rollup (3.5–3.7)", () => {
     expect(aug.opexTiByGroup["TI_SALARIES"]).toBe(250_000);
     expect(aug.opexFargoByGroup["FG_WAREHOUSE"]).toBe(300_000);
     expect(aug.opexFargoByGroup["UNMAPPED"]).toBe(10_000); // never dropped
-    // OPEX TI + OPEX Fargo + retro (marketing is folded into OPEX categories)
-    expect(aug.totalOpex).toBeCloseTo(250_000 + 310_000 + 130_000, 6);
+    // OPEX TI + OPEX Fargo (marketing and retro are OPEX categories)
+    expect(aug.totalOpex).toBeCloseTo(250_000 + 310_000, 6);
     expect(aug.ebitda).toBeCloseTo(aug.grossProfit - aug.totalOpex, 6);
     expect(aug.netProfit).toBeCloseTo(aug.ebitda - (aug.fargoVat + aug.fargoIncomeTax + aug.tiIncomeTax), 6);
     // YTD aggregates
@@ -232,7 +230,7 @@ describe("settlement (3.9)", () => {
     const c = compute(fixture());
     const aug = c.settlement.find((s) => s.monthId === "2025-08")!;
     const m = c.monthly.find((x) => x.monthId === "2025-08")!;
-    const due = m.revenue - m.opexFargoTotal - m.retroBonus - m.fargoVat - m.fargoIncomeTax;
+    const due = m.revenue - m.opexFargoTotal - m.fargoVat - m.fargoIncomeTax;
     expect(aug.dueToTi).toBeCloseTo(due, 6);
     expect(aug.cumTransfersCash).toBe(100_000);
     expect(aug.cumTransfersBank).toBe(200_000);

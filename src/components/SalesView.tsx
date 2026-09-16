@@ -37,7 +37,6 @@ interface Snapshot {
   revenue: number;
   cashRevenue: number;
   bankRevenue: number;
-  retroBonus: number;
   totalQty: number;
   revenueByChannel: Record<string, number>;
   qtyByProduct: Record<string, number>;
@@ -248,7 +247,6 @@ export default function SalesView({
         revenue: 0,
         cashRevenue: 0,
         bankRevenue: 0,
-        retroBonus: 0,
         totalQty: 0,
         revenueByChannel: {},
         qtyByProduct: {},
@@ -940,7 +938,6 @@ export default function SalesView({
                 <Th sortKey="diff" sort={chanSort.sort} onSort={chanSort.onSort} numeric>
                   {t("change")}
                 </Th>
-                <Th numeric>{t("retroPct")}</Th>
                 <Th numeric>{t("trend12")}</Th>
               </tr>
             </thead>
@@ -983,9 +980,6 @@ export default function SalesView({
                           <Delta current={r.now} previous={r.was} />
                         </span>
                       </div>
-                    </td>
-                    <td className="text-right">
-                      <span className="num text-muted">{fmtPct(r.channel.retroPct)}</span>
                     </td>
                     <td className="text-right">
                       <Spark values={r.series} tone="muted" />

@@ -146,7 +146,6 @@ export default function BalanceView({
         ? [
             { label: t("revenue"), value: settlement.cumRevenue },
             { label: `− ${t("opexFargoTotal")}`, value: -settlement.cumFargoOpex },
-            { label: `− ${t("retroBonus")}`, value: -settlement.cumRetro },
             { label: `− ${t("fargoVat")}`, value: -settlement.cumFargoVat },
             { label: `− ${t("fargoIncomeTax")}`, value: -settlement.cumFargoIncomeTax },
             { label: t("dueToTi"), value: settlement.dueToTi, strong: true },
@@ -396,7 +395,6 @@ export default function BalanceView({
               value={settlement.cumRevenue}
             />
             <StatementLine label={`− ${t("opexFargoTotal")}`} value={-settlement.cumFargoOpex} />
-            <StatementLine label={`− ${t("retroBonus")}`} value={-settlement.cumRetro} />
             <StatementLine label={`− ${t("fargoVat")}`} value={-settlement.cumFargoVat} />
             <StatementLine label={`− ${t("fargoIncomeTax")}`} value={-settlement.cumFargoIncomeTax} />
             <div className="mx-4 mt-1 border-t border-border" />
@@ -463,8 +461,8 @@ export default function BalanceView({
               </div>
               <p className="mt-2 text-[11.5px] leading-relaxed text-muted">
                 {ru
-                  ? "Начислено = выручка Fargo за месяц минус его расходы, ретро-бонусы и налоги. Положительная Δ (красным) — Fargo в этом месяце удержал деньги; «Долг на конец» — сколько Fargo должен TI нарастающим итогом."
-                  : "Accrued = Fargo's monthly revenue minus its expenses, retro bonuses and taxes. A positive Δ (red) means Fargo held cash that month; the last column is Fargo's running debt to TI."}
+                  ? "Начислено = выручка Fargo за месяц минус его расходы (включая ретро-бонусы) и налоги. Положительная Δ (красным) — Fargo в этом месяце удержал деньги; «Долг на конец» — сколько Fargo должен TI нарастающим итогом."
+                  : "Accrued = Fargo's monthly revenue minus its expenses (retro bonuses included) and taxes. A positive Δ (red) means Fargo held cash that month; the last column is Fargo's running debt to TI."}
               </p>
             </div>
           )}

@@ -17,7 +17,6 @@ export interface ChannelIn {
   id: string;
   name: string;
   code1c?: string | null; // 1C code for import matching
-  retroPct: number; // fraction
   cashPct: number; // fraction
   sortOrder: number;
 }
@@ -237,8 +236,6 @@ export interface MonthlyResult {
   revenue: number;
   cashRevenue: number;
   bankRevenue: number;
-  retroBonus: number;
-  retroByChannel: Record<string, number>;
   qtyByProduct: Record<string, number>;
   revenueByProduct: Record<string, number>;
   totalQty: number;
@@ -250,7 +247,7 @@ export interface MonthlyResult {
   opexTiTotal: number;
   opexFargoByGroup: Record<string, number>;
   opexFargoTotal: number;
-  totalOpex: number; // OPEX TI + OPEX Fargo + retro (marketing folded into OPEX)
+  totalOpex: number; // OPEX TI + OPEX Fargo (marketing and retro folded into OPEX categories)
   ebitda: number;
   ebitdaMarginPct: number;
   vatRows: VatRow[];
@@ -267,8 +264,7 @@ export interface MonthlyResult {
 export interface SettlementRow {
   monthId: string;
   cumRevenue: number;
-  cumFargoOpex: number;
-  cumRetro: number;
+  cumFargoOpex: number; // includes manual retro-bonus entries (FG_RETRO)
   cumFargoVat: number;
   cumFargoIncomeTax: number;
   dueToTi: number;

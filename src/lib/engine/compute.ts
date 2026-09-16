@@ -98,8 +98,6 @@ function emptyMonthly(monthId: string): MonthlyResult {
     revenue: 0,
     cashRevenue: 0,
     bankRevenue: 0,
-    retroBonus: 0,
-    retroByChannel: {},
     qtyByProduct: {},
     revenueByProduct: {},
     totalQty: 0,
@@ -137,7 +135,8 @@ export function computeMonthly(
     const r = emptyMonthly(month.id);
     const sales = ds.sales.filter((s) => s.monthId === month.id);
 
-    // 3.2 revenue + cash/bank/retro splits (per channel percentages).
+    // 3.2 revenue + cash/bank splits (per channel percentages). Retro bonuses
+    // are NOT computed here — they are manual OPEX Fargo entries (FG_RETRO).
     // Imported rows carry the invoiced amount, which reflects discounts,
     // returns and price corrections; manual rows fall back to qty × list price.
     for (const s of sales) {
@@ -155,9 +154,6 @@ export function computeMonthly(
       r.revenue += amount;
       r.cashRevenue += amount * ch.cashPct;
       r.bankRevenue += amount * (1 - ch.cashPct);
-      const retro = amount * ch.retroPct;
-      r.retroBonus += retro;
-      if (retro !== 0) r.retroByChannel[chId] = retro;
     }
 
     // 3.3 COGS at weighted-average TI landed cost (promo -> regular cost)
@@ -217,7 +213,7 @@ export function computeMonthly(
       r.opexFargoTotal += e.amount;
     }
     // 3.7 rollup
-    r.totalOpex = r.opexTiTotal + r.opexFargoTotal + r.retroBonus;
+    r.totalOpex = r.opexTiTotal + r.opexFargoTotal;
     r.ebitda = r.grossProfit - r.totalOpex;
     r.ebitdaMarginPct = r.revenue !== 0 ? r.ebitda / r.revenue : 0;
     r.taxesTotal = r.fargoVat + r.tiIncomeTax + r.fargoIncomeTax;
@@ -234,7 +230,6 @@ export function sumMonthly(rows: MonthlyResult[], label = "YTD"): MonthlyResult 
   };
   for (const m of rows) {
     addRecord(t.revenueByChannel, m.revenueByChannel);
-    addRecord(t.retroByChannel, m.retroByChannel);
     addRecord(t.qtyByProduct, m.qtyByProduct);
     addRecord(t.revenueByProduct, m.revenueByProduct);
     addRecord(t.opexTiByGroup, m.opexTiByGroup);
@@ -242,7 +237,6 @@ export function sumMonthly(rows: MonthlyResult[], label = "YTD"): MonthlyResult 
     t.revenue += m.revenue;
     t.cashRevenue += m.cashRevenue;
     t.bankRevenue += m.bankRevenue;
-    t.retroBonus += m.retroBonus;
     t.totalQty += m.totalQty;
     t.cogs += m.cogs;
     t.opexTiTotal += m.opexTiTotal;
@@ -268,8 +262,7 @@ export function sumMonthly(rows: MonthlyResult[], label = "YTD"): MonthlyResult 
 export function computeSettlement(ds: Dataset, monthly: MonthlyResult[]): SettlementRow[] {
   const rows: SettlementRow[] = [];
   let cumRevenue = 0,
-    cumFargoOpex = 0,
-    cumRetro = 0,
+    cumFargoOpex = 0, // includes manual retro-bonus entries (FG_RETRO)
     cumFargoVat = 0,
     cumFargoIncomeTax = 0;
   const arByMonth = new Map<string, number>();
@@ -279,7 +272,6 @@ export function computeSettlement(ds: Dataset, monthly: MonthlyResult[]): Settle
   for (const m of monthly) {
     cumRevenue += m.revenue;
     cumFargoOpex += m.opexFargoTotal;
-    cumRetro += m.retroBonus;
     cumFargoVat += m.fargoVat;
     cumFargoIncomeTax += m.fargoIncomeTax;
     let cumTransfersCash = 0,
@@ -290,14 +282,12 @@ export function computeSettlement(ds: Dataset, monthly: MonthlyResult[]): Settle
         cumTransfersBank += t.bankAmount;
       }
     }
-    const dueToTi =
-      cumRevenue - cumFargoOpex - cumRetro - cumFargoVat - cumFargoIncomeTax;
+    const dueToTi = cumRevenue - cumFargoOpex - cumFargoVat - cumFargoIncomeTax;
     const outstandingAr = arByMonth.get(m.monthId) ?? 0;
     rows.push({
       monthId: m.monthId,
       cumRevenue,
       cumFargoOpex,
-      cumRetro,
       cumFargoVat,
       cumFargoIncomeTax,
       dueToTi,

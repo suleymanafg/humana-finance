@@ -253,7 +253,6 @@ export default function BalanceInputsView({
               [
                 [t("revenue"), settlement.cumRevenue],
                 [`− ${t("opexFargoTotal")}`, -settlement.cumFargoOpex],
-                [`− ${t("retroBonus")}`, -settlement.cumRetro],
                 [`− ${t("fargoVat")}`, -settlement.cumFargoVat],
                 [`− ${t("fargoIncomeTax")}`, -settlement.cumFargoIncomeTax],
                 [t("dueToTi"), settlement.dueToTi, true],

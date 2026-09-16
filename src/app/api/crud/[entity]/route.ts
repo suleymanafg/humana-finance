@@ -108,7 +108,7 @@ const registry: Record<string, EntityConfig> = {
   },
   channel: {
     delegate: () => prisma.channel,
-    fields: ["name", "code1c", "retroPct", "cashPct", "sortOrder", "active"],
+    fields: ["name", "code1c", "cashPct", "sortOrder", "active"],
   },
   opexCategory: {
     delegate: () => prisma.opexCategory,

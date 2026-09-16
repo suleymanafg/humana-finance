@@ -59,7 +59,6 @@ export default async function SalesPage({
           revenue: monthly.revenue,
           cashRevenue: monthly.cashRevenue,
           bankRevenue: monthly.bankRevenue,
-          retroBonus: monthly.retroBonus,
           totalQty: monthly.totalQty,
           revenueByChannel: monthly.revenueByChannel,
           qtyByProduct: monthly.qtyByProduct,

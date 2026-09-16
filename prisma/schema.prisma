@@ -132,7 +132,7 @@ model Channel {
   id        String  @id @default(cuid())
   name      String  @unique
   code1c    String? // Код контрагента/подразделения in 1C (import matching)
-  retroPct  Float   @default(0) // fraction, e.g. 0.08
+  retroPct  Float   @default(0) // LEGACY, unused since 2026-09: retro is manual OPEX Fargo (group FG_RETRO)
   cashPct   Float   @default(0) // fraction; bankPct = 1 - cashPct
   sortOrder Int     @default(0)
   active    Boolean @default(true)

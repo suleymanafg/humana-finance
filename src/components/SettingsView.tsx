@@ -24,7 +24,7 @@ export default function SettingsView({
   readOnly,
 }: {
   products: Array<{ id: string; nameRu: string; nameEn: string; code1c: string; productLine: string; price: number; isPromo: boolean; regularProductId: string; sortOrder: number }>;
-  channels: Array<{ id: string; name: string; code1c: string; retroPct: number; cashPct: number; bankPct: number; sortOrder: number }>;
+  channels: Array<{ id: string; name: string; code1c: string; cashPct: number; bankPct: number; sortOrder: number }>;
   months: Array<{ id: string; nameRu: string; nameEn: string; sortOrder: number }>;
   warehouses: Array<{ id: string; name: string; code1c: string; sortOrder: number }>;
   opexCategories: Array<{ id: string; company: string; name: string; plGroup: string; sortOrder: number }>;
@@ -63,7 +63,6 @@ export default function SettingsView({
   const channelCols: Col[] = [
     { field: "name", labelKey: "name", type: "text", width: "200px" },
     { field: "code1c", labelKey: "code1c", type: "text", width: "120px" },
-    { field: "retroPct", labelKey: "retroPct", type: "number", decimals: 3 },
     { field: "cashPct", labelKey: "cashPct", type: "number", decimals: 3 },
     { field: "bankPct", labelKey: "bankPct", type: "number", decimals: 3, readOnly: true },
     { field: "sortOrder", label: "#", type: "number" },

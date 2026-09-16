@@ -19,6 +19,7 @@ export const FARGO_GROUPS = [
   "FG_OFFICE_ADMIN",
   "FG_FINANCE_MGMT",
   "FG_MARKETING",
+  "FG_RETRO",
 ] as const;
 
 export type TiGroup = (typeof TI_GROUPS)[number];
@@ -39,5 +40,8 @@ export const GROUP_LABELS: Record<string, { ru: string; en: string }> = {
   FG_OFFICE_ADMIN: { ru: "Офис и администрация", en: "Office & Admin" },
   FG_FINANCE_MGMT: { ru: "Финансы и управление", en: "Finance & Management" },
   FG_MARKETING: { ru: "Маркетинг и реклама", en: "Marketing & Advertising" },
+  // retro bonuses are entered manually per channel since 2026-09 (previously
+  // computed automatically from Channel.retroPct)
+  FG_RETRO: { ru: "Ретро-бонусы", en: "Retro Bonuses" },
   UNMAPPED: { ru: "⚠ БЕЗ ГРУППЫ", en: "⚠ UNMAPPED" },
 };

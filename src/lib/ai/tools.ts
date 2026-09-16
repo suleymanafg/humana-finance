@@ -145,8 +145,7 @@ export async function runAiTool(
     grossProfit: r(m.grossProfit),
     gpMarginPct: pct(m.gpMarginPct),
     opexTi: r(m.opexTiTotal),
-    opexFargo: r(m.opexFargoTotal),
-    retroBonus: r(m.retroBonus),
+    opexFargo: r(m.opexFargoTotal), // retro-bonus entries (FG_RETRO) included
     totalOpex: r(m.totalOpex),
     ebitda: r(m.ebitda),
     fargoVat: r(m.fargoVat),

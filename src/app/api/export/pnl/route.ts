@@ -65,15 +65,6 @@ export async function GET(request: NextRequest) {
   if (cols.some((m) => m.opexFargoByGroup["UNMAPPED"])) {
     line(GROUP_LABELS.UNMAPPED[locale], (m) => -(m.opexFargoByGroup["UNMAPPED"] ?? 0), { indent: true });
   }
-  line("− " + t("retroBonus"), (m) => -m.retroBonus, { section: true });
-  const channelName = (id: string) => dataset.channels.find((c) => c.id === id)?.name ?? id;
-  const retroChannels = Object.entries(computed.ytd.retroByChannel)
-    .filter(([, v]) => v !== 0)
-    .sort((a, b) => b[1] - a[1])
-    .map(([ch]) => ch);
-  for (const ch of retroChannels) {
-    line(channelName(ch), (m) => -(m.retroByChannel[ch] ?? 0), { indent: true });
-  }
   line(t("totalOpex"), (m) => -m.totalOpex, { bold: true });
 
   line(t("ebitda"), (m) => m.ebitda, { bold: true });
