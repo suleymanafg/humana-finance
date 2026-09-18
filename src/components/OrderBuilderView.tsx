@@ -63,12 +63,27 @@ export default function OrderBuilderView({
   const lines = active.map((s) => ({ skuId: s.id, qty: qty[s.id] ?? 0 }));
   const stats = truckStats(lines, skusById, settings);
 
-  // the canvas's truck model: whole trucks, and the LAST one must clear 98 %
-  const trucksNeeded = Math.max(1, Math.ceil(stats.pallets / settings.truckPallets));
-  const lastPallets = stats.pallets - (trucksNeeded - 1) * settings.truckPallets;
-  const lastFill = settings.truckPallets > 0 ? lastPallets / settings.truckPallets : 0;
-  const fillOk = stats.pallets <= 0 || lastFill >= MIN_FILL;
+  // A truck is limited by BOTH the deck (33 pallets) and the axle load
+  // (21.5 t). Express the order as fractional trucks along each axis and take
+  // the worse one: a full deck of 800 g cans hits the weight limit long before
+  // the 33rd pallet, and that overload is exactly what has to be caught.
+  const palletTrucks = settings.truckPallets > 0 ? stats.pallets / settings.truckPallets : 0;
+  const weightTrucks = settings.truckMaxKg > 0 ? stats.grossKg / settings.truckMaxKg : 0;
+  const loadTrucks = Math.max(palletTrucks, weightTrucks);
+  const trucksNeeded = Math.max(1, Math.ceil(loadTrucks));
+  const lastFill = loadTrucks - (trucksNeeded - 1);
+  const fillOk = stats.totalUnits <= 0 || lastFill >= MIN_FILL;
+  // weight, not pallets, is what forces the truck count
+  const weightBound = weightTrucks > palletTrucks + 1e-9;
+  // how much the load exceeds what the pallet count alone would carry
+  const palletOnlyTrucks = Math.max(1, Math.ceil(palletTrucks));
+  const excessKg = Math.max(0, stats.grossKg - palletOnlyTrucks * settings.truckMaxKg);
+  const overloaded = excessKg > 0;
   const missingPallets = Math.max(0, Math.ceil((MIN_FILL - lastFill) * settings.truckPallets));
+  // «spill»: the order has crossed a truck boundary and left a stub trailer —
+  // full trucks plus a bit. Either the bit comes off, or it is filled up.
+  const spill = trucksNeeded > 1 && !fillOk;
+  const spillPallets = Math.max(0, Math.round(stats.pallets - (trucksNeeded - 1) * settings.truckPallets));
 
   // cover at the arrival month, per SKU, with this order landed — the slot's
   // already-committed закуп is stripped from the baseline so editing a saved
@@ -103,7 +118,7 @@ export default function OrderBuilderView({
   // top-up suggestions when the last truck is short: +1 pallet of the
   // lowest-cover SKUs, enough of them to clear the floor
   const suggestions = useMemo(() => {
-    if (fillOk) return [];
+    if (fillOk || overloaded) return [];
     return active
       .filter((s) => unitsPerPallet(s) > 0 && s.priceEur > 0)
       .map((s) => {
@@ -113,7 +128,7 @@ export default function OrderBuilderView({
       .filter((x) => x.cover < 24)
       .sort((a, b) => a.cover - b.cover)
       .slice(0, 2);
-  }, [fillOk, active, situations, startMonth, settings, missingPallets]);
+  }, [fillOk, overloaded, active, situations, startMonth, settings, missingPallets]);
 
   const totals = active.reduce(
     (a, s) => {
@@ -155,9 +170,13 @@ export default function OrderBuilderView({
   async function save() {
     if (!fillOk && !force) {
       setError(
-        ru
-          ? `Последняя фура загружена на ${Math.round(lastFill * 100)} %, ниже минимума 98 %. Добавьте ≈${missingPallets} паллет.`
-          : `The last truck is ${Math.round(lastFill * 100)} % full, below the 98 % minimum. Add about ${missingPallets} pallets.`
+        spill
+          ? ru
+            ? `Перегруз: ${spillPallets} паллет сверх ${trucksNeeded - 1} полн. фур(ы) — последняя загружена на ${Math.round(lastFill * 100)} %, ниже минимума 98 %. Уберите ≈${spillPallets} паллет или доберите ещё ≈${missingPallets}.`
+            : `Overloaded: ${spillPallets} pallets beyond ${trucksNeeded - 1} full truck(s) — the last one is ${Math.round(lastFill * 100)} % full, below the 98 % minimum. Drop about ${spillPallets} pallets or add about ${missingPallets}.`
+          : ru
+            ? `Фура загружена на ${Math.round(lastFill * 100)} %, ниже минимума 98 %. Добавьте ≈${missingPallets} паллет.`
+            : `The truck is ${Math.round(lastFill * 100)} % full, below the 98 % minimum. Add about ${missingPallets} pallets.`
       );
       return;
     }
@@ -325,9 +344,12 @@ export default function OrderBuilderView({
 
             <div className="mt-3.5 flex flex-wrap gap-1.5">
               {Array.from({ length: trucksNeeded }, (_, i) => {
-                const pallets = i < trucksNeeded - 1 ? settings.truckPallets : Math.max(0, lastPallets);
-                const pct = (pallets / settings.truckPallets) * 100;
+                const share = i < trucksNeeded - 1 ? 1 : Math.max(0, lastFill);
+                const pct = share * 100;
                 const ok = pct >= MIN_FILL * 100;
+                const shown = weightBound
+                  ? `${((share * settings.truckMaxKg) / 1000).toFixed(1)} ${ru ? "т" : "t"}`
+                  : `${Math.round(share * settings.truckPallets)}/${settings.truckPallets}`;
                 return (
                   <div key={i} className="w-[38px]">
                     <div
@@ -348,7 +370,7 @@ export default function OrderBuilderView({
                       className="pnum mt-1 text-center text-[10px] font-bold"
                       style={{ color: ok ? "var(--accent)" : "var(--warn)" }}
                     >
-                      {Math.round(pallets)}/{settings.truckPallets}
+                      {shown}
                     </div>
                   </div>
                 );
@@ -358,23 +380,45 @@ export default function OrderBuilderView({
             <div
               className="mt-3 rounded-[10px] border px-3 py-2.5"
               style={{
-                background: fillOk ? "var(--ok-soft)" : "var(--warn-soft)",
-                borderColor: fillOk ? "var(--ok-border)" : "var(--warn-border)",
+                background: overloaded
+                  ? "var(--danger-soft)"
+                  : fillOk
+                    ? "var(--ok-soft)"
+                    : "var(--warn-soft)",
+                borderColor: overloaded
+                  ? "var(--danger-border)"
+                  : fillOk
+                    ? "var(--ok-border)"
+                    : "var(--warn-border)",
               }}
             >
               <div
                 className="text-[12px] font-extrabold leading-snug"
-                style={{ color: fillOk ? "var(--ok-ink)" : "var(--warn-ink)" }}
+                style={{
+                  color: overloaded
+                    ? "var(--danger)"
+                    : fillOk
+                      ? "var(--ok-ink)"
+                      : "var(--warn-ink)",
+                }}
               >
-                {stats.pallets <= 0
+                {stats.totalUnits <= 0
                   ? ru ? "Заказ пока пустой." : "The order is still empty."
-                  : fillOk
+                  : overloaded
                     ? ru
-                      ? `Все ${trucksNeeded} фур(ы) проходят минимум 98 % — заказ уедет.`
-                      : `All ${trucksNeeded} truck(s) meet the 98 % minimum — this order can ship.`
-                    : ru
-                      ? `Последняя фура загружена на ${Math.round(lastFill * 100)} %. Так она не уедет — нужно ≈${missingPallets} паллет.`
-                      : `Last truck is ${Math.round(lastFill * 100)} % full. It cannot depart — add about ${missingPallets} pallets.`}
+                      ? `Перегруз: ${palletOnlyTrucks} фур(ы) по паллетам не увезут ${(stats.grossKg / 1000).toFixed(1)} т — перевес ≈${pn(excessKg)} кг при лимите ${(settings.truckMaxKg / 1000).toFixed(1)} т на фуру. Уберите лишнее или ставьте ${trucksNeeded} фур(ы).`
+                      : `Overloaded: ${palletOnlyTrucks} truck(s) by pallet count cannot carry ${(stats.grossKg / 1000).toFixed(1)} t — ${pn(excessKg)} kg over the ${(settings.truckMaxKg / 1000).toFixed(1)} t per-truck limit. Remove weight or plan ${trucksNeeded} trucks.`
+                    : fillOk
+                      ? ru
+                        ? `Все ${trucksNeeded} фур(ы) проходят минимум 98 % — заказ уедет.${weightBound ? " Ограничение — вес, не паллеты." : ""}`
+                        : `All ${trucksNeeded} truck(s) meet the 98 % minimum — this order can ship.${weightBound ? " Weight, not pallets, is the binding limit." : ""}`
+                      : spill
+                        ? ru
+                          ? `Перегруз: ${trucksNeeded - 1} полн. фур(ы) и ещё ${spillPallets} паллет сверху — на отдельную фуру этого мало (${Math.round(lastFill * 100)} %). Уберите ≈${spillPallets} паллет или доберите ещё ≈${missingPallets}.`
+                          : `Overloaded: ${trucksNeeded - 1} full truck(s) plus ${spillPallets} pallets — too little for a truck of its own (${Math.round(lastFill * 100)} %). Drop about ${spillPallets} pallets, or add about ${missingPallets} more.`
+                        : ru
+                          ? `Фура загружена на ${Math.round(lastFill * 100)} %. Так она не уедет — нужно ≈${missingPallets} паллет.`
+                          : `The truck is ${Math.round(lastFill * 100)} % full. It cannot depart — add about ${missingPallets} pallets.`}
               </div>
 
               {suggestions.length > 0 && (
@@ -400,9 +444,13 @@ export default function OrderBuilderView({
 
             <div className="mt-2.5 flex justify-between text-[12px] font-semibold text-muted">
               <span>{ru ? "Вес" : "Weight"}</span>
-              <span className="pnum font-bold" style={{ color: "var(--foreground)" }}>
+              <span
+                className="pnum font-bold"
+                style={{ color: overloaded ? "var(--danger)" : "var(--foreground)" }}
+              >
                 {(stats.grossKg / 1000).toFixed(1)} / {((trucksNeeded * settings.truckMaxKg) / 1000).toFixed(1)}{" "}
                 {ru ? "т" : "t"}
+                {overloaded && ` (+${pn(excessKg)} ${ru ? "кг" : "kg"})`}
               </span>
             </div>
           </div>
