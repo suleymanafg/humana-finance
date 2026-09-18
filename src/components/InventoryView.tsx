@@ -1,25 +1,15 @@
 "use client";
 
-// «Запасы» — the daily answer to four questions, worst SKU first:
-// what do I hold (+ what's coming), how long does it last WITH the pipeline,
-// which slot must the reorder go into, and how much closes 4 months of cover.
+// «Запасы» — built to the owner's design canvas: one table answering what is
+// held, what is on the way, how long it lasts with the pipeline counted, and
+// how much has to be ordered by the next deadline. Worst cover first.
+// Beside it: the trucks actually on the road, and the cover-policy tally.
 import Link from "next/link";
-import { Badge, Button, Card, CardHeader, PageTitle } from "./ui";
-import { IconAlert, IconCheck, IconTruck } from "./icons";
 import { useT } from "@/lib/locale-context";
-import { fmtN } from "@/lib/format";
+import { dstr, monthLong, monthTag, pCover, pn, splitPack } from "@/lib/planning/ui-format";
 import type { OrderSlot, PlanningSettings } from "@/lib/planning/compute";
 import type { Stage } from "@/lib/planning/cohort";
 import type { TransitShipment } from "@/lib/planning/data";
-
-const MONTH_RU = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
-const MONTH_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const monthLabel = (key: string, ru: boolean) => {
-  const [y, m] = key.split("-").map(Number);
-  return `${(ru ? MONTH_RU : MONTH_EN)[m - 1]} '${String(y).slice(2)}`;
-};
-const dateLabel = (iso: string, ru: boolean) =>
-  new Date(iso + "T00:00:00").toLocaleDateString(ru ? "ru-RU" : "en-GB", { day: "numeric", month: "short" });
 
 export interface PipelineEvent {
   month: string;
@@ -50,40 +40,18 @@ export interface InventoryRow {
   pcsPerPallet: number;
 }
 
-function coverTone(cover: number | null, minCover: number): string {
-  if (cover === null) return "text-ok";
-  if (cover < minCover - 2) return "text-danger";
-  if (cover < minCover) return "text-warn";
-  return "text-ok";
-}
-
-/** Tiny projected-stock sparkline: red below zero, green dots on arrivals. */
-function Trajectory({ points }: { points: InventoryRow["trajectory"] }) {
-  const W = 132;
-  const H = 30;
-  const max = Math.max(...points.map((p) => p.closing), 1);
-  const min = Math.min(...points.map((p) => p.closing), 0);
-  const span = max - min || 1;
-  const x = (i: number) => (i / Math.max(1, points.length - 1)) * (W - 4) + 2;
-  const y = (v: number) => H - 3 - ((v - min) / span) * (H - 6);
-  const zeroY = y(0);
-  const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)} ${y(p.closing).toFixed(1)}`).join(" ");
-  return (
-    <svg width={W} height={H} className="block">
-      {min < 0 && <line x1="0" y1={zeroY} x2={W} y2={zeroY} stroke="var(--danger)" strokeWidth="1" strokeDasharray="3 3" opacity="0.5" />}
-      <path d={path} fill="none" stroke="var(--accent)" strokeWidth="1.5" opacity="0.75" />
-      {points.map((p, i) =>
-        p.arrival ? <circle key={p.month} cx={x(i)} cy={y(p.closing)} r="2.4" fill="var(--ok)" /> : null
-      )}
-    </svg>
-  );
+/** Cover pill colours, at the canvas thresholds (0.7 × policy, policy). */
+function coverPill(cover: number | null, minCover: number): { bg: string; ink: string } {
+  if (cover === null) return { bg: "var(--ok-soft)", ink: "var(--ok)" };
+  if (cover < minCover * 0.7) return { bg: "var(--danger-soft)", ink: "var(--danger)" };
+  if (cover < minCover) return { bg: "var(--warn-soft)", ink: "var(--warn-ink)" };
+  return { bg: "var(--ok-soft)", ink: "var(--ok)" };
 }
 
 export default function InventoryView({
   rows,
   transit,
   slot,
-
   settings,
   eurRate,
   slotTotals,
@@ -91,7 +59,6 @@ export default function InventoryView({
   rows: InventoryRow[];
   transit: TransitShipment[];
   slot: OrderSlot;
-
   settings: PlanningSettings;
   eurRate: number;
   slotTotals: { skuCount: number; units: number; pallets: number; eur: number };
@@ -99,269 +66,215 @@ export default function InventoryView({
   const { locale } = useT();
   const ru = locale === "ru";
 
-  const totalStock = rows.reduce((s, r) => s + r.stock, 0);
-  const totalPipeline = rows.reduce((s, r) => s + r.pipeline.reduce((a, e) => a + e.qty, 0), 0);
-  const totalDemand = rows.reduce((s, r) => s + r.demandPerMonth, 0);
-  const unfixable = rows.filter((r) => !r.fixable);
-  const atRisk = rows.filter((r) => r.stockoutMonth !== null);
+  const belowPolicy = rows.filter(
+    (r) => r.coverWithPipeline !== null && r.coverWithPipeline < settings.minCoverMonths
+  ).length;
+  const belowInk =
+    belowPolicy === 0 ? "var(--ok)" : belowPolicy > 3 ? "var(--danger)" : "var(--warn)";
+
+  // trucks on the road, nearest arrival first
+  const trucks = [...transit].sort((a, b) => a.etaMonth.localeCompare(b.etaMonth));
 
   return (
-    <div className="pb-16">
-      <PageTitle
-        title={ru ? "Запасы" : "Inventory"}
-        subtitle={
-          ru
-            ? "Сток + труба по каждому SKU: на сколько хватит, когда и сколько заказывать"
-            : "Stock + pipeline per SKU: how long it lasts, when and how much to order"
-        }
-      />
-
-      {/* the deadline call to action — what must be decided NOW */}
-      {slotTotals.skuCount > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-accent/40 bg-accent-soft-bg px-5 py-3.5">
-          <div>
-            <div className="label-caps text-accent">
-              {ru ? "К дедлайну" : "By the deadline"}{" "}
-              {new Date(slot.deadline + "T00:00:00").toLocaleDateString(ru ? "ru-RU" : "en-GB", {
-                day: "numeric",
-                month: "long",
-              })}{" "}
-              · {ru ? "слот" : "slot"} {monthLabel(slot.shipMonth, ru)}
-            </div>
-            <div className="mt-0.5 text-[14px] font-semibold">
-              {ru
-                ? `Заказать ${slotTotals.skuCount} SKU · ${fmtN(slotTotals.units)} шт ≈ ${slotTotals.pallets.toFixed(1)} паллет (${(slotTotals.pallets / Math.max(1, settings.truckPallets)).toFixed(1)} фуры)`
-                : `Order ${slotTotals.skuCount} SKUs · ${fmtN(slotTotals.units)} pcs ≈ ${slotTotals.pallets.toFixed(1)} pallets (${(slotTotals.pallets / Math.max(1, settings.truckPallets)).toFixed(1)} trucks)`}
-              <span className="num ml-2 text-[12.5px] font-normal text-muted">
-                €{fmtN(slotTotals.eur)}
-                {eurRate > 0 && ` ≈ ${fmtN(slotTotals.eur * eurRate)} ${ru ? "сум" : "UZS"}`}
-              </span>
-            </div>
-          </div>
-          <span className="ml-auto flex items-center gap-2">
-            <span
-              className={`num rounded-full px-2.5 py-1 text-[11.5px] font-bold text-white ${
-                slot.daysLeft <= 3 ? "bg-danger" : "bg-accent"
-              }`}
-            >
-              {slot.daysLeft === 0 ? (ru ? "дедлайн сегодня" : "deadline today") : `${slot.daysLeft} ${ru ? "дн." : "days"}`}
-            </span>
-            <Link href="/planning/order">
-              <Button>{ru ? "Собрать заказ" : "Build the order"} →</Button>
-            </Link>
-          </span>
-        </div>
-      )}
-
-      {/* status strip */}
-      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 px-1">
-        <span className="flex items-center gap-2">
-          <span className="label-caps">{ru ? "На складе" : "On hand"}</span>
-          <span className="num text-[14px] font-bold">{fmtN(totalStock)} {ru ? "шт" : "pcs"}</span>
-        </span>
-        <span className="h-4 w-px bg-border" />
-        <span className="flex items-center gap-2">
-          <IconTruck size={13} className="text-accent" />
-          <span className="label-caps">{ru ? "Труба (транзит + заказы)" : "Pipeline"}</span>
-          <span className="num text-[14px] font-bold">{fmtN(totalPipeline)} {ru ? "шт" : "pcs"}</span>
-        </span>
-        <span className="h-4 w-px bg-border" />
-        <span className="flex items-center gap-2">
-          <span className="label-caps">{ru ? "Спрос/мес" : "Demand/mo"}</span>
-          <span className="num text-[14px] font-bold">{fmtN(totalDemand)}</span>
-        </span>
-        <span className="h-4 w-px bg-border" />
-        <span className="flex items-center gap-2">
-          <span className={`h-[7px] w-[7px] rounded-full ${unfixable.length > 0 ? "bg-danger" : atRisk.length > 0 ? "bg-warn" : "bg-ok"}`} />
-          <span className="label-caps">{ru ? "Разрывы" : "Gaps"}</span>
-          <span className={`num text-[14px] font-bold ${unfixable.length > 0 ? "text-danger" : atRisk.length > 0 ? "text-warn" : "text-ok"}`}>
-            {atRisk.length} SKU
-            {unfixable.length > 0 && ` · ${unfixable.length} ${ru ? "заказом не закрыть" : "unfixable"}`}
-          </span>
-        </span>
+    <div>
+      <div className="mb-3.5 flex flex-wrap items-baseline gap-3">
+        <h1 className="text-[22px] font-extrabold tracking-[-0.5px]">{ru ? "Запасы" : "Inventory"}</h1>
+        <p className="text-[13px] font-semibold text-muted">
+          {ru
+            ? "Что на складе, что в пути и на сколько хватит?"
+            : "What do I hold, what is on the way, how long does it last?"}
+        </p>
       </div>
 
-      {/* the intelligence table */}
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="tbl w-full">
-            <thead>
-              <tr>
-                <th>{ru ? "Товар" : "Product"}</th>
-                <th className="text-right">{ru ? "Сток" : "Stock"}</th>
-                <th>{ru ? "Приход" : "Incoming"}</th>
-                <th className="text-right">{ru ? "Спрос/мес" : "Demand/mo"}</th>
-                <th className="text-right">{ru ? "Хватит на" : "Lasts"}</th>
-                <th>{ru ? "Прогноз остатка" : "Stock outlook"}</th>
-                <th>{ru ? "Действие" : "Action"}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const covered = r.stockoutMonth === null;
-                return (
-                  <tr key={r.skuId} className={!r.fixable ? "bg-danger-soft/25" : ""}>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{r.name}</span>
-                        <Badge tone={r.stage ? "accent" : "neutral"}>{r.stage ?? "Expert"}</Badge>
-                      </div>
-                      <div className="num text-[10.5px] text-muted">{ru ? "Арт." : "Art."} {r.article}</div>
-                    </td>
-                    <td className="text-right">
-                      <div className="num font-semibold">{fmtN(r.stock)}</div>
-                      {r.stockAsOf && <div className="num text-[10.5px] text-muted">{monthLabel(r.stockAsOf, ru)}</div>}
-                    </td>
-                    <td>
-                      {r.pipeline.length === 0 ? (
-                        <span className="text-muted/50">—</span>
-                      ) : (
-                        <div className="space-y-0.5">
-                          {r.pipeline.slice(0, 3).map((e, i) => (
-                            <div key={i} className="num flex items-center gap-1.5 text-[12px]">
-                              {e.kind === "transit" ? (
-                                <IconTruck size={11} className="shrink-0 text-accent" />
-                              ) : (
-                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-soft" />
-                              )}
-                              <span className="font-medium">+{fmtN(e.qty)}</span>
-                              <span className="text-muted">
-                                {monthLabel(e.month, ru)}
-                                {e.kind === "transit"
-                                  ? ` · ${e.label ?? (ru ? "в пути" : "transit")}`
-                                  : ` · ${ru ? "заказ" : "order"}`}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="num text-right text-muted">{r.demandPerMonth > 0 ? fmtN(r.demandPerMonth) : "—"}</td>
-                    <td className="text-right">
-                      <div className={`num text-[14px] font-bold ${coverTone(r.coverWithPipeline, settings.minCoverMonths)}`}>
-                        {r.coverWithPipeline === null ? `12+` : r.coverWithPipeline.toFixed(1)} {ru ? "мес" : "mo"}
-                      </div>
-                      <div className="num text-[10.5px] text-muted" title={ru ? "только склад, без прихода" : "on-hand only"}>
-                        {ru ? "без прихода" : "on hand"}: {r.coverOnHand.toFixed(1)}
-                      </div>
-                    </td>
-                    <td>
-                      <Trajectory points={r.trajectory} />
-                      {r.stockoutMonth && (
-                        <div className={`num text-[10px] font-semibold ${r.fixable ? "text-warn" : "text-danger"}`}>
-                          {ru ? "ноль в" : "zero in"} {monthLabel(r.stockoutMonth, ru)}
-                        </div>
-                      )}
-                    </td>
-                    <td className="max-w-64">
-                      {covered && r.recommendedNext <= 0 ? (
-                        <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-ok">
-                          <IconCheck size={13} /> {ru ? "запаса достаточно" : "sufficient"}
-                        </span>
-                      ) : !r.fixable ? (
-                        <div className="text-[12px] leading-snug">
-                          <span className="flex items-center gap-1 font-semibold text-danger">
-                            <IconAlert size={12} /> {ru ? "Заказом не закрыть" : "Order can't close it"}
-                          </span>
-                          <div className="mt-0.5 text-muted">
-                            {ru
-                              ? `разрыв до прихода ${monthLabel(slot.arrivalMonth, ru)} — ускорить транзит / перераспределить`
-                              : `gap before ${monthLabel(slot.arrivalMonth, ru)} arrival — expedite transit / rebalance`}
-                          </div>
-                          {r.recommendedNext > 0 && (
-                            <div className="num mt-0.5 font-semibold text-accent">
-                              {ru ? "и заказать" : "and order"} {fmtN(r.recommendedNext)} {ru ? "шт в слот" : "pcs in slot"}{" "}
-                              {monthLabel(slot.shipMonth, ru)}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-[12px] leading-snug">
-                          <div className="num font-semibold text-accent">
-                            {ru ? "Заказать" : "Order"} {fmtN(r.recommendedNext)} {ru ? "шт" : "pcs"}
-                            <span className="font-normal text-muted"> · {ru ? "покрывает" : "covers"} {settings.minCoverMonths}+ {ru ? "мес" : "mo"}</span>
-                          </div>
-                          {r.orderSlotShip && r.slotDeadlineDate && (
-                            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                              <span
-                                className={`num inline-block rounded-md px-2 py-0.5 text-[11px] font-bold ${
-                                  r.orderSlotShip === slot.shipMonth ? "bg-accent text-white" : "bg-accent-soft-bg text-accent"
-                                }`}
-                              >
-                                {ru ? "слот" : "slot"} {monthLabel(r.orderSlotShip, ru)}
-                              </span>
-                              <span
-                                className={`num text-[11px] font-semibold ${
-                                  (r.slotDeadlineDays ?? 99) <= 3 ? "text-danger" : "text-muted"
-                                }`}
-                              >
-                                {ru ? "дедлайн" : "deadline"} {dateLabel(r.slotDeadlineDate, ru)}
-                                {r.slotDeadlineDays !== null &&
-                                  (r.slotDeadlineDays <= 0
-                                    ? ` · ${ru ? "сегодня!" : "today!"}`
-                                    : ` · ${r.slotDeadlineDays} ${ru ? "дн." : "d"}`)}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      {/* trucks on the road */}
-      <Card className="mt-4 overflow-hidden">
-        <CardHeader
-          title={ru ? "Фуры в пути" : "Trucks in transit"}
-          desc={
-            ru
-              ? "Учитываются в покрытии по ожидаемому месяцу прихода; в себестоимость попадают после отметки «Прибыла» на странице Поставок"
-              : "Counted in cover at their expected arrival month; enter COGS once marked arrived on the Shipments page"
-          }
-        />
-        {transit.length === 0 ? (
-          <div className="px-5 pb-5 text-[13px] text-muted">
-            {ru
-              ? "Сейчас в пути ничего нет. Фура добавляется на странице «Поставки» со статусом «В пути» и датой прихода."
-              : "Nothing on the road. Add a truck on the Shipments page with status In transit and an ETA."}
+      <div className="flex flex-wrap items-start gap-3.5">
+        <div className="pcard min-w-0 flex-[1_1_680px] overflow-hidden">
+          <div className="flex flex-wrap items-baseline gap-3 border-b px-[18px] py-3" style={{ borderColor: "var(--hair)" }}>
+            <h2 className="text-[14px] font-extrabold">{ru ? "Склад и покрытие" : "Stock and cover"}</h2>
+            <span className="text-[11.5px] font-semibold text-muted">
+              {ru
+                ? "Худшее покрытие сверху · с учётом поставок в пути"
+                : "Worst cover first · pipeline included"}
+            </span>
           </div>
-        ) : (
-          <table className="tbl w-full">
-            <thead>
-              <tr>
-                <th>{ru ? "Фура" : "Truck"}</th>
-                <th className="text-right">{ru ? "Штук" : "Units"}</th>
-                <th>{ru ? "Ожидаемый приход" : "Expected arrival"}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transit.map((t) => (
-                <tr key={t.id}>
-                  <td className="font-medium">
-                    <span className="flex items-center gap-2">
-                      <IconTruck size={14} className="text-accent" /> {t.code}
-                    </span>
-                  </td>
-                  <td className="num text-right">{fmtN(t.totalUnits)}</td>
-                  <td className="num">
-                    {t.etaDate
-                      ? new Date(t.etaDate + "T00:00:00").toLocaleDateString(ru ? "ru-RU" : "en-GB", {
-                          day: "numeric",
-                          month: "long",
-                        })
-                      : `~${monthLabel(t.etaMonth, ru)}`}
-                  </td>
+
+          <div className="overflow-x-auto">
+            <table className="ptable" style={{ minWidth: 900 }}>
+              <thead>
+                <tr>
+                  <th style={{ minWidth: 190 }}>{ru ? "Продукт" : "Product"}</th>
+                  <th>{ru ? "На складе" : "On hand"}</th>
+                  <th>{ru ? "В пути" : "In transit"}</th>
+                  <th>{ru ? "Спрос/мес." : "Demand/mo."}</th>
+                  <th>{ru ? "Покрытие" : "Cover"}</th>
+                  <th className="text-left">{ru ? "Уйдёт в минус" : "Goes negative"}</th>
+                  <th className="col-act" style={{ paddingRight: 18 }}>
+                    {ru ? "Заказать к дедлайну" : "Order by deadline"}
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const { name, pack } = splitPack(r.name);
+                  const pipelineUnits = r.pipeline.reduce((s, e) => s + e.qty, 0);
+                  const pill = coverPill(r.coverWithPipeline, settings.minCoverMonths);
+                  const negInk = !r.stockoutMonth
+                    ? "var(--muted)"
+                    : r.fixable
+                      ? "var(--warn-ink)"
+                      : "var(--danger)";
+                  return (
+                    <tr key={r.skuId}>
+                      <td>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[13px] font-bold">{name}</span>
+                          {pack && <span className="text-[11px] font-bold" style={{ color: "var(--sky)" }}>{pack}</span>}
+                        </div>
+                        <div className="pnum mt-0.5 text-[10.5px]" style={{ color: "var(--faint)" }}>
+                          № {r.article}
+                          {r.stockAsOf && ` · ${monthTag(r.stockAsOf, ru)}`}
+                        </div>
+                      </td>
+                      <td className="pnum text-[13px]">{pn(r.stock)}</td>
+                      <td className="pnum text-[13px]" style={{ color: "var(--info)" }}>
+                        {pipelineUnits > 0 ? pn(pipelineUnits) : "—"}
+                      </td>
+                      <td className="pnum text-[13px] text-muted">{pn(r.demandPerMonth)}</td>
+                      <td>
+                        <span
+                          className="ppill pnum"
+                          style={{ background: pill.bg, color: pill.ink, fontSize: "12.5px" }}
+                        >
+                          {r.coverWithPipeline === null
+                            ? ru ? "хватает" : "covered"
+                            : pCover(r.coverWithPipeline)}
+                        </span>
+                      </td>
+                      <td className="text-left text-[12.5px] font-bold" style={{ color: negInk }}>
+                        {r.stockoutMonth
+                          ? monthTag(r.stockoutMonth, ru)
+                          : ru ? "не уйдёт" : "not in horizon"}
+                        {!r.fixable && r.stockoutMonth && (
+                          <div className="text-[10.5px] font-bold" style={{ color: "var(--danger)" }}>
+                            {ru ? "заказом уже не спасти" : "too late to fix by ordering"}
+                          </div>
+                        )}
+                      </td>
+                      <td className="col-act" style={{ paddingRight: 18 }}>
+                        <div
+                          className="pnum text-[13px] font-bold"
+                          style={{ color: r.recommendedNext > 0 ? "var(--accent)" : "var(--faint)" }}
+                        >
+                          {r.recommendedNext > 0 ? pn(r.recommendedNext) : "—"}
+                        </div>
+                        {r.recommendedNext > 0 && r.slotDeadlineDate && (
+                          <div className="text-[10.5px] font-bold" style={{ color: "var(--faint)" }}>
+                            {dstr(r.slotDeadlineDate)}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div
+            className="border-t px-[18px] py-3 text-[12px] font-semibold text-muted"
+            style={{ borderColor: "var(--hair)", background: "var(--surface-low)" }}
+          >
+            {ru ? "Пополнение оформляется на экране " : "Replenishment is entered on "}
+            <Link href="/planning/order" className="font-bold text-accent hover:underline">
+              {ru ? "«Заказ»" : "Order"}
+            </Link>
+            {slotTotals.skuCount > 0 && (
+              <>
+                {" · "}
+                <span className="pnum">
+                  {ru
+                    ? `${slotTotals.skuCount} SKU · ${pn(slotTotals.units)} шт · ${slotTotals.pallets.toFixed(1)} паллет · €${pn(slotTotals.eur)}`
+                    : `${slotTotals.skuCount} SKUs · ${pn(slotTotals.units)} pcs · ${slotTotals.pallets.toFixed(1)} pallets · €${pn(slotTotals.eur)}`}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-[0_1_340px] flex-col gap-3.5" style={{ minWidth: 290 }}>
+          <div className="pcard px-[18px] py-4">
+            <h2 className="text-[13.5px] font-extrabold">{ru ? "Поставки в пути" : "Shipments in transit"}</h2>
+            <p className="mt-0.5 text-[12px] font-semibold text-muted">
+              {ru ? "Отгружено, ещё не получено" : "Dispatched, not yet received"}
+            </p>
+            {trucks.length === 0 ? (
+              <p className="mt-3 text-[12.5px] font-semibold" style={{ color: "var(--faint)" }}>
+                {ru ? "Сейчас в пути ничего нет." : "Nothing is on the road right now."}
+              </p>
+            ) : (
+              <div className="mt-3 flex flex-col gap-2.5">
+                {trucks.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-start gap-3 border-b pb-2.5 last:border-b-0 last:pb-0"
+                    style={{ borderColor: "var(--hair-soft)" }}
+                  >
+                    <div
+                      className="w-11 shrink-0 rounded-lg py-1.5 text-center"
+                      style={{ background: "var(--info-soft)", color: "var(--info)" }}
+                    >
+                      <div className="text-[11px] font-extrabold">{monthTag(t.etaMonth, ru).split(" ")[0]}</div>
+                      <div className="text-[10px] font-bold opacity-75">{t.etaMonth.slice(2, 4)}</div>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="pnum text-[14px] font-bold">
+                        {pn(t.totalUnits)} {ru ? "упак." : "packs"}
+                      </div>
+                      <div className="text-[11.5px] font-semibold text-muted">
+                        {t.code}
+                        {t.etaDate && ` · ${ru ? "прибытие" : "ETA"} ${dstr(t.etaDate.slice(0, 10))}`}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="pcard px-[18px] py-4">
+            <h2 className="text-[13.5px] font-extrabold">{ru ? "Политика покрытия" : "Cover policy"}</h2>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="pnum text-[26px] font-bold tracking-[-1px]" style={{ color: belowInk }}>
+                {belowPolicy}
+              </span>
+              <span className="text-[12.5px] font-bold text-muted">
+                {ru ? `из ${rows.length} продуктов` : `of ${rows.length} products`}
+              </span>
+            </div>
+            <p className="mt-1.5 text-[12px] font-semibold leading-snug text-muted">
+              {ru
+                ? `ниже нормы ${settings.minCoverMonths} месяцев запаса с учётом того, что уже в пути.`
+                : `below the ${settings.minCoverMonths}-month policy once the pipeline is counted.`}
+            </p>
+            <div
+              className="mt-3 rounded-[10px] border px-3 py-2.5"
+              style={{ background: "var(--accent-soft-bg)", borderColor: "var(--accent-soft)" }}
+            >
+              <div className="text-[11.5px] font-bold leading-snug" style={{ color: "#0b3a73" }}>
+                {ru ? "Пополнение идёт в дедлайн " : "Replenishment goes into deadline "}
+                <b className="pnum">{dstr(slot.deadline)}</b>
+                {" → "}
+                {ru ? "отгрузка " : "shipping "}
+                <b>{monthLong(slot.shipMonth, ru)}</b>
+              </div>
+            </div>
+            {eurRate > 0 && slotTotals.eur > 0 && (
+              <p className="pnum mt-2.5 text-[11.5px] font-semibold text-muted">
+                €{pn(slotTotals.eur)} ≈ {pn(slotTotals.eur * eurRate)} {ru ? "сум" : "UZS"}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

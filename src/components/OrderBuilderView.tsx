@@ -1,16 +1,14 @@
 "use client";
 
-// Order builder: recommended quantities for the next order slot, live carton/
-// pallet/weight math, the ≥98% truck-fill rule with top-up suggestions, the
-// money card, and cover impact — per the approved Stitch mock. Saving writes
+// «Заказ» — built to the owner's design canvas: the line-by-line order for the
+// next IBP deadline with live carton/pallet/weight/cost math, the ≥98 %
+// truck-fill rule with one-click top-ups, and the commit card. Saving writes
 // the committed закуп (PlanningPurchase) for the slot's ship month.
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button, Card, CardHeader, PageTitle } from "./ui";
-import { IconAlert, IconCheck, IconDownload, IconPlus, IconTruck } from "./icons";
 import { useT } from "@/lib/locale-context";
-import { fmtN } from "@/lib/format";
+import { dstr, monthLong, pCover, pn, pnSigned, splitPack } from "@/lib/planning/ui-format";
 import {
   projectSku,
   truckStats,
@@ -20,27 +18,9 @@ import {
   type PlanningSkuIn,
   type SkuSituation,
 } from "@/lib/planning/compute";
-import { stageOf } from "@/lib/planning/model";
-
-// indigo ramp for the truck-fill segments, one shade per product group
-const GROUP_META: Array<{ key: string; label: string; color: string }> = [
-  { key: "P1", label: "Platin 1", color: "#1f108e" },
-  { key: "P2", label: "Platin 2", color: "#4f46b8" },
-  { key: "P3", label: "Platin 3", color: "#8079d1" },
-  { key: "Expert", label: "Expert", color: "#c7c3f0" },
-];
-
-const MONTH_RU = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
-const MONTH_RU_N = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-const MONTH_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-const monthName = (key: string, ru: boolean, genitive = false) => {
-  const [y, m] = key.split("-").map(Number);
-  const names = ru ? (genitive ? MONTH_RU : MONTH_RU_N) : MONTH_EN;
-  return `${names[m - 1]} ${y}`;
-};
 
 const MIN_FILL = 0.98;
+const HORIZON = 14;
 
 export default function OrderBuilderView({
   skus,
@@ -68,67 +48,119 @@ export default function OrderBuilderView({
   const ru = locale === "ru";
   const router = useRouter();
 
-  const active = skus.filter((s) => s.active);
+  const active = useMemo(() => skus.filter((s) => s.active), [skus]);
   const skusById = useMemo(() => Object.fromEntries(skus.map((s) => [s.id, s])), [skus]);
 
   const [qty, setQty] = useState<Record<string, number>>(() =>
     Object.fromEntries(active.map((s) => [s.id, purchases[s.id] ?? recommended[s.id] ?? 0]))
   );
-  const [saved, setSaved] = useState(Object.keys(purchases).length > 0);
+  const [dirty, setDirty] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [force, setForce] = useState(false);
 
   const lines = active.map((s) => ({ skuId: s.id, qty: qty[s.id] ?? 0 }));
   const stats = truckStats(lines, skusById, settings);
 
-  // cover impact: with vs without this order, at the arrival month; the
-  // slot's already-committed закуп is stripped from the baseline so an edit
-  // of a saved purchase is not double-counted
-  const HORIZON = 14;
-  const impact = useMemo(() => {
-    return active
-      .filter((s) => (qty[s.id] ?? 0) > 0)
-      .map((s) => {
-        const sit = situations[s.id];
-        const arrivalsExSlot = {
-          ...sit.arrivals,
-          [slot.arrivalMonth]: Math.max(0, (sit.arrivals[slot.arrivalMonth] ?? 0) - (purchases[s.id] ?? 0)),
-        };
-        const before = projectSku({ ...sit, arrivals: arrivalsExSlot }, startMonth, HORIZON, settings);
-        const withOrder: SkuSituation = {
+  // the canvas's truck model: whole trucks, and the LAST one must clear 98 %
+  const trucksNeeded = Math.max(1, Math.ceil(stats.pallets / settings.truckPallets));
+  const lastPallets = stats.pallets - (trucksNeeded - 1) * settings.truckPallets;
+  const lastFill = settings.truckPallets > 0 ? lastPallets / settings.truckPallets : 0;
+  const fillOk = stats.pallets <= 0 || lastFill >= MIN_FILL;
+  const missingPallets = Math.max(0, Math.ceil((MIN_FILL - lastFill) * settings.truckPallets));
+
+  // cover at the arrival month, per SKU, with this order landed — the slot's
+  // already-committed закуп is stripped from the baseline so editing a saved
+  // purchase is not double-counted
+  const cover = useMemo(() => {
+    const per: Record<string, number> = {};
+    let stockAfter = 0;
+    let demand = 0;
+    for (const s of active) {
+      const sit = situations[s.id];
+      const arrivalsExSlot = {
+        ...sit.arrivals,
+        [slot.arrivalMonth]: Math.max(0, (sit.arrivals[slot.arrivalMonth] ?? 0) - (purchases[s.id] ?? 0)),
+      };
+      const after = projectSku(
+        {
           ...sit,
-          arrivals: { ...arrivalsExSlot, [slot.arrivalMonth]: arrivalsExSlot[slot.arrivalMonth] + qty[s.id] },
-        };
-        const after = projectSku(withOrder, startMonth, HORIZON, settings);
-        const at = slot.arrivalMonth;
-        const coverBefore = before.cells.find((c) => c.monthKey === at)?.coverMonths ?? 0;
-        const coverAfter = after.cells.find((c) => c.monthKey === at)?.coverMonths ?? 0;
-        return { sku: s, coverBefore, coverAfter };
-      })
-      .filter((x) => Math.abs(x.coverAfter - x.coverBefore) > 0.05)
-      .sort((a, b) => a.coverBefore - b.coverBefore)
-      .slice(0, 6);
+          arrivals: { ...arrivalsExSlot, [slot.arrivalMonth]: arrivalsExSlot[slot.arrivalMonth] + (qty[s.id] ?? 0) },
+        },
+        startMonth,
+        HORIZON,
+        settings
+      );
+      const cell = after.cells.find((c) => c.monthKey === slot.arrivalMonth);
+      per[s.id] = cell?.coverMonths ?? 0;
+      stockAfter += Math.max(0, cell?.closing ?? 0);
+      demand += after.avgDemandPerMonth;
+    }
+    return { per, total: demand > 0 ? stockAfter / demand : 0 };
   }, [active, qty, situations, purchases, startMonth, settings, slot.arrivalMonth]);
 
-  // top-up suggestions when below the 98% floor: +1 pallet of the lowest-cover SKUs
+  // top-up suggestions when the last truck is short: +1 pallet of the
+  // lowest-cover SKUs, enough of them to clear the floor
   const suggestions = useMemo(() => {
-    if (stats.utilization >= MIN_FILL) return [];
+    if (fillOk) return [];
     return active
       .filter((s) => unitsPerPallet(s) > 0 && s.priceEur > 0)
       .map((s) => {
-        const sit = situations[s.id];
-        const p = projectSku(sit, startMonth, HORIZON, settings);
-        return { sku: s, cover: p.currentCover, units: unitsPerPallet(s) };
+        const p = projectSku(situations[s.id], startMonth, HORIZON, settings);
+        return { sku: s, cover: p.currentCover, units: unitsPerPallet(s) * Math.max(1, missingPallets) };
       })
       .filter((x) => x.cover < 24)
       .sort((a, b) => a.cover - b.cover)
-      .slice(0, 3);
-  }, [stats.utilization, active, situations, startMonth, settings]);
+      .slice(0, 2);
+  }, [fillOk, active, situations, startMonth, settings, missingPallets]);
 
-  const missingPallets = Math.max(0, Math.ceil((MIN_FILL - stats.utilization) * settings.truckPallets));
-  const overPallets = Math.max(0, Math.ceil((stats.utilization - 1) * settings.truckPallets));
+  const totals = active.reduce(
+    (a, s) => {
+      const q = qty[s.id] ?? 0;
+      return {
+        rec: a.rec + (recommended[s.id] ?? 0),
+        qty: a.qty + q,
+        cartons: a.cartons + (s.pcsPerCarton > 0 ? q / s.pcsPerCarton : 0),
+        pallets: a.pallets + (s.pcsPerPallet > 0 ? q / s.pcsPerPallet : 0),
+        kg: a.kg + q * s.grossKgPerUnit,
+        eur: a.eur + q * s.priceEur,
+      };
+    },
+    { rec: 0, qty: 0, cartons: 0, pallets: 0, kg: 0, eur: 0 }
+  );
+
+  const setQtyOf = (skuId: string, v: string) => {
+    const n = Number(v.replace(/[^\d]/g, ""));
+    setQty((q) => ({ ...q, [skuId]: Number.isFinite(n) ? n : 0 }));
+    setDirty(true);
+    setSavedAt(null);
+    setError(null);
+  };
+
+  const useRecommendation = () => {
+    setQty(Object.fromEntries(active.map((s) => [s.id, recommended[s.id] ?? 0])));
+    setDirty(true);
+    setSavedAt(null);
+    setError(null);
+  };
+
+  const addUnits = (skuId: string, units: number) => {
+    setQty((q) => ({ ...q, [skuId]: (q[skuId] ?? 0) + units }));
+    setDirty(true);
+    setSavedAt(null);
+    setError(null);
+  };
 
   async function save() {
+    if (!fillOk && !force) {
+      setError(
+        ru
+          ? `Последняя фура загружена на ${Math.round(lastFill * 100)} %, ниже минимума 98 %. Добавьте ≈${missingPallets} паллет.`
+          : `The last truck is ${Math.round(lastFill * 100)} % full, below the 98 % minimum. Add about ${missingPallets} pallets.`
+      );
+      return;
+    }
     setSaving(true);
     setError(null);
     // qty 0 is sent for skus whose saved закуп was cleared — the API deletes those lines
@@ -138,285 +170,322 @@ export default function OrderBuilderView({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ shipMonth: slot.shipMonth, lines: payload }),
     });
-    const body = (await res.json()) as { ok?: boolean; error?: string };
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     setSaving(false);
     if (!res.ok || !body.ok) {
-      setError(body.error ?? "error");
+      setError(body.error ?? (ru ? "не удалось сохранить" : "save failed"));
       return;
     }
-    setSaved(true);
+    setDirty(false);
+    setForce(false);
+    const now = new Date();
+    setSavedAt(`${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
     router.refresh();
   }
 
-  const setQtyOf = (skuId: string, v: string) => {
-    const n = Number(v.replace(/[^\d]/g, ""));
-    setQty((q) => ({ ...q, [skuId]: Number.isFinite(n) ? n : 0 }));
-  };
-
-  const fillPct = stats.utilization * 100;
-  const fillTone = stats.utilization >= MIN_FILL && stats.utilization <= 1.001 ? "ok" : "warn";
-
-  // pallets per product group — the truck bar's segments
-  const segments = useMemo(() => {
-    const acc: Record<string, number> = {};
-    for (const s of active) {
-      const q = qty[s.id] ?? 0;
-      if (q <= 0 || s.pcsPerPallet <= 0) continue;
-      const g = stageOf(s.name) ?? "Expert";
-      acc[g] = (acc[g] ?? 0) + q / s.pcsPerPallet;
-    }
-    return GROUP_META.filter((g) => (acc[g.key] ?? 0) > 0.05).map((g) => ({
-      ...g,
-      pallets: acc[g.key],
-      pct: (acc[g.key] / Math.max(1, settings.truckPallets)) * 100,
-    }));
-  }, [active, qty, settings.truckPallets]);
-
   return (
-    <div className="pb-16">
-      <PageTitle
-        title={`${ru ? "Заказ" : "Order"} ${label} · ${ru ? "дедлайн" : "deadline"} ${new Date(
-          slot.deadline + "T00:00:00"
-        ).toLocaleDateString(ru ? "ru-RU" : "en-GB", { day: "numeric", month: "long" })}`}
-        subtitle={
-          ru
-            ? `заказ → производство (${settings.productionLeadMonths} мес) → транзит (~5 недель) → продажа с ${monthName(slot.arrivalMonth, true, true)}`
-            : `order → production (${settings.productionLeadMonths} mo) → transit (~5 weeks) → selling from ${monthName(slot.arrivalMonth, false)}`
-        }
-        right={
-          <Link href="/planning">
-            <Button variant="secondary">← {ru ? "К планированию" : "Back to planning"}</Button>
-          </Link>
-        }
-      />
+    <div>
+      <div className="mb-3.5 flex flex-wrap items-baseline gap-3">
+        <h1 className="text-[22px] font-extrabold tracking-[-0.5px]">{ru ? "Заказ" : "Order"}</h1>
+        <p className="text-[13px] font-semibold text-muted">
+          {ru
+            ? "Что именно я заказываю в этот дедлайн и уедет ли это?"
+            : "Exactly what am I ordering in this deadline, and will it ship?"}
+        </p>
+      </div>
 
-      {/* truck-fill hero — the load is the page's headline */}
-      <Card className="mb-4">
-        <div className="flex flex-wrap items-center gap-8 px-6 py-5">
-          <div className="min-w-40">
-            <div className="label-caps">{ru ? "Загрузка фуры" : "Truck fill"}</div>
-            <div className={`num font-display text-[32px] font-extrabold leading-tight ${fillTone === "ok" ? "text-ok" : "text-warn"}`}>
-              {fillPct.toFixed(1)}%
-            </div>
-            <div className="num text-[11.5px] text-muted">
-              {stats.pallets.toFixed(1)} / {settings.truckPallets} {ru ? "паллет" : "pallets"} · {fmtN(stats.grossKg)} /{" "}
-              {fmtN(settings.truckMaxKg)} {ru ? "кг" : "kg"}
-            </div>
+      <div className="flex flex-wrap items-start gap-3.5">
+        <div className="pcard min-w-0 flex-[1_1_660px] overflow-hidden">
+          <div className="flex flex-wrap items-center gap-3 border-b px-[18px] py-3" style={{ borderColor: "var(--hair)" }}>
+            <h2 className="text-[14px] font-extrabold">
+              {ru ? "Отгрузка " : "Shipping "}
+              {monthLong(slot.shipMonth, ru)}
+            </h2>
+            <span className="text-[11.5px] font-semibold text-muted">
+              {ru ? "заказ в IBP до " : "IBP order by "}
+              <span className="pnum">{dstr(slot.deadline)}</span> · {label}
+            </span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={useRecommendation}
+              className="rounded-lg border px-3 py-1.5 text-[12px] font-extrabold transition-colors hover:bg-accent-soft-bg"
+              style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+            >
+              {ru ? "Подставить рекомендацию" : "Use recommendation"}
+            </button>
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="relative h-[26px] w-full rounded-lg bg-surface-low">
-              <div className="absolute inset-0 flex overflow-hidden rounded-lg">
-                {segments.map((seg) => (
-                  <div
-                    key={seg.key}
-                    title={`${seg.label}: ${seg.pallets.toFixed(1)} ${ru ? "паллет" : "pallets"}`}
-                    style={{ width: `${Math.min(100, seg.pct)}%`, background: seg.color }}
-                  />
-                ))}
-              </div>
-              <div className="absolute -top-1.5 h-[38px] w-0.5 bg-danger" style={{ left: `${MIN_FILL * 100}%` }} />
-              <div
-                className="absolute -top-5 text-[9.5px] font-bold text-danger"
-                style={{ left: `${MIN_FILL * 100 - 4}%` }}
-              >
-                {ru ? "мин 98%" : "min 98%"}
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1">
-              {segments.map((seg) => (
-                <span key={seg.key} className="flex items-center gap-1.5 text-[10.5px] text-muted">
-                  <span className="h-2 w-2 rounded-sm" style={{ background: seg.color }} />
-                  {seg.label} · <span className="num">{seg.pallets.toFixed(1)}</span> {ru ? "пал" : "pal"}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div className="flex min-w-72 flex-col gap-2.5">
-            {stats.utilization < MIN_FILL && (
-              <div className="flex items-start gap-1.5 text-[12px] font-medium text-warn">
-                <IconAlert size={14} className="mt-0.5 shrink-0" />
-                <span>
-                  {ru
-                    ? `Минимум 98% — иначе перевозчик не гарантирует сохранность. Не хватает ~${missingPallets} паллет.`
-                    : `Minimum 98% — below that transport safety is the buyer's risk. ~${missingPallets} pallets short.`}
-                </span>
-              </div>
-            )}
-            {stats.utilization > 1.001 && (
-              <div className="flex items-start gap-1.5 text-[12px] font-medium text-danger">
-                <IconAlert size={14} className="mt-0.5 shrink-0" />
-                <span>
-                  {ru
-                    ? `Не влезает в фуру — уберите ~${overPallets} паллет (лимит: ${stats.binding === "weight" ? "вес" : "паллеты"}).`
-                    : `Over capacity — remove ~${overPallets} pallets (limit: ${stats.binding}).`}
-                </span>
-              </div>
-            )}
-            {suggestions.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {suggestions.map(({ sku, units }) => (
-                  <button
-                    key={sku.id}
-                    onClick={() => setQty((prev) => ({ ...prev, [sku.id]: (prev[sku.id] ?? 0) + units }))}
-                    className="flex items-center gap-1 rounded-full border border-accent-soft bg-accent-soft-bg px-3 py-1.5 text-[12px] font-semibold text-accent transition-colors hover:border-accent"
-                  >
-                    <IconPlus size={11} /> {sku.name}, 1 {ru ? "паллета" : "pallet"}
-                  </button>
-                ))}
-              </div>
-            )}
+
+          <div className="overflow-x-auto">
+            <table className="ptable" style={{ minWidth: 880 }}>
+              <thead>
+                <tr>
+                  <th style={{ minWidth: 190 }}>{ru ? "Продукт" : "Product"}</th>
+                  <th>{ru ? "Рекомендация" : "Recommended"}</th>
+                  <th className="col-act">{ru ? "Заказываю" : "Ordering"}</th>
+                  <th>{ru ? "Коробки" : "Cartons"}</th>
+                  <th>{ru ? "Паллеты" : "Pallets"}</th>
+                  <th>{ru ? "Вес, кг" : "Weight, kg"}</th>
+                  <th>{ru ? "Сумма, €" : "Cost, €"}</th>
+                  <th style={{ paddingRight: 18 }}>{ru ? "Покрытие после" : "Cover after"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {active.map((s) => {
+                  const { name, pack } = splitPack(s.name);
+                  const q = qty[s.id] ?? 0;
+                  const rec = recommended[s.id] ?? 0;
+                  const diff = q - rec;
+                  const after = cover.per[s.id] ?? 0;
+                  const afterOk = after >= settings.minCoverMonths;
+                  return (
+                    <tr key={s.id}>
+                      <td>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[13px] font-bold">{name}</span>
+                          {pack && <span className="text-[11px] font-bold" style={{ color: "var(--sky)" }}>{pack}</span>}
+                        </div>
+                        <div className="mt-0.5 text-[10.5px] font-semibold" style={{ color: "var(--faint)" }}>
+                          {s.pcsPerPallet > 0 && `${pn(s.pcsPerPallet)} ${ru ? "на паллете" : "per pallet"}`}
+                          {s.pcsPerPallet > 0 && s.pcsPerCarton > 0 && " · "}
+                          {s.pcsPerCarton > 0 && `${s.pcsPerCarton} ${ru ? "в коробке" : "per carton"}`}
+                        </div>
+                      </td>
+                      <td className="pnum text-[13px] text-muted">{rec > 0 ? pn(rec) : "—"}</td>
+                      <td className="col-act" style={{ padding: "5px 10px" }}>
+                        <input
+                          type="number"
+                          step={s.pcsPerCarton > 0 ? s.pcsPerCarton : 1}
+                          min={0}
+                          value={q === 0 ? "" : q}
+                          onChange={(e) => setQtyOf(s.id, e.target.value)}
+                          className="pinput font-bold"
+                        />
+                        <div
+                          className="mt-0.5 text-[10.5px] font-bold"
+                          style={{
+                            color:
+                              diff === 0 ? "var(--faint)" : diff > 0 ? "var(--accent)" : "var(--warn)",
+                          }}
+                        >
+                          {diff === 0
+                            ? ru ? "по рекомендации" : "as recommended"
+                            : pnSigned(diff)}
+                        </div>
+                      </td>
+                      <td className="pnum text-[12.5px] text-muted">
+                        {s.pcsPerCarton > 0 ? pn(q / s.pcsPerCarton) : "—"}
+                      </td>
+                      <td className="pnum text-[12.5px]">
+                        {s.pcsPerPallet > 0 ? (q / s.pcsPerPallet).toFixed(1) : "—"}
+                      </td>
+                      <td className="pnum text-[12.5px] text-muted">{pn(q * s.grossKgPerUnit)}</td>
+                      <td className="pnum text-[12.5px]">{pn(q * s.priceEur)}</td>
+                      <td style={{ paddingRight: 18 }}>
+                        <span
+                          className="ppill pnum"
+                          style={{
+                            background: afterOk ? "var(--ok-soft)" : "var(--warn-soft)",
+                            color: afterOk ? "var(--ok)" : "var(--warn-ink)",
+                            fontSize: "12.5px",
+                          }}
+                        >
+                          {pCover(after)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td>{ru ? "Итого" : "Total"}</td>
+                  <td className="pnum text-[13px] text-muted">{pn(totals.rec)}</td>
+                  <td className="pnum col-act text-[13.5px]" style={{ color: "var(--accent)" }}>
+                    {pn(totals.qty)}
+                  </td>
+                  <td className="pnum text-[13px]">{pn(totals.cartons)}</td>
+                  <td className="pnum text-[13px]">{totals.pallets.toFixed(1)}</td>
+                  <td className="pnum text-[13px]">{pn(totals.kg)}</td>
+                  <td className="pnum text-[13px]">{pn(totals.eur)}</td>
+                  <td style={{ paddingRight: 18 }} />
+                </tr>
+              </tfoot>
+            </table>
           </div>
         </div>
-      </Card>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
-        {/* order table */}
-        <Card className="overflow-hidden self-start">
-          <table className="tbl w-full">
-            <thead>
-              <tr>
-                <th>{ru ? "Товар" : "Product"}</th>
-                <th className="text-right">{ru ? "Рекомендовано" : "Recommended"}</th>
-                <th className="text-right">{ru ? "Заказ, шт" : "Order, pcs"}</th>
-                <th className="text-right">{ru ? "Коробов" : "Cartons"}</th>
-                <th className="text-right">{ru ? "Паллет" : "Pallets"}</th>
-                <th className="text-right">{ru ? "Вес брутто, кг" : "Gross, kg"}</th>
-                <th className="text-right">{ru ? "Сумма €" : "Value €"}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {active.map((s) => {
-                const q = qty[s.id] ?? 0;
-                const rec = recommended[s.id] ?? 0;
-                if (rec === 0 && q === 0 && !s.productId && s.priceEur === 0) return null;
+        <div className="flex flex-[0_1_340px] flex-col gap-3.5" style={{ minWidth: 290 }}>
+          <div className="pcard px-[18px] py-4">
+            <h2 className="text-[13.5px] font-extrabold">{ru ? "Загрузка фур" : "Truck loading"}</h2>
+            <p className="mt-0.5 text-[12px] font-semibold text-muted">
+              {settings.truckPallets} {ru ? "паллет" : "pallets"} / {(settings.truckMaxKg / 1000).toFixed(1)}{" "}
+              {ru ? "т · минимум 98 %" : "t · 98 % minimum"}
+            </p>
+
+            <div className="mt-3.5 flex flex-wrap gap-1.5">
+              {Array.from({ length: trucksNeeded }, (_, i) => {
+                const pallets = i < trucksNeeded - 1 ? settings.truckPallets : Math.max(0, lastPallets);
+                const pct = (pallets / settings.truckPallets) * 100;
+                const ok = pct >= MIN_FILL * 100;
                 return (
-                  <tr key={s.id} className={q > 0 ? "" : "opacity-55"}>
-                    <td>
-                      <div className="font-medium">{s.name}</div>
-                      <div className="text-[11px] text-muted">
-                        {ru ? "Арт" : "Art"}: {s.article}
-                        {s.priceEur > 0 && ` · €${s.priceEur}`}
-                      </div>
-                    </td>
-                    <td className="num cursor-pointer text-right text-muted" title={ru ? "Подставить" : "Apply"}
-                        onClick={() => setQty((prev) => ({ ...prev, [s.id]: rec }))}>
-                      {fmtN(rec)}
-                    </td>
-                    <td className="text-right">
-                      <input
-                        className="num w-24 rounded border border-border bg-surface px-2 py-1.5 text-right text-[13px] focus:border-accent focus:outline-none"
-                        value={q === 0 ? "" : fmtN(q)}
-                        onChange={(e) => setQtyOf(s.id, e.target.value)}
-                        placeholder="0"
+                  <div key={i} className="w-[38px]">
+                    <div
+                      className="flex h-[52px] flex-col justify-end overflow-hidden rounded-[7px] border"
+                      style={{
+                        borderColor: ok ? "var(--border-strong)" : "var(--warn-border)",
+                        background: "var(--surface-low)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: `${Math.max(4, Math.min(100, pct))}%`,
+                          background: ok ? "var(--accent)" : "var(--warn)",
+                        }}
                       />
-                    </td>
-                    <td className="num text-right">{s.pcsPerCarton > 0 ? fmtN(q / s.pcsPerCarton) : "—"}</td>
-                    <td className="num text-right">{s.pcsPerPallet > 0 ? (q / s.pcsPerPallet).toFixed(1) : "—"}</td>
-                    <td className="num text-right">{fmtN(q * s.grossKgPerUnit)}</td>
-                    <td className="num text-right">{fmtN(q * s.priceEur)}</td>
-                  </tr>
+                    </div>
+                    <div
+                      className="pnum mt-1 text-center text-[10px] font-bold"
+                      style={{ color: ok ? "var(--accent)" : "var(--warn)" }}
+                    >
+                      {Math.round(pallets)}/{settings.truckPallets}
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-            <tfoot>
-              <tr className="bg-accent-soft-bg font-semibold">
-                <td>{ru ? "Итого" : "Total"}</td>
-                <td />
-                <td className="num text-right">{fmtN(stats.totalUnits)}</td>
-                <td className="num text-right">{fmtN(stats.cartons)}</td>
-                <td className="num text-right">{stats.pallets.toFixed(1)}</td>
-                <td className="num text-right">{fmtN(stats.grossKg)}</td>
-                <td className="num text-right text-accent">€ {fmtN(stats.eurTotal)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </Card>
-
-        {/* side cards */}
-        <div className="space-y-4">
-          <Card>
-            <CardHeader title={ru ? "Деньги" : "Money"} />
-            <div className="grid grid-cols-2 gap-4 px-5 pb-5">
-              <div>
-                <div className="label-caps mb-1">{ru ? "Сумма заказа" : "Order value"}</div>
-                <div className="num font-display text-[22px] font-bold">€{fmtN(stats.eurTotal)}</div>
-              </div>
-              <div>
-                <div className="label-caps mb-1">{ru ? "Эквивалент" : "Equivalent"}</div>
-                <div className="num text-[15px] font-semibold text-muted">
-                  {eurRate > 0 ? `≈ ${fmtN(stats.eurTotal * eurRate)} ${ru ? "сум" : "UZS"}` : "—"}
-                </div>
-              </div>
-              <div className="col-span-2 border-t border-border pt-3">
-                <div className="label-caps mb-1">{ru ? "Предоплата" : "Prepayment"}</div>
-                <div className="text-[14px] font-medium">{monthName(slot.shipMonth, ru)}</div>
-              </div>
             </div>
-          </Card>
 
-          {impact.length > 0 && (
-            <Card>
-              <CardHeader
-                title={ru ? "Влияние на покрытие" : "Cover impact"}
-                desc={ru ? `Покрытие в ${monthName(slot.arrivalMonth, true, true).split(" ")[0]}е после прихода` : "Cover at arrival month"}
-              />
-              <div className="space-y-2 px-5 pb-5">
-                {impact.map(({ sku, coverBefore, coverAfter }) => (
-                  <div key={sku.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-[13px]">
-                    <span className="font-medium">{sku.name}</span>
-                    <span className="num">
-                      <span className={coverBefore < 4 ? "text-danger" : "text-muted"}>{coverBefore.toFixed(1)}</span>
-                      <span className="mx-1.5 text-muted">→</span>
-                      <span className={coverAfter >= 4 ? "text-ok" : "text-warn"}>
-                        {coverAfter.toFixed(1)} {ru ? "мес" : "mo"}
-                      </span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          <div className="flex items-center gap-2">
-            {saved && (
-              <a href={`/api/export/planning-order?ship=${slot.shipMonth}`} className="flex-1">
-                <Button variant="secondary" className="w-full">
-                  <IconDownload size={14} /> {ru ? "Экспорт для Humana" : "Export for Humana"}
-                </Button>
-              </a>
-            )}
-            <Button
-              className="flex-1"
-              disabled={saving || stats.totalUnits === 0}
-              onClick={() => {
-                if (
-                  stats.utilization < MIN_FILL &&
-                  !confirm(
-                    ru
-                      ? `Фура заполнена на ${fillPct.toFixed(1)}% (ниже 98%). Всё равно сохранить?`
-                      : `Truck is ${fillPct.toFixed(1)}% full (below 98%). Save anyway?`
-                  )
-                )
-                  return;
-                void save();
+            <div
+              className="mt-3 rounded-[10px] border px-3 py-2.5"
+              style={{
+                background: fillOk ? "var(--ok-soft)" : "var(--warn-soft)",
+                borderColor: fillOk ? "var(--ok-border)" : "var(--warn-border)",
               }}
+            >
+              <div
+                className="text-[12px] font-extrabold leading-snug"
+                style={{ color: fillOk ? "var(--ok-ink)" : "var(--warn-ink)" }}
+              >
+                {stats.pallets <= 0
+                  ? ru ? "Заказ пока пустой." : "The order is still empty."
+                  : fillOk
+                    ? ru
+                      ? `Все ${trucksNeeded} фур(ы) проходят минимум 98 % — заказ уедет.`
+                      : `All ${trucksNeeded} truck(s) meet the 98 % minimum — this order can ship.`
+                    : ru
+                      ? `Последняя фура загружена на ${Math.round(lastFill * 100)} %. Так она не уедет — нужно ≈${missingPallets} паллет.`
+                      : `Last truck is ${Math.round(lastFill * 100)} % full. It cannot depart — add about ${missingPallets} pallets.`}
+              </div>
+
+              {suggestions.length > 0 && (
+                <div className="mt-2.5 flex flex-col gap-1.5">
+                  {suggestions.map((s) => {
+                    const { name, pack } = splitPack(s.sku.name);
+                    return (
+                      <button
+                        key={s.sku.id}
+                        type="button"
+                        onClick={() => addUnits(s.sku.id, s.units)}
+                        className="rounded-lg border bg-surface px-2.5 py-1.5 text-left text-[11.5px] font-bold transition-colors hover:border-accent hover:text-accent"
+                        style={{ borderColor: "var(--border-strong)" }}
+                      >
+                        {ru ? "Добавить " : "Add "}
+                        <span className="pnum">{pn(s.units)}</span> × {name} {pack}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-2.5 flex justify-between text-[12px] font-semibold text-muted">
+              <span>{ru ? "Вес" : "Weight"}</span>
+              <span className="pnum font-bold" style={{ color: "var(--foreground)" }}>
+                {(stats.grossKg / 1000).toFixed(1)} / {((trucksNeeded * settings.truckMaxKg) / 1000).toFixed(1)}{" "}
+                {ru ? "т" : "t"}
+              </span>
+            </div>
+          </div>
+
+          <div className="pcard px-[18px] py-4">
+            <h2 className="text-[13.5px] font-extrabold">{ru ? "Подтверждение заказа" : "Commit order"}</h2>
+
+            <div className="mt-2.5 flex items-baseline justify-between">
+              <span className="text-[12.5px] font-bold text-muted">{ru ? "Сумма заказа" : "Order cost"}</span>
+              <span className="pnum text-[20px] font-bold tracking-[-0.6px]">€{pn(totals.eur)}</span>
+            </div>
+            {eurRate > 0 && (
+              <div className="pnum mt-0.5 text-right text-[11.5px] font-semibold text-muted">
+                ≈ {pn(totals.eur * eurRate)} {ru ? "сум" : "UZS"}
+              </div>
+            )}
+
+            <div className="mt-1.5 flex items-baseline justify-between">
+              <span className="text-[12.5px] font-bold text-muted">
+                {ru ? "Покрытие после прихода" : "Cover after arrival"}
+              </span>
+              <span
+                className="pnum text-[14px] font-bold"
+                style={{ color: cover.total < settings.minCoverMonths ? "var(--warn)" : "var(--ok)" }}
+              >
+                {pCover(cover.total)} {ru ? "мес." : "mo."}
+              </span>
+            </div>
+
+            {dirty && (
+              <div className="mt-3 flex items-center gap-2 text-[12px] font-bold" style={{ color: "var(--warn-ink)" }}>
+                <span className="h-[7px] w-[7px] rounded-full" style={{ background: "var(--warn)" }} />
+                {ru ? "Есть несохранённые изменения" : "Unsaved changes"}
+              </div>
+            )}
+            {savedAt && !dirty && (
+              <div className="mt-3 text-[12px] font-bold" style={{ color: "var(--ok)" }}>
+                {ru ? `Подтверждено в ${savedAt}` : `Committed at ${savedAt}`}
+              </div>
+            )}
+            {error && (
+              <div
+                className="mt-3 rounded-[9px] border px-3 py-2.5 text-[11.5px] font-bold leading-snug"
+                style={{ background: "var(--danger-soft)", borderColor: "var(--danger-border)", color: "var(--danger)" }}
+              >
+                {error}
+                {!fillOk && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForce(true);
+                      setError(null);
+                    }}
+                    className="mt-1.5 block underline"
+                  >
+                    {ru ? "Всё равно сохранить" : "Save anyway"}
+                  </button>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={saving}
+              className="mt-3 w-full rounded-[9px] px-4 py-2.5 text-[13px] font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ background: "var(--accent)" }}
             >
               {saving
                 ? ru ? "Сохранение…" : "Saving…"
-                : `${ru ? "Сохранить закуп" : "Save purchase"} (${ru ? "слот" : "slot"} ${slot.shipMonth.slice(5)}-${slot.shipMonth.slice(0, 4)})`}
-            </Button>
-          </div>
-          {saved && !saving && (
-            <div className="flex items-center gap-1.5 text-[12.5px] text-ok">
-              <IconCheck size={13} /> {ru ? "Закуп сохранён — учтён в прогнозе покрытия" : "Purchase saved — reflected in the cover projection"}
-            </div>
-          )}
-          {error && <div className="text-[12.5px] text-danger">{error}</div>}
-          <div className="flex items-start gap-1.5 text-[11.5px] leading-snug text-muted">
-            <IconTruck size={12} className="mt-0.5 shrink-0" />
-            {ru
-              ? `Рекомендации: спрос на горизонте прихода + страховой запас ${settings.minCoverMonths} мес − прогнозный остаток − уже оформленный закуп; округлено до коробов.`
-              : `Recommendations: demand over the arrival horizon + ${settings.minCoverMonths}-month safety floor − projected stock − committed purchases; rounded to cartons.`}
+                : force
+                  ? ru ? "Подтвердить несмотря на загрузку" : "Commit despite the fill"
+                  : ru ? "Подтвердить заказ" : "Commit order"}
+            </button>
+
+            <p className="mt-2.5 text-[11.5px] font-semibold leading-snug text-muted">
+              {ru ? "После подтверждения заказ попадает в " : "Once committed the order is recorded in "}
+              <Link href="/planning/plan" className="font-bold text-accent hover:underline">
+                {ru ? "«План (IBP)»" : "Plan (IBP)"}
+              </Link>
+              {ru ? " как заказ партнёра на отгрузку " : " as the partner order shipping in "}
+              {monthLong(slot.shipMonth, ru)}.
+            </p>
           </div>
         </div>
       </div>

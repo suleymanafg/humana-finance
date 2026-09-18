@@ -343,6 +343,17 @@ input[type="number"] {
   padding-left: 18px;
   font-size: 12.5px;
 }
+/* globals.css is unlayered, so these win over Tailwind's layered utilities —
+   spell the alignment overrides out, as .tbl above already has to */
+.ptable th.text-left,
+.ptable td.text-left {
+  text-align: left;
+}
+.ptable th.text-right,
+.ptable td.text-right {
+  text-align: right;
+}
+
 /* the columns the owner edits / acts on are tinted across head, body and foot */
 .ptable .col-act {
   background: var(--accent-soft-bg);
