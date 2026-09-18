@@ -1,5 +1,6 @@
 import { loadPlanning } from "@/lib/planning/data";
 import { monthKeyOf, nextOrderSlot, projectSku, recommendQty } from "@/lib/planning/compute";
+import PlanningShell from "@/components/PlanningShell";
 import OrderBuilderView from "@/components/OrderBuilderView";
 
 export const dynamic = "force-dynamic";
@@ -43,16 +44,18 @@ export default async function OrderBuilderPage() {
   );
 
   return (
-    <OrderBuilderView
-      skus={data.skus}
-      situations={data.situations}
-      slot={slot}
-      label={label}
-      startMonth={startMonth}
-      settings={data.settings}
-      eurRate={data.eurRate}
-      recommended={recommended}
-      purchases={purchases}
-    />
+    <PlanningShell slot={slot}>
+      <OrderBuilderView
+        skus={data.skus}
+        situations={data.situations}
+        slot={slot}
+        label={label}
+        startMonth={startMonth}
+        settings={data.settings}
+        eurRate={data.eurRate}
+        recommended={recommended}
+        purchases={purchases}
+      />
+    </PlanningShell>
   );
 }

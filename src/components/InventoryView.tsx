@@ -6,7 +6,6 @@
 import Link from "next/link";
 import { Badge, Button, Card, CardHeader, PageTitle } from "./ui";
 import { IconAlert, IconCheck, IconTruck } from "./icons";
-import PlanningTabs from "./PlanningTabs";
 import { useT } from "@/lib/locale-context";
 import { fmtN } from "@/lib/format";
 import type { OrderSlot, PlanningSettings } from "@/lib/planning/compute";
@@ -116,7 +115,6 @@ export default function InventoryView({
             : "Stock + pipeline per SKU: how long it lasts, when and how much to order"
         }
       />
-      <PlanningTabs />
 
       {/* the deadline call to action — what must be decided NOW */}
       {slotTotals.skuCount > 0 && (

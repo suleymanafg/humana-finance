@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Manrope } from "next/font/google";
+import { Inter, JetBrains_Mono, Manrope, Nunito_Sans } from "next/font/google";
 import { cookies, headers } from "next/headers";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/locale-context";
@@ -13,6 +13,18 @@ import { MONTH_COOKIE } from "@/lib/month-cookie";
 const inter = Inter({ variable: "--font-inter", subsets: ["latin", "cyrillic"] });
 const manrope = Manrope({ variable: "--font-manrope", subsets: ["latin", "cyrillic"] });
 // figures use plain Arial (see .num in globals.css) — no webfont needed
+// the supply-planning section runs its own type system (owner's design canvas):
+// Nunito Sans for UI, JetBrains Mono for every figure. Both carry Cyrillic.
+const nunito = Nunito_Sans({
+  variable: "--font-nunito",
+  subsets: ["latin", "cyrillic"],
+  weight: ["400", "600", "700", "800"],
+});
+const jetbrains = JetBrains_Mono({
+  variable: "--font-jetbrains",
+  subsets: ["latin", "cyrillic"],
+  weight: ["400", "500", "700"],
+});
 
 export const metadata: Metadata = {
   title: "Humana Finance",
@@ -58,7 +70,10 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   }
 
   return (
-    <html lang={locale} className={`${inter.variable} ${manrope.variable} h-full antialiased`}>
+    <html
+      lang={locale}
+      className={`${inter.variable} ${manrope.variable} ${nunito.variable} ${jetbrains.variable} h-full antialiased`}
+    >
       <body className="min-h-full">
         <LocaleProvider initial={locale}>
           {session && shellData && !standalone ? (

@@ -12,7 +12,6 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, PageTitle } from "./ui";
 import { IconCheck, IconLock, IconPencil } from "./icons";
-import PlanningTabs from "./PlanningTabs";
 import { useT } from "@/lib/locale-context";
 import { fmtN } from "@/lib/format";
 import {
@@ -253,7 +252,6 @@ export default function PlanningView({
             : "IBP: forecast and orders — entered into Humana's system by the 20th"
         }
       />
-      <PlanningTabs />
 
       {/* two things to know before touching the worksheet */}
       <div className="mb-4 grid gap-4 sm:grid-cols-2">

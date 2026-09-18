@@ -1,5 +1,6 @@
 import { loadPlanning } from "@/lib/planning/data";
 import { addMonths, monthKeyOf, nextOrderSlot, projectSku, recommendQty } from "@/lib/planning/compute";
+import PlanningShell from "@/components/PlanningShell";
 import InventoryView, { type InventoryRow, type PipelineEvent } from "@/components/InventoryView";
 
 export const dynamic = "force-dynamic";
@@ -121,14 +122,15 @@ export default async function InventoryPage() {
   };
 
   return (
-    <InventoryView
-      rows={rows}
-      transit={data.transit}
-      slot={slot}
-
-      settings={data.settings}
-      eurRate={data.eurRate}
-      slotTotals={slotTotals}
-    />
+    <PlanningShell slot={slot}>
+      <InventoryView
+        rows={rows}
+        transit={data.transit}
+        slot={slot}
+        settings={data.settings}
+        eurRate={data.eurRate}
+        slotTotals={slotTotals}
+      />
+    </PlanningShell>
   );
 }

@@ -15,7 +15,6 @@ import {
   YAxis,
 } from "recharts";
 import { Button, Card, CardHeader, Input, PageTitle, Select } from "./ui";
-import PlanningTabs from "./PlanningTabs";
 import { useT } from "@/lib/locale-context";
 import { fmtN } from "@/lib/format";
 import {
@@ -278,7 +277,6 @@ export default function ScenariosView({
           )
         }
       />
-      <PlanningTabs />
 
       <div className="grid items-start gap-4 lg:grid-cols-[320px_1fr]">
         {/* ── control panel ── */}

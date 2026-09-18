@@ -1,18 +1,19 @@
 "use client";
 
-// «Решения» — the daily working page of supply planning: the slot hero with
-// three scenario recommendations and one-click «apply base to закуп», then
-// per-SKU cards (position → demand → decision) sorted by severity. All the
-// math arrives precomputed from the server page; this component renders,
-// composes the bilingual sentences from those numbers, and posts.
+// «Решения» — the section's landing screen, built to the owner's design canvas
+// (Claude Design, "Supply Planning Section", 2026-09-18):
+//   deadline hero · three scenario tiles with one-click «принять базовый»
+//   · products ranked worst-first, each stated as one readable chain
+//     (position → demand over the lead time → decision)
+//   · the recruitment-wave card.
+// All the math arrives precomputed from the server page; this component only
+// renders it and composes the bilingual sentences.
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Badge, Card, PageTitle } from "./ui";
-import { IconAlert, IconCheck, IconTruck } from "./icons";
-import PlanningTabs from "./PlanningTabs";
 import { useT } from "@/lib/locale-context";
-import { fmtN } from "@/lib/format";
+import { addMonths } from "@/lib/planning/compute";
+import { dstr, monthLong, monthShort, pCover, pn, splitPack } from "@/lib/planning/ui-format";
 import type { OrderSlot, PlanningSettings, TruckStats } from "@/lib/planning/compute";
 import type { Stage } from "@/lib/planning/cohort";
 
@@ -51,6 +52,7 @@ export interface DecisionCard {
   modelVsRunRate: number | null; // fraction
   forecastAvg: number | null; // manual IBP forecast avg, null when none entered
   forecastVsModel: number | null;
+  demandPerMonth: number; // the figure the projection actually consumes
   wave: WaveInfo | null;
   // решение
   rec: { conservative: number; base: number; optimistic: number };
@@ -67,60 +69,59 @@ export interface DecisionRow {
   purchased: number;
 }
 
-// ── russian month grammar (the sentences need four cases + adjective) ──
+// ── russian month grammar (the wave sentence needs several cases) ──
 const RU_NOM = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
-const RU_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 const RU_PREP = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"];
 const RU_DAT = ["январю", "февралю", "марту", "апрелю", "маю", "июню", "июлю", "августу", "сентябрю", "октябрю", "ноябрю", "декабрю"];
-const RU_ADJ = ["январский", "февральский", "мартовский", "апрельский", "майский", "июньский", "июльский", "августовский", "сентябрьский", "октябрьский", "ноябрьский", "декабрьский"];
 const EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 const partsOf = (key: string): [number, number] => {
   const [y, m] = key.split("-").map(Number);
   return [y, m - 1];
 };
-/** «Декабрь 2026» / "December 2026" */
 const monthTitle = (key: string, ru: boolean): string => {
   const [y, m] = partsOf(key);
   const name = ru ? RU_NOM[m] : EN[m];
   return `${name[0].toUpperCase()}${name.slice(1)} ${y}`;
 };
-/** lowercase month, optional year: «декабрь»/«декабря 2026» etc. */
 const mCase = (key: string, list: string[], withYear = false): string => {
   const [y, m] = partsOf(key);
   return withYear ? `${list[m]} ${y}` : list[m];
 };
 
-function statusMeta(s: DecisionStatus, ru: boolean): { label: string; tone: "danger" | "warn" | "ok" } {
+/** The severity ladder, colours and wording exactly as drawn on the canvas. */
+function severity(s: DecisionStatus, ru: boolean): { label: string; ink: string; bg: string } {
   switch (s) {
-    case "stockout": return { label: ru ? "сток исчерпан" : "stocked out", tone: "danger" };
-    case "critical": return { label: ru ? "критично" : "critical", tone: "danger" };
-    case "gap": return { label: ru ? "разрыв впереди" : "gap ahead", tone: "warn" };
-    case "reorder": return { label: ru ? "нужен заказ" : "order needed", tone: "warn" };
-    case "overstock": return { label: ru ? "затоварка" : "overstock", tone: "warn" };
-    case "ok": return { label: ru ? "в норме" : "ok", tone: "ok" };
+    case "stockout":
+      return { label: ru ? "закончится" : "will run out", ink: "var(--danger)", bg: "var(--danger-soft)" };
+    case "critical":
+      return { label: ru ? "критично" : "critical", ink: "var(--danger)", bg: "var(--danger-soft)" };
+    case "gap":
+      return { label: ru ? "дефицит" : "gap", ink: "var(--warn-ink)", bg: "var(--warn-soft)" };
+    case "reorder":
+      return { label: ru ? "пора заказывать" : "time to reorder", ink: "var(--warn-ink)", bg: "var(--warn-soft)" };
+    case "overstock":
+      return { label: ru ? "избыток" : "overstocked", ink: "var(--info)", bg: "var(--info-soft)" };
+    case "ok":
+      return { label: ru ? "норма" : "fine", ink: "var(--ok)", bg: "var(--ok-soft)" };
   }
 }
-
-function coverBadgeClass(cover: number, minCover: number): string {
-  if (cover < minCover - 1) return "bg-danger-soft text-danger";
-  if (cover < minCover) return "bg-warn-soft text-warn";
-  return "bg-ok-soft text-ok";
-}
+/** The spine / cover colour — the pill ink, except «норма» reads calmer. */
+const spineOf = (s: DecisionStatus) => severity(s, true).ink;
 
 /** The stage-wave sentence, built from the model numbers (never hardcoded). */
 function waveSentence(w: WaveInfo, startMonth: string, ru: boolean): string {
   const n = w.stage[1];
   if (!w.rising) {
     return ru
-      ? `Ступень ${n}: выраженной волны нет — модель держит ≈${fmtN(w.nowPerMonth)}/мес на ближайшие месяцы.`
-      : `Stage ${n}: no pronounced wave — the model holds ≈${fmtN(w.nowPerMonth)}/mo over the coming months.`;
+      ? `Ступень ${n}: выраженной волны нет — модель держит ≈${pn(w.nowPerMonth)}/мес на ближайшие месяцы.`
+      : `Stage ${n}: no pronounced wave — the model holds ≈${pn(w.nowPerMonth)}/mo over the coming months.`;
   }
   const peakYearDiffers = w.peakMonth.slice(0, 4) !== startMonth.slice(0, 4);
   const by = ru ? mCase(w.peakMonth, RU_DAT, peakYearDiffers) : monthTitle(w.peakMonth, false);
   const growth = ru
-    ? `модель ждёт рост с ${fmtN(w.nowPerMonth)} до ${fmtN(w.peakPerMonth)}/мес к ${by}`
-    : `the model expects growth from ${fmtN(w.nowPerMonth)} to ${fmtN(w.peakPerMonth)}/mo by ${by}`;
+    ? `модель ждёт рост с ${pn(w.nowPerMonth)} до ${pn(w.peakPerMonth)}/мес к ${by}`
+    : `the model expects growth from ${pn(w.nowPerMonth)} to ${pn(w.peakPerMonth)}/mo by ${by}`;
   if (w.stage === "P1") {
     return ru
       ? `Волна 1-й ступени: новые наборы потребляют Platin 1 сразу — ${growth}.`
@@ -130,57 +131,56 @@ function waveSentence(w: WaveInfo, startMonth: string, ru: boolean): string {
   const window = ru
     ? `${mCase(w.recruitFromMonth, RU_PREP, crossYear)}–${mCase(w.recruitToMonth, RU_PREP, crossYear)}`
     : `${monthTitle(w.recruitFromMonth, false)}–${monthTitle(w.recruitToMonth, false)}`;
-  const move = w.stage === "P2"
-    ? ru ? "переходят на Platin 2" : "move on to Platin 2"
-    : ru ? "доходят до Platin 3" : "reach Platin 3";
+  const move =
+    w.stage === "P2"
+      ? ru ? "переходят на Platin 2" : "move on to Platin 2"
+      : ru ? "доходят до Platin 3" : "reach Platin 3";
   return ru
     ? `Волна ${n}-й ступени: младенцы, набранные в ${window}, ${move} — ${growth}.`
     : `Stage ${n} wave: babies recruited in ${window} ${move} — ${growth}.`;
 }
 
-/** «Рекомендуем 16 300: покрывает спрос до июня …» — facts only. */
-function reasoning(c: DecisionCard, minCover: number, ru: boolean): string {
-  const parts: string[] = [];
-  if (c.rec.base > 0) {
-    const until = c.coverUntilMonth
-      ? ru ? `до ${mCase(c.coverUntilMonth, RU_GEN, true)}` : `until ${monthTitle(c.coverUntilMonth, false)}`
-      : ru ? "до конца горизонта планирования" : "to the end of the planning horizon";
-    parts.push(
-      ru
-        ? `Рекомендуем ${fmtN(c.rec.base)}: покрывает спрос ${until} при страховом запасе ${minCover} мес`
-        : `Recommended ${fmtN(c.rec.base)}: covers demand ${until} with a ${minCover}-month safety floor`
-    );
-    if (c.nearArrivalUnits > 0 && c.firstArrivalMonth) {
-      parts.push(
-        ru
-          ? `уже едет ${fmtN(c.nearArrivalUnits)} (${mCase(c.firstArrivalMonth, RU_NOM)})`
-          : `${fmtN(c.nearArrivalUnits)} already en route (${monthTitle(c.firstArrivalMonth, false)})`
-      );
-    }
-    parts.push(
-      c.rec.conservative > 0
+/**
+ * One product's position → demand → decision, as a single sentence.
+ * Every number in it is displayed, so the arithmetic can be followed:
+ * stock + pipeline − demand over the lead time = what is left when the order lands.
+ */
+function chain(c: DecisionCard, slot: OrderSlot, leadMonths: number, ru: boolean): string {
+  const pipeline = c.nearArrivalUnits + c.laterArrivalUnits;
+  const consumed = c.demandPerMonth * leadMonths;
+  const left = Math.round(c.stock + pipeline - consumed);
+
+  const position = ru
+    ? `${pn(c.stock)} на складе${pipeline > 0 ? ` + ${pn(pipeline)} в пути` : ""} − ${pn(consumed)} спроса за ${leadMonths} мес. поставки`
+    : `${pn(c.stock)} on hand${pipeline > 0 ? ` + ${pn(pipeline)} in transit` : ""} − ${pn(consumed)} of demand over the ${leadMonths}-month lead`;
+
+  const outcome =
+    left > 0
+      ? ru
+        ? `останется ≈${pn(left)} к приходу`
+        : `≈${pn(left)} left when it lands`
+      : c.stockoutMonth
         ? ru
-          ? `при консервативном сценарии хватит ${fmtN(c.rec.conservative)}`
-          : `the conservative scenario needs only ${fmtN(c.rec.conservative)}`
+          ? `ноль с ${mCase(c.stockoutMonth, RU_NOM, true)}`
+          : `out of stock from ${monthTitle(c.stockoutMonth, false)}`
         : ru
-          ? "при консервативном сценарии заказ не обязателен"
-          : "the conservative scenario needs no order"
-    );
-  } else {
-    parts.push(
-      ru
-        ? `Заказ в этот слот не требуется: покрытие с учётом закупа ${c.coverWithAll.toFixed(1)} мес при минимуме ${minCover} мес`
-        : `No order needed this slot: cover incl. committed purchases is ${c.coverWithAll.toFixed(1)} mo against the ${minCover}-mo floor`
-    );
-    if (c.rec.optimistic > 0) {
-      parts.push(
-        ru
-          ? `при оптимистичном сценарии понадобилось бы ${fmtN(c.rec.optimistic)}`
-          : `the optimistic scenario would need ${fmtN(c.rec.optimistic)}`
-      );
-    }
-  }
-  return parts.join("; ") + ".";
+          ? "запас исчерпан"
+          : "stock exhausted";
+
+  const decision =
+    c.rec.base > 0
+      ? ru
+        ? `заказать ${pn(c.rec.base)} до ${dstr(slot.deadline)}`
+        : `order ${pn(c.rec.base)} by ${dstr(slot.deadline)}`
+      : c.purchasedAtSlot > 0
+        ? ru
+          ? `${pn(c.purchasedAtSlot)} уже в закупе на этот дедлайн`
+          : `${pn(c.purchasedAtSlot)} already committed for this deadline`
+        : ru
+          ? "в этот дедлайн заказ не нужен"
+          : "no order needed this deadline";
+
+  return `${position} → ${outcome} → ${decision}`;
 }
 
 export default function DecisionsView({
@@ -188,10 +188,12 @@ export default function DecisionsView({
   dormant,
   table,
   baseTruck,
+  trucks,
   slot,
   startMonth,
   settings,
   eurRate,
+  recruitment,
   recruitAvg3,
   packsPerBaby,
   isAdmin,
@@ -200,10 +202,12 @@ export default function DecisionsView({
   dormant: Array<{ skuId: string; name: string }>;
   table: DecisionRow[];
   baseTruck: TruckStats;
+  trucks: { conservative: TruckStats; base: TruckStats; optimistic: TruckStats };
   slot: OrderSlot;
   startMonth: string;
   settings: PlanningSettings;
   eurRate: number;
+  recruitment: Record<string, number>;
   recruitAvg3: number;
   packsPerBaby: number;
   isAdmin: boolean;
@@ -213,12 +217,14 @@ export default function DecisionsView({
   const router = useRouter();
   const [applying, setApplying] = useState(false);
 
-  const [, shipM] = partsOf(slot.shipMonth);
-  const slotLabel = `sales ${slot.shipMonth.slice(5)}-${slot.shipMonth.slice(0, 4)}`;
-  const deadlineDay = Number(slot.deadline.slice(8));
-  const deadlineStr = ru
-    ? `${deadlineDay} ${mCase(slot.deadline.slice(0, 7), RU_GEN)}`
-    : `${monthTitle(slot.deadline.slice(0, 7), false).split(" ")[0]} ${deadlineDay}`;
+  // months from today until the order is on the shelf — what the chain spends
+  const leadMonths = Math.max(
+    1,
+    Math.round(
+      (Number(slot.arrivalMonth.slice(0, 4)) * 12 + Number(slot.arrivalMonth.slice(5))) -
+        (Number(startMonth.slice(0, 4)) * 12 + Number(startMonth.slice(5)))
+    )
+  );
 
   const totals = table.reduce(
     (a, r) => ({
@@ -229,6 +235,50 @@ export default function DecisionsView({
     }),
     { conservative: 0, base: 0, optimistic: 0, purchased: 0 }
   );
+
+  const scenarios = [
+    {
+      key: "conservative" as const,
+      name: ru ? "Консервативный" : "Conservative",
+      units: totals.conservative,
+      truck: trucks.conservative,
+      note: ru ? "Только по факту продаж, без модели." : "Run-rate only, model ignored.",
+      lead: false,
+    },
+    {
+      key: "base" as const,
+      name: ru ? "Базовый" : "Base",
+      units: totals.base,
+      truck: trucks.base,
+      note: ru ? "Текущая модель и набор сохраняются." : "Current model and recruitment hold.",
+      lead: true,
+    },
+    {
+      key: "optimistic" as const,
+      name: ru ? "Оптимистичный" : "Optimistic",
+      units: totals.optimistic,
+      truck: trucks.optimistic,
+      note: ru ? "Удержание выше, набор продолжает расти." : "Retention higher, recruitment keeps growing.",
+      lead: false,
+    },
+  ];
+
+  // recruitment: what was entered, then the trailing average carried forward
+  const wave = (() => {
+    const past = Object.keys(recruitment)
+      .filter((m) => m <= startMonth && recruitment[m] > 0)
+      .sort()
+      .slice(-6)
+      .map((m) => ({ month: m, qty: recruitment[m], forecast: false }));
+    const ahead = [1, 2, 3].map((i) => ({
+      month: addMonths(startMonth, i),
+      qty: recruitAvg3,
+      forecast: true,
+    }));
+    const bars = [...past, ...ahead];
+    const max = Math.max(1, ...bars.map((b) => b.qty));
+    return { bars, max };
+  })();
 
   async function applyBase() {
     const msg = ru
@@ -249,296 +299,224 @@ export default function DecisionsView({
   }
 
   return (
-    <div className="pb-16">
-      <PageTitle
-        title={ru ? "Решения" : "Decisions"}
-        subtitle={
-          ru
-            ? `Что заказать и почему — ${RU_ADJ[shipM]} слот`
-            : `What to order and why — the ${EN[shipM]} slot`
-        }
-      />
-      <PlanningTabs />
+    <div>
+      <div className="mb-3.5 flex flex-wrap items-baseline gap-3">
+        <h1 className="text-[22px] font-extrabold tracking-[-0.5px]">{ru ? "Решения" : "Decisions"}</h1>
+        <p className="text-[13px] font-semibold text-muted">
+          {ru ? "Что требует внимания сейчас и что делать?" : "What needs attention now, and what should I do?"}
+        </p>
+      </div>
 
-      {/* slot hero — the navy decision band per the approved canvas */}
-      <div className="mb-5 flex flex-wrap items-stretch gap-8 rounded-[14px] bg-sidebar p-6 text-sidebar-fg-strong">
-        <div className="min-w-52">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.09em] text-sidebar-fg">
-            {ru ? "Слот" : "Slot"} {slotLabel}
+      {/* deadline hero + the three scenarios */}
+      <div className="grid gap-3.5 lg:grid-cols-3">
+        <div className="rounded-[14px] px-5 py-[18px] text-white" style={{ background: "var(--accent)" }}>
+          <div className="text-[10.5px] font-extrabold uppercase tracking-[0.08em] opacity-80">
+            {ru ? "Следующий заказ в IBP" : "Next IBP order"}
           </div>
-          <div className="mt-1 font-display text-[25px] font-extrabold">{monthTitle(slot.shipMonth, ru)}</div>
-          <div className="mt-1.5 text-[12px] text-sidebar-fg">
-            {ru ? "дедлайн" : "deadline"} <span className="font-semibold text-sidebar-fg-strong">{deadlineStr}</span> ·{" "}
-            <span className={`font-bold ${slot.daysLeft <= 3 ? "text-[#ffb85c]" : "text-sidebar-fg-strong"}`}>
-              {slot.daysLeft === 0 ? (ru ? "сегодня" : "today") : `${slot.daysLeft} ${ru ? "дн." : "days"}`}
-            </span>
+          <div className="pnum mt-1.5 text-[30px] font-extrabold tracking-[-1px]">{dstr(slot.deadline)}</div>
+          <div className="mt-0.5 text-[13.5px] font-bold opacity-90">
+            {slot.daysLeft === 0
+              ? ru ? "сегодня последний день" : "today is the last day"
+              : ru ? `осталось ${slot.daysLeft} дн.` : `${slot.daysLeft} days left`}
           </div>
-          <div className="mt-0.5 text-[12px] text-sidebar-fg">
-            {ru ? "на складе" : "in warehouse"} ~{monthTitle(slot.arrivalMonth, ru)}
-          </div>
-        </div>
-        <div className="min-w-0 flex-1 border-l border-white/15 pl-8">
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr className="text-[9.5px] uppercase tracking-[0.09em] text-sidebar-fg">
-                  <th className="pb-1 text-left font-semibold">{ru ? "Товар" : "Product"}</th>
-                  <th className="pb-1 text-right font-semibold">{ru ? "конс." : "cons."}</th>
-                  <th className="pb-1 text-right font-semibold text-sidebar-fg-strong">{ru ? "база" : "base"}</th>
-                  <th className="pb-1 text-right font-semibold">{ru ? "опт." : "opt."}</th>
-                  <th className="pb-1 text-right font-semibold">{ru ? "в закупе" : "committed"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {table.map((r) => (
-                  <tr key={r.skuId}>
-                    <td className="py-0.5 pr-4 text-[#d9d7f2]">{r.name}</td>
-                    <td className="num py-0.5 text-right text-[#8f8bcd]">{r.conservative > 0 ? fmtN(r.conservative) : "—"}</td>
-                    <td className="num py-0.5 text-right text-[13.5px] font-bold">{r.base > 0 ? fmtN(r.base) : "—"}</td>
-                    <td className="num py-0.5 text-right text-[#8f8bcd]">{r.optimistic > 0 ? fmtN(r.optimistic) : "—"}</td>
-                    <td className={`num py-0.5 text-right ${r.purchased > 0 ? "" : "text-[#ffb85c]"}`}>
-                      {r.purchased > 0 ? fmtN(r.purchased) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-2.5 flex flex-wrap items-baseline gap-x-5 gap-y-1 border-t border-white/15 pt-2.5">
-            <span className="text-[9.5px] font-semibold uppercase tracking-[0.09em] text-sidebar-fg">
-              {ru ? "Итого, база" : "Total, base"}
-            </span>
-            <span className="num font-display text-[17px] font-extrabold">{fmtN(totals.base)} {ru ? "шт" : "pcs"}</span>
-            <span className="num text-[12px] text-sidebar-fg">
-              ≈ {baseTruck.pallets.toFixed(1)} {ru ? "паллет" : "pallets"} · {(baseTruck.pallets / settings.truckPallets).toFixed(1)}{" "}
-              {ru ? "фуры" : "trucks"}
-            </span>
-            <span className="num text-[12px] text-sidebar-fg">
-              €{fmtN(baseTruck.eurTotal)}
-              {eurRate > 0 && ` (≈ ${fmtN(baseTruck.eurTotal * eurRate)} ${ru ? "сум" : "UZS"})`}
-            </span>
+          <div className="my-3 h-px" style={{ background: "rgba(255,255,255,0.22)" }} />
+          <div className="text-[12.5px] font-semibold leading-relaxed opacity-90">
+            {ru ? "Этот заказ уходит отгрузкой " : "This order ships in "}
+            <b>{monthLong(slot.shipMonth, ru)}</b>
+            {ru ? ", на складе с " : ", in the warehouse from "}
+            <b>{monthLong(slot.arrivalMonth, ru)}</b>.
           </div>
         </div>
-        <div className="flex min-w-56 flex-col justify-center gap-2.5">
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => void applyBase()}
-              disabled={applying || totals.base <= 0}
-              className="rounded-[9px] bg-white py-2.5 text-center text-[13px] font-bold text-accent transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {applying
-                ? ru ? "Сохранение…" : "Saving…"
-                : ru ? "Применить базовые в закуп" : "Apply base to purchase"}
-            </button>
-          )}
-          <Link
-            href="/planning/order"
-            className="rounded-[9px] border border-white/30 py-2.5 text-center text-[12.5px] font-semibold text-white transition-colors hover:bg-white/10"
-          >
-            {ru ? "Собрать фуру" : "Build the truck"} →
-          </Link>
+
+        <div className="pcard px-5 py-4 lg:col-span-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 className="text-[14px] font-extrabold">{ru ? "Рекомендуемый объём заказа" : "Recommended order quantity"}</h2>
+            <span className="text-[11.5px] font-semibold text-muted">
+              {ru ? "Три сценария спроса на этот дедлайн" : "Three demand scenarios for this deadline"}
+            </span>
+          </div>
+
+          <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
+            {scenarios.map((s) => (
+              <div
+                key={s.key}
+                className="rounded-[11px] border px-3 py-3"
+                style={{
+                  borderColor: s.lead ? "var(--accent)" : "var(--border)",
+                  background: s.lead ? "var(--accent-soft-bg)" : "var(--surface)",
+                }}
+              >
+                <div
+                  className="text-[11px] font-extrabold uppercase tracking-[0.05em]"
+                  style={{ color: s.lead ? "var(--accent)" : "var(--muted)" }}
+                >
+                  {s.name}
+                </div>
+                <div className="pnum mt-1.5 text-[20px] font-bold tracking-[-0.8px]">{pn(s.units)}</div>
+                <div className="mt-0.5 text-[11.5px] font-semibold text-muted">
+                  {(s.truck.pallets / settings.truckPallets).toFixed(1)} {ru ? "фур" : "trucks"} ·{" "}
+                  {s.truck.pallets.toFixed(1)} {ru ? "паллет" : "pallets"}
+                </div>
+                <div className="mt-1.5 text-[11.5px] font-semibold leading-snug text-muted">{s.note}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3.5 flex flex-wrap items-center gap-3">
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => void applyBase()}
+                disabled={applying || totals.base <= 0}
+                className="rounded-[9px] px-4 py-2.5 text-[13px] font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                style={{ background: "var(--accent)" }}
+              >
+                {applying
+                  ? ru ? "Сохранение…" : "Saving…"
+                  : ru ? "Принять базовый сценарий →" : "Accept base scenario →"}
+              </button>
+            )}
+            <span className="text-[12px] font-semibold text-muted">
+              {ru
+                ? "Перенесёт количества в «Заказ», где их можно поправить."
+                : "Carries the quantities into Order, where you can adjust them."}
+            </span>
+            <span className="pnum text-[12px] font-semibold text-muted">
+              €{pn(baseTruck.eurTotal)}
+              {eurRate > 0 && ` ≈ ${pn(baseTruck.eurTotal * eurRate)} ${ru ? "сум" : "UZS"}`}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* per-SKU decision cards, worst first */}
-      <div className="flex flex-col gap-4">
-        {cards.map((c) => {
-          const meta = statusMeta(c.status, ru);
-          const spine =
-            meta.tone === "danger" ? "border-l-danger" : meta.tone === "warn" ? "border-l-warn" : "border-l-ok";
-          return (
-            <Card key={c.skuId} className={`border-l-4 ${spine}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-[14px] font-semibold">{c.name}</span>
-                  {c.stage ? (
-                    <Badge tone="accent">Platin {c.stage[1]}</Badge>
-                  ) : (
-                    <Badge>Expert</Badge>
-                  )}
-                </div>
-                <Badge tone={meta.tone}>{meta.label}</Badge>
-              </div>
+      {/* ranked products + the recruitment wave */}
+      <div className="mt-4 flex flex-wrap items-start gap-3.5">
+        <div className="pcard min-w-0 flex-[1_1_640px] overflow-hidden">
+          <div className="flex flex-wrap items-baseline gap-3 border-b px-5 py-3" style={{ borderColor: "var(--hair)" }}>
+            <h2 className="text-[14px] font-extrabold">{ru ? "Продукты по остроте" : "Products by severity"}</h2>
+            <span className="text-[11.5px] font-semibold text-muted">
+              {ru ? `Худшие сверху · ${cards.length} активных` : `Worst first · ${cards.length} active`}
+            </span>
+          </div>
 
-              <div className="grid gap-x-10 gap-y-5 px-5 py-4 md:grid-cols-3">
-                {/* положение */}
-                <div>
-                  <div className="label-caps mb-2">{ru ? "Положение" : "Position"}</div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="num text-[17px] font-semibold">{fmtN(c.stock)}</span>
-                    <span className="text-[12px] text-muted">
-                      {ru ? "шт" : "pcs"}
-                      {c.stockAsOf && ` (${monthTitle(c.stockAsOf, ru)})`}
-                    </span>
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${coverBadgeClass(
-                        c.coverOnHand,
-                        settings.minCoverMonths
-                      )}`}
-                    >
-                      {c.coverOnHand.toFixed(1)} {ru ? "мес" : "mo"}
+          {cards.map((c) => {
+            const sev = severity(c.status, ru);
+            const { name, pack } = splitPack(c.name);
+            return (
+              <div
+                key={c.skuId}
+                className="flex flex-wrap items-start gap-4 border-b px-5 py-3"
+                style={{ borderColor: "var(--hair-soft)" }}
+              >
+                <div
+                  className="min-h-[34px] w-1 shrink-0 self-stretch rounded-[3px]"
+                  style={{ background: spineOf(c.status) }}
+                />
+                <div className="min-w-0 flex-[1_1_260px]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[14px] font-extrabold tracking-[-0.2px]">{name}</span>
+                    {pack && <span className="text-[11px] font-bold" style={{ color: "var(--sky)" }}>{pack}</span>}
+                    <span className="ppill" style={{ background: sev.bg, color: sev.ink }}>
+                      {sev.label}
                     </span>
                   </div>
-                  <div className="mt-2 space-y-1 text-[12.5px]">
-                    <div
-                      className="flex items-center gap-1.5"
-                      title={
-                        ru
-                          ? `покрытие с учётом «едет»: ${c.coverWithNear.toFixed(1)} мес`
-                          : `cover incl. en-route: ${c.coverWithNear.toFixed(1)} mo`
-                      }
-                    >
-                      <IconTruck size={13} className="text-accent" />
-                      <span className="text-muted">{ru ? "едет:" : "en route:"}</span>
-                      {c.nearArrivalUnits > 0 && c.firstArrivalMonth ? (
-                        <span className="num">
-                          +{fmtN(c.nearArrivalUnits)}{" "}
-                          <span className="text-muted">
-                            ({ru ? mCase(c.firstArrivalMonth, RU_NOM) : monthTitle(c.firstArrivalMonth, false)})
-                          </span>
-                        </span>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </div>
-                    <div
-                      title={
-                        ru
-                          ? `покрытие со всем закупом: ${c.coverWithAll.toFixed(1)} мес`
-                          : `cover incl. all committed: ${c.coverWithAll.toFixed(1)} mo`
-                      }
-                    >
-                      <span className="text-muted">{ru ? "закуп впереди:" : "committed ahead:"}</span>{" "}
-                      {c.laterArrivalUnits > 0 ? (
-                        <span className="num">
-                          +{fmtN(c.laterArrivalUnits)}
-                          {c.nearArrivalUnits <= 0 && c.firstArrivalMonth && (
-                            <span className="text-muted">
-                              {" "}({ru ? `с ${mCase(c.firstArrivalMonth, RU_GEN)}` : `from ${monthTitle(c.firstArrivalMonth, false)}`})
-                            </span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </div>
-                    <div>
-                      <span className="text-muted">{ru ? "первый разрыв:" : "first gap:"}</span>{" "}
-                      {c.stockoutMonth ? (
-                        <span className="font-medium text-danger">{monthTitle(c.stockoutMonth, ru)}</span>
-                      ) : (
-                        <span className="text-ok">{ru ? "не ожидается" : "not expected"}</span>
-                      )}
-                    </div>
-                    {c.stockoutMonth ? (
-                      c.fixable ? (
-                        <div className="flex items-center gap-1.5 text-ok">
-                          <IconCheck size={13} />
-                          {ru
-                            ? `Разрыв закрывается этим слотом — приход в ${mCase(slot.arrivalMonth, RU_PREP, true)}`
-                            : `This slot closes the gap — arrival in ${monthTitle(slot.arrivalMonth, false)}`}
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 font-medium text-danger">
-                          <IconAlert size={13} />
-                          {ru
-                            ? "Разрыв до прихода — заказом уже не закрыть"
-                            : "The gap lands before the arrival — this order cannot close it"}
-                        </div>
-                      )
-                    ) : (
-                      <div className="flex items-center gap-1.5 text-ok">
-                        <IconCheck size={13} />
-                        {ru ? "Разрывов на горизонте нет" : "No gaps on the horizon"}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* спрос */}
-                <div>
-                  <div className="label-caps mb-2">{ru ? "Спрос" : "Demand"}</div>
-                  <div className="space-y-1 text-[12.5px]">
-                    <div>
-                      <span className="text-muted">{ru ? "ср. продажи 3м:" : "avg sales 3m:"}</span>{" "}
-                      <span className="num">{fmtN(c.runRate3m)}</span>
-                      <span className="text-muted">/{ru ? "мес" : "mo"}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted">{ru ? "модель на 3 мес:" : "model next 3 mo:"}</span>{" "}
-                      <span className="num font-medium">{fmtN(c.model3m)}</span>
-                      <span className="text-muted">/{ru ? "мес" : "mo"}</span>
-                      {c.modelVsRunRate !== null && Math.abs(c.modelVsRunRate) >= 0.01 && (
-                        <span className={`ml-1 num text-[11.5px] font-semibold ${c.modelVsRunRate > 0 ? "text-accent" : "text-muted"}`}>
-                          {c.modelVsRunRate > 0 ? "+" : ""}
-                          {(c.modelVsRunRate * 100).toFixed(0)}% vs run-rate
-                        </span>
-                      )}
-                    </div>
-                    {c.forecastAvg !== null && (
-                      <div>
-                        <span className="text-muted">{ru ? "ваш прогноз в IBP:" : "your IBP forecast:"}</span>{" "}
-                        <span className="num">{fmtN(c.forecastAvg)}</span>
-                        <span className="text-muted">/{ru ? "мес" : "mo"}</span>
-                        {c.forecastVsModel !== null && Math.abs(c.forecastVsModel) > 0.25 && (
-                          <span className="ml-1 inline-flex items-center gap-1 text-[11.5px] font-medium text-warn">
-                            <IconAlert size={12} />
-                            {ru
-                              ? `прогноз отличается от модели на ${c.forecastVsModel > 0 ? "+" : ""}${(c.forecastVsModel * 100).toFixed(0)}%`
-                              : `forecast differs from the model by ${c.forecastVsModel > 0 ? "+" : ""}${(c.forecastVsModel * 100).toFixed(0)}%`}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {c.wave && (
-                      <p className="pt-1 leading-snug text-muted">{waveSentence(c.wave, startMonth, ru)}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* решение */}
-                <div>
-                  <div className="label-caps mb-2">{ru ? "Решение" : "Decision"}</div>
-                  <div className="flex items-end gap-5">
-                    <div>
-                      <div className="text-[10.5px] uppercase tracking-wide text-muted">{ru ? "конс." : "cons."}</div>
-                      <div className="num text-[14px] text-muted">{c.rec.conservative > 0 ? fmtN(c.rec.conservative) : "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10.5px] uppercase tracking-wide text-accent">{ru ? "базово" : "base"}</div>
-                      <div className="num font-display text-[22px] font-bold text-accent">
-                        {c.rec.base > 0 ? fmtN(c.rec.base) : "0"}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10.5px] uppercase tracking-wide text-muted">{ru ? "оптим." : "opt."}</div>
-                      <div className="num text-[14px] text-muted">{c.rec.optimistic > 0 ? fmtN(c.rec.optimistic) : "—"}</div>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-[12.5px] leading-snug text-muted">
-                    {reasoning(c, settings.minCoverMonths, ru)}
+                  <p className="mt-1 text-[12.5px] font-semibold leading-relaxed" style={{ color: "#3f4e63" }}>
+                    {chain(c, slot, leadMonths, ru)}
                   </p>
                 </div>
+                <div className="shrink-0 text-right">
+                  <div
+                    className="pnum text-[17px] font-bold tracking-[-0.5px]"
+                    style={{ color: spineOf(c.status) }}
+                  >
+                    {pCover(c.coverWithAll)}
+                  </div>
+                  <div
+                    className="text-[10.5px] font-bold uppercase tracking-[0.05em]"
+                    style={{ color: "var(--faint)" }}
+                  >
+                    {ru ? "мес. покрытия" : "months of cover"}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-[12px] font-bold">
+                  <Link href="/planning/inventory" className="text-accent hover:underline">
+                    {ru ? "Запасы" : "Inventory"}
+                  </Link>
+                  <span style={{ color: "var(--border-strong)" }}>·</span>
+                  <Link href="/planning/order" className="text-accent hover:underline">
+                    {ru ? "Заказ" : "Order"}
+                  </Link>
+                </div>
               </div>
-            </Card>
-          );
-        })}
-      </div>
+            );
+          })}
 
-      {/* footnote: dormant list + model sources */}
-      <div className="mt-5 space-y-1 text-[12px] leading-snug text-muted">
-        {dormant.length > 0 && (
-          <p>
-            {ru ? "Не активны (нет стока и спроса):" : "Dormant (no stock, no demand):"}{" "}
-            {dormant.map((d) => d.name).join(", ")}.
+          {dormant.length > 0 && (
+            <div className="px-5 py-3 text-[11.5px] font-semibold text-muted">
+              {ru ? "Без движения: " : "Dormant: "}
+              {dormant.map((d) => d.name).join(", ")}
+            </div>
+          )}
+        </div>
+
+        <div className="pcard flex-[0_1_320px] px-[18px] py-4" style={{ minWidth: 280 }}>
+          <h2 className="text-[13.5px] font-extrabold">{ru ? "Волна набора" : "Recruitment wave"}</h2>
+          <p className="mt-1 text-[12px] font-semibold leading-snug text-muted">
+            {ru
+              ? `Проверенный рецепт = 1 ребёнок ≈ ${packsPerBaby} упак./мес., удержание падает со временем.`
+              : `A verified prescription = 1 baby ≈ ${packsPerBaby} packs/mo., retention decays over time.`}
           </p>
-        )}
-        <p>
-          {ru
-            ? `Модель: ${fmtN(recruitAvg3)} подтверждённых рецептов/мес × удержание × ${packsPerBaby} банки; калибровка по факту продаж за 3 мес. Приоритет спроса: ручной прогноз → модель → run-rate.`
-            : `Model: ${fmtN(recruitAvg3)} verified prescriptions/mo × retention × ${packsPerBaby} packs; calibrated on the last 3 months of actual sales. Demand priority: manual forecast → model → run-rate.`}
-        </p>
+
+          <div className="mt-3.5 flex h-[76px] items-end gap-1">
+            {wave.bars.map((b) => (
+              <div key={b.month} className="flex flex-1 flex-col items-center gap-1">
+                <div
+                  className="w-full rounded-t-[3px]"
+                  style={{
+                    height: `${Math.max(8, Math.round((b.qty / wave.max) * 100))}%`,
+                    background: b.forecast ? "var(--accent)" : "var(--info-border)",
+                  }}
+                  title={`${monthLong(b.month, ru)}: ${pn(b.qty)}`}
+                />
+                <span className="text-[9.5px] font-bold" style={{ color: "var(--faint)" }}>
+                  {monthShort(b.month, ru)}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2.5 flex gap-3.5">
+            <span className="flex items-center gap-1.5 text-[11px] font-bold text-muted">
+              <span className="h-2.5 w-2.5 rounded-[2px]" style={{ background: "var(--info-border)" }} />
+              {ru ? "факт" : "actual"}
+            </span>
+            <span className="flex items-center gap-1.5 text-[11px] font-bold text-muted">
+              <span className="h-2.5 w-2.5 rounded-[2px]" style={{ background: "var(--accent)" }} />
+              {ru ? "прогноз" : "forecast"}
+            </span>
+          </div>
+
+          <div
+            className="mt-3.5 rounded-[10px] border px-3 py-2.5"
+            style={{ background: "var(--accent-soft-bg)", borderColor: "var(--accent-soft)" }}
+          >
+            <div className="pnum text-[18px] font-bold" style={{ color: "var(--accent)" }}>
+              {pn(recruitAvg3)}
+            </div>
+            <div className="mt-0.5 text-[11.5px] font-bold" style={{ color: "#0b3a73" }}>
+              {ru ? "детей в месяц (среднее за 3 мес.)" : "babies per month (3-month average)"}
+            </div>
+            {cards.find((c) => c.wave)?.wave && (
+              <p className="mt-1.5 text-[11.5px] font-semibold leading-snug" style={{ color: "#3f4e63" }}>
+                {waveSentence(cards.find((c) => c.wave)!.wave!, startMonth, ru)}
+              </p>
+            )}
+          </div>
+
+          <Link href="/planning/scenarios" className="mt-3 inline-block text-[12px] font-bold text-accent hover:underline">
+            {ru ? "Открыть «Сценарии» →" : "Open Scenarios →"}
+          </Link>
+        </div>
       </div>
     </div>
   );

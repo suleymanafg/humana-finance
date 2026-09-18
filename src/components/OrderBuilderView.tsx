@@ -8,7 +8,6 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, CardHeader, PageTitle } from "./ui";
-import PlanningTabs from "./PlanningTabs";
 import { IconAlert, IconCheck, IconDownload, IconPlus, IconTruck } from "./icons";
 import { useT } from "@/lib/locale-context";
 import { fmtN } from "@/lib/format";
@@ -190,7 +189,6 @@ export default function OrderBuilderView({
           </Link>
         }
       />
-      <PlanningTabs />
 
       {/* truck-fill hero — the load is the page's headline */}
       <Card className="mb-4">

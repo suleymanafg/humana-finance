@@ -1,35 +1,8 @@
-import { loadPlanning } from "@/lib/planning/data";
-import { monthKeyOf, nextOrderSlot, projectSku } from "@/lib/planning/compute";
-import { getSession } from "@/lib/auth";
-import PlanningView from "@/components/PlanningView";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
-// 14 future months in the grid (2 past months are prepended client-side)
-const HORIZON = 14;
-
-export default async function PlanningPage() {
-  const data = await loadPlanning();
-  const session = await getSession();
-  const slot = nextOrderSlot(new Date(), data.settings);
-  const startMonth = monthKeyOf(new Date());
-  const projections = Object.fromEntries(
-    data.skus.map((s) => [s.id, projectSku(data.situations[s.id], startMonth, HORIZON, data.settings)])
-  );
-  return (
-    <PlanningView
-      skus={data.skus}
-      situations={data.situations}
-      projections={projections}
-      slot={slot}
-      startMonth={startMonth}
-      settings={data.settings}
-      eurRate={data.eurRate}
-      purchases={data.purchases}
-      recruitment={data.recruitment}
-      model={data.model}
-      pickups={data.pickups}
-      isAdmin={session?.role === "ADMIN"}
-    />
-  );
+// The section's landing screen is «Решения» (the design canvas makes it the
+// entry point); the IBP worksheet moved to /planning/plan. Nav links and
+// bookmarks pointing at /planning keep working through this redirect.
+export default function PlanningIndex() {
+  redirect("/planning/decisions");
 }

@@ -15,6 +15,7 @@ import {
 import { buildDemandModel } from "@/lib/planning/model";
 import type { Stage } from "@/lib/planning/cohort";
 import { getSession } from "@/lib/auth";
+import PlanningShell from "@/components/PlanningShell";
 import DecisionsView, {
   type DecisionCard,
   type DecisionRow,
@@ -225,6 +226,7 @@ export default async function DecisionsPage() {
       rec,
       coverUntilMonth,
       purchasedAtSlot,
+      demandPerMonth: Math.round(base.avgDemandPerMonth),
     });
     table.push({
       skuId: sku.id,
@@ -239,25 +241,33 @@ export default async function DecisionsPage() {
   cards.sort((a, b) => SEVERITY[a.status] - SEVERITY[b.status]);
 
   const skusById = Object.fromEntries(data.skus.map((s) => [s.id, s]));
-  const baseTruck = truckStats(
-    table.map((r) => ({ skuId: r.skuId, qty: r.base })),
-    skusById,
-    settings
-  );
+  // the canvas prints pallets/trucks under every scenario, not just the base
+  const truckFor = (pick: (r: DecisionRow) => number) =>
+    truckStats(table.map((r) => ({ skuId: r.skuId, qty: pick(r) })), skusById, settings);
+  const baseTruck = truckFor((r) => r.base);
+  const trucks = {
+    conservative: truckFor((r) => r.conservative),
+    base: baseTruck,
+    optimistic: truckFor((r) => r.optimistic),
+  };
 
   return (
-    <DecisionsView
-      cards={cards}
-      dormant={dormant}
-      table={table}
-      baseTruck={baseTruck}
-      slot={slot}
-      startMonth={startMonth}
-      settings={settings}
-      eurRate={data.eurRate}
-      recruitAvg3={Math.round(recruitAvg3)}
-      packsPerBaby={data.cohortParams.packsPerBaby}
-      isAdmin={session?.role === "ADMIN"}
-    />
+    <PlanningShell slot={slot}>
+      <DecisionsView
+        cards={cards}
+        dormant={dormant}
+        table={table}
+        baseTruck={baseTruck}
+        trucks={trucks}
+        slot={slot}
+        startMonth={startMonth}
+        settings={settings}
+        eurRate={data.eurRate}
+        recruitment={data.recruitment}
+        recruitAvg3={Math.round(recruitAvg3)}
+        packsPerBaby={data.cohortParams.packsPerBaby}
+        isAdmin={session?.role === "ADMIN"}
+      />
+    </PlanningShell>
   );
 }

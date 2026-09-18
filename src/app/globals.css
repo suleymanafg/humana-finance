@@ -225,6 +225,156 @@ input[type="number"] {
   background: transparent;
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+   Supply-planning design system — the owner's Claude Design canvas
+   ("Supply Planning Section", 2026-09-18). Scoped to /planning/*: the theme
+   variables are redefined here, and because @theme inline compiles utilities
+   down to var(--accent) & co., every Tailwind colour utility inside this
+   scope picks the canvas palette up without touching the rest of the app.
+   ──────────────────────────────────────────────────────────────────────── */
+.plan-design {
+  --background: #f4f6f9;
+  --foreground: #0b1b33;
+  --surface: #ffffff;
+  --surface-low: #f7f9fc;
+  --border: #dce3ec;
+  --border-strong: #c7d1de;
+  --muted: #5c6b82;
+  --accent: #0039a6;
+  --accent-hover: #002f8a;
+  --accent-soft: #d5e3f8;
+  --accent-soft-bg: #f2f6fd;
+  --danger: #b4232a;
+  --danger-soft: #fcedec;
+  --ok: #3d7a22;
+  --ok-soft: #edf6e9;
+  --warn: #c97a00;
+  --warn-soft: #fff6e8;
+  /* roles the canvas adds on top of the app's palette */
+  --faint: #8a97ab;
+  --hair: #edf1f6;
+  --hair-soft: #f1f4f8;
+  --sky: #3aa6da;
+  --info: #0b4a73;
+  --info-soft: #eaf4fb;
+  --info-border: #9cd0ec;
+  --warn-ink: #8a5a00;
+  --warn-border: #ffd9a8;
+  --ok-ink: #2e5c1a;
+  --ok-border: #c8e3bd;
+  --danger-border: #f0c2c0;
+  --past: #e4e9f0;
+  --past-ink: #6b7a90;
+  --past-border: #d2dae5;
+
+  font-family: var(--font-nunito), system-ui, sans-serif;
+  color: var(--foreground);
+  letter-spacing: -0.1px;
+}
+
+/* every figure in the section is JetBrains Mono with lining, tabular digits */
+.plan-design .num,
+.pnum {
+  font-family: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+}
+
+/* canvas card: 14px radius, 1px border, no shadow */
+.pcard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+/* pill used for severity, cover and month status */
+.ppill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 20px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+/* section tables: uppercase micro-headers on a tinted band, hairline rows */
+.ptable {
+  width: 100%;
+  border-collapse: collapse;
+}
+.ptable thead th {
+  background: var(--surface-low);
+  border-bottom: 1px solid var(--border);
+  padding: 9px 12px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  text-align: right;
+  white-space: nowrap;
+}
+.ptable thead th:first-child {
+  text-align: left;
+  padding-left: 18px;
+}
+.ptable tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hair-soft);
+  text-align: right;
+  vertical-align: middle;
+}
+.ptable tbody td:first-child {
+  text-align: left;
+  padding-left: 18px;
+}
+.ptable tfoot td {
+  padding: 11px 12px;
+  border-top: 2px solid var(--border-strong);
+  background: var(--surface-low);
+  font-weight: 800;
+  text-align: right;
+}
+.ptable tfoot td:first-child {
+  text-align: left;
+  padding-left: 18px;
+  font-size: 12.5px;
+}
+/* the columns the owner edits / acts on are tinted across head, body and foot */
+.ptable .col-act {
+  background: var(--accent-soft-bg);
+}
+.ptable thead th.col-act {
+  color: var(--accent);
+}
+
+/* number input as drawn on the canvas */
+.pinput {
+  width: 108px;
+  padding: 5px 8px;
+  text-align: right;
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--foreground);
+}
+.pinput:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.pinput:disabled,
+.pinput[readonly] {
+  background: var(--hair-soft);
+  border-color: var(--past);
+  color: var(--muted);
+}
+
 .auth-bg {
   background:
     radial-gradient(600px 300px at 15% 0%, rgba(31, 16, 142, 0.08), transparent 60%),
