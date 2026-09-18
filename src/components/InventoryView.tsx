@@ -74,6 +74,16 @@ export default function InventoryView({
 
   // trucks on the road, nearest arrival first
   const trucks = [...transit].sort((a, b) => a.etaMonth.localeCompare(b.etaMonth));
+  // the two halves of the pipeline, kept apart so each panel can be tied out:
+  // trucks dispatched (what the card lists) vs ordered and not yet shipped
+  const transitTotal = rows.reduce(
+    (s, r) => s + r.pipeline.filter((e) => e.kind === "transit").reduce((a, e) => a + e.qty, 0),
+    0
+  );
+  const orderedTotal = rows.reduce(
+    (s, r) => s + r.pipeline.filter((e) => e.kind === "order").reduce((a, e) => a + e.qty, 0),
+    0
+  );
 
   return (
     <div>
@@ -98,12 +108,13 @@ export default function InventoryView({
           </div>
 
           <div className="overflow-x-auto">
-            <table className="ptable" style={{ minWidth: 900 }}>
+            <table className="ptable" style={{ minWidth: 980 }}>
               <thead>
                 <tr>
                   <th style={{ minWidth: 190 }}>{ru ? "Продукт" : "Product"}</th>
                   <th>{ru ? "На складе" : "On hand"}</th>
                   <th>{ru ? "В пути" : "In transit"}</th>
+                  <th>{ru ? "В заказе" : "On order"}</th>
                   <th>{ru ? "Спрос/мес." : "Demand/mo."}</th>
                   <th>{ru ? "Покрытие" : "Cover"}</th>
                   <th className="text-left">{ru ? "Уйдёт в минус" : "Goes negative"}</th>
@@ -115,7 +126,15 @@ export default function InventoryView({
               <tbody>
                 {rows.map((r) => {
                   const { name, pack } = splitPack(r.name);
-                  const pipelineUnits = r.pipeline.reduce((s, e) => s + e.qty, 0);
+                  // «В пути» must mean what the side card lists — trucks on the
+                  // road. The rest of the pipeline (synced backlog + committed
+                  // purchases not yet shipped) is a separate promise.
+                  const transitUnits = r.pipeline
+                    .filter((e) => e.kind === "transit")
+                    .reduce((s, e) => s + e.qty, 0);
+                  const orderedUnits = r.pipeline
+                    .filter((e) => e.kind === "order")
+                    .reduce((s, e) => s + e.qty, 0);
                   const pill = coverPill(r.coverWithPipeline, settings.minCoverMonths);
                   const negInk = !r.stockoutMonth
                     ? "var(--muted)"
@@ -136,7 +155,10 @@ export default function InventoryView({
                       </td>
                       <td className="pnum text-[13px]">{pn(r.stock)}</td>
                       <td className="pnum text-[13px]" style={{ color: "var(--info)" }}>
-                        {pipelineUnits > 0 ? pn(pipelineUnits) : "—"}
+                        {transitUnits > 0 ? pn(transitUnits) : "—"}
+                      </td>
+                      <td className="pnum text-[13px]" style={{ color: "var(--muted)" }}>
+                        {orderedUnits > 0 ? pn(orderedUnits) : "—"}
                       </td>
                       <td className="pnum text-[13px] text-muted">{pn(r.demandPerMonth)}</td>
                       <td>
@@ -205,6 +227,13 @@ export default function InventoryView({
             <h2 className="text-[13.5px] font-extrabold">{ru ? "Поставки в пути" : "Shipments in transit"}</h2>
             <p className="mt-0.5 text-[12px] font-semibold text-muted">
               {ru ? "Отгружено, ещё не получено" : "Dispatched, not yet received"}
+              {transitTotal > 0 && (
+                <>
+                  {" · "}
+                  <span className="pnum font-bold" style={{ color: "var(--info)" }}>{pn(transitTotal)}</span>
+                  {ru ? " — это и есть колонка «В пути»" : " — this is the In transit column"}
+                </>
+              )}
             </p>
             {trucks.length === 0 ? (
               <p className="mt-3 text-[12.5px] font-semibold" style={{ color: "var(--faint)" }}>
@@ -236,6 +265,19 @@ export default function InventoryView({
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {orderedTotal > 0 && (
+              <div
+                className="mt-3 border-t pt-2.5 text-[11.5px] font-semibold leading-snug text-muted"
+                style={{ borderColor: "var(--hair)" }}
+              >
+                {ru ? "Заказано, но ещё не отгружено: " : "Ordered, not yet dispatched: "}
+                <span className="pnum font-bold" style={{ color: "var(--foreground)" }}>{pn(orderedTotal)}</span>
+                {ru
+                  ? " — это колонка «В заказе»: остаток Open Orders и закуп на будущие отгрузки. В покрытии учитывается, но фурой ещё не стало."
+                  : " — the On order column: the Open Orders remainder plus purchases committed for future ship months. Counted in cover, but not yet a truck."}
               </div>
             )}
           </div>
