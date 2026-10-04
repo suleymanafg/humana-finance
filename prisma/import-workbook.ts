@@ -6,19 +6,27 @@ import "dotenv/config";
 //   npx tsx prisma/import-workbook.ts "<path to the .xlsx>"              dry run (dev database)
 //   npx tsx prisma/import-workbook.ts "<path to the .xlsx>" --commit     write
 //
+// Both runs do the whole import inside one transaction and then recompute the
+// workbook's figures from the database. A dry run always rolls back; a commit
+// keeps the data only when every figure matches.
+//
 // Options:
 //   --production   target the live database (`# DATABASE_URL_PRODUCTION=` in .env)
 //   --with-sales   also replace sales for the months the workbook covers
 //                  (normally the 1C sync owns sales; without this flag they
 //                  are only compared)
 //   --bootstrap    create missing products and channels (empty database only)
+//   --accept-differences   commit even when the figures from the database
+//                  differ from the workbook (e.g. 1C sales newer than it)
 //
 // What it replaces: TI invoices, TI write-offs, the TI VAT account and other
 // VAT charges, loans, the previous owner's money, other receipts, capital, tax
-// filings, truck lines and import expenses of arrived trucks, and — for the
-// months and dates the workbook covers — expenses, payments from Fargo,
-// receivables, stock counts and month-end balances. Channel cash shares and the
-// tax settings are updated. Nothing outside the workbook's coverage is touched.
+// filings, truck lines and import expenses of arrived trucks; expenses and
+// receivables for every month up to the workbook's report month; and — for the
+// months and dates the workbook covers — payments from Fargo, stock counts and
+// month-end balances. Channel cash shares and the tax settings are updated.
+// Replaced rows are hidden (deletedAt), not erased. Nothing later than the
+// workbook's coverage is touched.
 import { readFileSync } from "node:fs";
 import { newPrismaClient } from "../src/lib/prisma-factory";
 import { compute } from "../src/lib/engine/compute";
@@ -32,6 +40,10 @@ const COMMIT = args.includes("--commit");
 const PRODUCTION = args.includes("--production");
 const WITH_SALES = args.includes("--with-sales");
 const BOOTSTRAP = args.includes("--bootstrap");
+const ACCEPT_DIFFERENCES = args.includes("--accept-differences");
+
+/** Thrown inside the transaction to undo everything it wrote. */
+class Rollback extends Error {}
 
 if (!path) {
   console.error('Usage: npx tsx prisma/import-workbook.ts "<path to the .xlsx>" [--commit] [--production] [--with-sales]');
@@ -129,10 +141,22 @@ async function main() {
   console.log(
     `  payments from Fargo up to ${lastTransfer}: ${ds.transfers.length} (cash ${money(sum(ds.transfers, (t) => t.cashAmount))}, bank ${money(sum(ds.transfers, (t) => t.bankAmount))}); ${wb.skippedTransfers.length / 2} previous-owner pairs kept under «Previous owner»`
   );
+  // the workbook is the full record up to its report month: expenses and
+  // receivables are replaced for every month up to it (and any later month it fills)
+  const covered = (filled: string[]) => ({ OR: [{ monthId: { lte: wb.reportTo } }, { monthId: { in: filled } }] });
   const opexTiMonths = [...new Set(ds.opexTi.map((e) => e.monthId))].sort();
   const opexFargoMonths = [...new Set(ds.opexFargo.map((e) => e.monthId))].sort();
-  console.log(`  expenses TI ${opexTiMonths[0]}…${opexTiMonths.at(-1)}: ${money(sum(ds.opexTi, (e) => e.bankAmount + e.cashAmount))}; Fargo ${opexFargoMonths[0]}…${opexFargoMonths.at(-1)}: ${money(sum(ds.opexFargo, (e) => e.amount))}`);
+  const [opexTiNow, opexFargoNow, arNow] = await Promise.all([
+    prisma.opexTiEntry.findMany({ where: { deletedAt: null, ...covered(opexTiMonths) }, select: { bankAmount: true, cashAmount: true } }),
+    prisma.opexFargoEntry.findMany({ where: { deletedAt: null, ...covered(opexFargoMonths) }, select: { amount: true } }),
+    prisma.arEntry.findMany({ where: { deletedAt: null }, select: { monthId: true } }),
+  ]);
+  console.log(
+    `  expenses up to ${wb.reportTo} replaced — TI ${money(sum(opexTiNow, (e) => e.bankAmount + e.cashAmount))} → ${money(sum(ds.opexTi, (e) => e.bankAmount + e.cashAmount))}; Fargo ${money(sum(opexFargoNow, (e) => e.amount))} → ${money(sum(ds.opexFargo, (e) => e.amount))}`
+  );
   const arMonths = [...new Set(ds.arEntries.map((a) => a.monthId))].sort();
+  const arOutside = [...new Set(arNow.map((a) => a.monthId))].filter((m) => m <= wb.reportTo && !arMonths.includes(m)).sort();
+  if (arOutside.length > 0) console.log(`  receivables the workbook does not have, hidden: ${arOutside.join(", ")}`);
   const countMonths = [...new Set(ds.stockCounts.map((c) => c.monthId))].sort();
   console.log(`  receivables for ${arMonths.join(", ")}; stock counts for ${countMonths.join(", ")}; month-end balances for ${ds.monthBalances.map((b) => b.monthId).join(", ")}`);
 
@@ -152,11 +176,6 @@ async function main() {
       : `  sales: ${salesDiff.length === 0 ? "the database matches the workbook" : `differ from the workbook in ${salesDiff.join(", ")} (left as they are; 1C owns sales)`}`
   );
 
-  if (!COMMIT) {
-    console.log("\nDry run only — nothing was written.");
-    return;
-  }
-
   // ── 3. write ──
   const monthUnion = [...new Set([...months.map((m) => m.id), ...ds.months.map((m) => m.id)])].sort();
   await prisma.$transaction(
@@ -164,11 +183,16 @@ async function main() {
       const now = new Date();
       for (const [i, id] of monthUnion.entries()) {
         const row = ds.months.find((m) => m.id === id);
-        await tx.month.upsert({
-          where: { id },
-          create: { id, nameRu: row!.nameRu, nameEn: row!.nameEn, sortOrder: i },
-          update: { sortOrder: i },
-        });
+        // months the database has beyond the workbook only keep their place in order
+        if (row) {
+          await tx.month.upsert({
+            where: { id },
+            create: { id, nameRu: row.nameRu, nameEn: row.nameEn, sortOrder: i },
+            update: { sortOrder: i },
+          });
+        } else {
+          await tx.month.update({ where: { id }, data: { sortOrder: i } });
+        }
       }
       if (BOOTSTRAP) {
         for (const p of [...ds.products].sort((a, b) => Number(a.isPromo) - Number(b.isPromo))) {
@@ -272,7 +296,7 @@ async function main() {
       });
 
       // expenses for the months the workbook covers
-      await tx.opexTiEntry.updateMany({ where: { deletedAt: null, monthId: { in: opexTiMonths } }, data: { deletedAt: now } });
+      await tx.opexTiEntry.updateMany({ where: { deletedAt: null, ...covered(opexTiMonths) }, data: { deletedAt: now } });
       await tx.opexTiEntry.createMany({
         data: ds.opexTi.map((e) => ({
           monthId: e.monthId,
@@ -281,7 +305,7 @@ async function main() {
           cashAmount: e.cashAmount,
         })),
       });
-      await tx.opexFargoEntry.updateMany({ where: { deletedAt: null, monthId: { in: opexFargoMonths } }, data: { deletedAt: now } });
+      await tx.opexFargoEntry.updateMany({ where: { deletedAt: null, ...covered(opexFargoMonths) }, data: { deletedAt: now } });
       await tx.opexFargoEntry.createMany({
         data: ds.opexFargo.map((e) => ({ monthId: e.monthId, categoryId: opexId.get(`FARGO|${e.categoryName}`)!, amount: e.amount })),
       });
@@ -351,7 +375,7 @@ async function main() {
       });
 
       // month-end inputs
-      await tx.arEntry.updateMany({ where: { deletedAt: null, monthId: { in: arMonths } }, data: { deletedAt: now } });
+      await tx.arEntry.updateMany({ where: { deletedAt: null, ...covered(arMonths) }, data: { deletedAt: now } });
       await tx.arEntry.createMany({
         data: ds.arEntries.map((a) => ({ monthId: a.monthId, customerName: a.customerName, amount: a.amount })),
       });
@@ -410,21 +434,36 @@ async function main() {
           username: "import-workbook",
         },
       });
+
+      // ── 4. the database must now give the workbook's figures ──
+      const after = compareWithWorkbook(
+        compute(await buildDataset(tx as unknown as Parameters<typeof buildDataset>[0])),
+        wb.expected,
+        wb.reportTo
+      );
+      console.log("\nAfter writing, from the database:");
+      for (const line of after.lines) console.log(line);
+      if (!after.ok && !WITH_SALES && salesDiff.length > 0) {
+        console.log("  (sales in the database differ from the workbook — see above)");
+      }
+      if (!COMMIT) throw new Rollback("dry run");
+      if (!after.ok && !ACCEPT_DIFFERENCES) throw new Rollback("differences");
     },
     { timeout: 300_000, maxWait: 60_000 }
   );
-
-  // ── 4. the database must now give the same figures ──
-  const after = compareWithWorkbook(compute(await buildDataset(prisma)), wb.expected, wb.reportTo);
-  console.log("\nAfter writing, from the database:");
-  for (const line of after.lines) console.log(line);
-  if (!after.ok && !WITH_SALES && salesDiff.length > 0) {
-    console.log("  (sales in the database differ from the workbook — see above)");
-  }
+  console.log("\nDone — the import is saved.");
 }
 
 main()
   .catch((e) => {
+    if (e instanceof Rollback) {
+      console.log(
+        e.message === "dry run"
+          ? "\nDry run — everything above was rolled back; nothing was written."
+          : "\nStopped: the figures from the database differ from the workbook, so everything was rolled back and nothing was written."
+      );
+      return;
+    }
     console.error(e);
     process.exit(1);
   })
