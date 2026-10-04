@@ -1,36 +1,29 @@
 "use client";
 
-// Ввод данных (monthly close): a guided six-step checklist for one month.
-// Each step shows its status and opens the focused place to enter that data.
-// Once the data is in, ADMIN closes the month here — freezing it for STAFF
-// and the 1C feeds and putting it onto the P&L — and can reopen it later.
+// Month close: a checklist of the month's data, each step opening the page
+// where it is entered. ADMIN closes the month here (freezing it for STAFF and
+// the 1C feeds) and can reopen it.
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
-import { fmtN } from "@/lib/format";
-import { IconCheck, IconChevronRight } from "./icons";
-import Sync1cPanel from "./Sync1cPanel";
 import type { MonthIn } from "@/lib/engine/types";
 import type { MonthStatus } from "@/lib/month-status";
-import type { DictKey } from "@/lib/i18n";
 
 export default function CloseView({
   months,
   monthId,
   status,
-  summary,
   closedInfo,
   isAdmin,
 }: {
   months: MonthIn[];
   monthId: string;
   status: MonthStatus | null;
-  summary: { revenue: number; totalOpex: number; netProfit: number };
   closedInfo: { closed: boolean; closedBy: string | null; closedAt: string | null };
   isAdmin: boolean;
 }) {
-  const { t, locale } = useT();
+  const { t, l, locale } = useT();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -60,53 +53,55 @@ export default function CloseView({
     return m ? (locale === "ru" ? m.nameRu : m.nameEn) : monthId;
   })();
 
-  const steps: Array<{
-    key: DictKey;
-    done: boolean;
-    optional?: boolean;
-    href: string;
-    note: { ru: string; en: string };
-  }> = [
-    {
-      key: "stepSales",
-      done: !!status?.hasSales,
-      href: `/sales?month=${monthId}`,
-      note: {
-        ru: "Количество по товарам и каналам — вручную, CSV или из 1С",
-        en: "Quantities by product and channel — manual, CSV or from 1C",
-      },
-    },
-    {
-      key: "stepShipments",
-      done: !!status?.hasShipments,
-      optional: true,
-      href: "/shipments",
-      note: {
-        ru: "Только в месяцы с новыми поставками из Германии",
-        en: "Only in months with new shipments from Germany",
-      },
-    },
-    {
-      key: "stepOpexTi",
-      done: !!status?.hasOpexTi,
-      href: `/opex-ti?month=${monthId}`,
-      note: { ru: "Банк и наличные по категориям", en: "Bank and cash by category" },
-    },
-    {
-      key: "stepOpexFargo",
-      done: !!status?.hasOpexFargo,
-      href: `/opex-fargo?month=${monthId}`,
-      note: { ru: "Расходы дистрибуции по категориям", en: "Distribution expenses by category" },
-    },
-    {
-      key: "stepStockBalance",
-      done: !!status?.hasStock && !!status?.hasInputs,
-      href: `/close/balance?month=${monthId}`,
-      note: {
-        ru: "Остатки по складам, дебиторка, банк, займы, взносы и платежи Fargo↔TI",
-        en: "Warehouse stock, AR, bank, loans, capital and Fargo↔TI payments",
-      },
-    },
+  const step = (
+    key: string,
+    title: { ru: string; en: string },
+    done: boolean,
+    href: string,
+    note: { ru: string; en: string },
+    optional = false
+  ) => ({ key, title, done, href, note, optional });
+  const steps = [
+    step("sales", { ru: "Продажи", en: "Sales" }, !!status?.hasSales, "/sales/data", {
+      ru: "Количество по товарам и каналам: из 1С, файлом или вручную",
+      en: "Quantities by product and channel: from 1C, a file or by hand",
+    }),
+    step("invoices", { ru: "Счета-фактуры TI для Fargo", en: "TI invoices to Fargo" }, !!status?.hasInvoices, "/goods/invoices", {
+      ru: "Каждая счёт-фактура месяца, как на бумаге",
+      en: "Every invoice of the month, as printed",
+    }, true),
+    step("shipments", { ru: "Поставки", en: "Shipments" }, !!status?.hasShipments, "/goods/shipments", {
+      ru: "Только в месяцы, когда пришла фура",
+      en: "Only in months when a truck arrived",
+    }, true),
+    step("opexTi", { ru: "Расходы Turbo Impex", en: "Turbo Impex expenses" }, !!status?.hasOpexTi, "/expenses/ti", {
+      ru: "Банк и наличные по категориям",
+      en: "Bank and cash by category",
+    }),
+    step("opexFargo", { ru: "Расходы Fargo", en: "Fargo expenses" }, !!status?.hasOpexFargo, "/expenses/fargo", {
+      ru: "Расходы на бизнес Humana, включая ретро-бонусы",
+      en: "Costs of the Humana business, including retro bonuses",
+    }),
+    step("stock", { ru: "Пересчёт склада", en: "Warehouse count" }, !!status?.hasStock, "/goods/stock", {
+      ru: "Фактические остатки по товарам на конец месяца",
+      en: "Physical stock by product at month-end",
+    }),
+    step("payments", { ru: "Платежи Fargo", en: "Payments from Fargo" }, !!status?.hasTransfers, "/settlement/payments", {
+      ru: "Наличные и банковские платежи Fargo за месяц",
+      en: "Fargo's cash and bank payments in the month",
+    }, true),
+    step("ar", { ru: "Долги покупателей", en: "Customer receivables" }, !!status?.hasAr, "/settlement/receivables", {
+      ru: "Сколько покупатели должны Fargo на конец месяца",
+      en: "What customers owe Fargo at month-end",
+    }, true),
+    step("balances", { ru: "Денежные остатки", en: "Cash balances" }, !!status?.hasInputs, "/funding/balances", {
+      ru: "Деньги TI на счёте и в кассе, товар в пути",
+      en: "TI cash at bank and on hand, goods in transit",
+    }),
+    step("vat", { ru: "Лицевой счёт по НДС", en: "VAT tax account" }, !!status?.hasVatAccount, "/taxes/ti-vat", {
+      ru: "Операции по лицевому счёту TI за месяц",
+      en: "TI tax account operations for the month",
+    }, true),
   ];
 
   const required = steps.filter((s) => !s.optional);
@@ -114,134 +109,86 @@ export default function CloseView({
   const progress = required.length > 0 ? doneCount / required.length : 0;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 pb-16">
-      <div>
-        <h1 className="font-display text-[24px] font-semibold tracking-[-0.01em]">
-          {t("closeTitle")} — {monthName}
-        </h1>
-        <p className="mt-1 text-[13.5px] text-muted">{t("closeSubtitle")}</p>
-      </div>
-
-      {/* progress */}
-      <div className="quiet-card rounded-xl p-6">
-        <div className="mb-3 flex items-baseline justify-between">
-          <span className="label-caps">{t("monthProgress")}</span>
-          <span className="font-display text-[20px] font-semibold text-accent">
-            {doneCount} / {required.length}
-          </span>
-        </div>
-        <div className="h-2.5 w-full overflow-hidden rounded-full bg-surface-low">
-          <div
-            className="h-full rounded-full bg-accent transition-all"
-            style={{ width: `${progress * 100}%` }}
-          />
-        </div>
-        {progress === 1 && (
-          <div className="mt-3 flex items-center gap-1.5 text-[13px] font-medium text-ok">
-            <IconCheck size={14} /> {t("monthComplete")} · {t("netProfit").toLowerCase()}:{" "}
-            <span className="num">{fmtN(summary.netProfit)}</span>
-          </div>
-        )}
-      </div>
-
-      {/* close / reopen */}
-      <div className="quiet-card rounded-xl p-6">
-        {closedInfo.closed ? (
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[15px] font-semibold text-ok">
-                <IconCheck size={16} /> {t("monthClosedBadge")}
+    <div className="max-w-4xl">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface px-5 py-4">
+        <div className="min-w-0 max-w-xl">
+          {closedInfo.closed ? (
+            <>
+              <div className="text-[15px] font-semibold">
+                {monthName} · {t("monthClosedBadge").toLowerCase()}
               </div>
               <p className="mt-1 text-[13px] text-muted">
                 {t("closedOn")}
                 {closedInfo.closedBy ? ` · ${closedInfo.closedBy}` : ""}
                 {closedInfo.closedAt
-                  ? ` · ${new Date(closedInfo.closedAt).toLocaleDateString(
-                      locale === "ru" ? "ru-RU" : "en-GB",
-                      { day: "numeric", month: "long", year: "numeric" }
-                    )}`
+                  ? ` · ${new Date(closedInfo.closedAt).toLocaleDateString(locale === "ru" ? "ru-RU" : "en-GB", {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })}`
                   : ""}
               </p>
-            </div>
-            {isAdmin && (
-              <button
-                onClick={() => {
-                  if (confirm(t("reopenMonthConfirm"))) void setClosed("reopen");
-                }}
-                disabled={busy || pending}
-                className="rounded-lg border border-border px-4 py-2 text-[13.5px] font-medium transition-colors hover:border-border-strong hover:bg-surface-low disabled:opacity-50"
-              >
-                {t("reopenMonthBtn")}
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="min-w-0 max-w-xl">
-              <div className="text-[15px] font-medium">{t("closeMonthBtn")}</div>
-              <p className="mt-1 text-[13px] text-muted">{t("closeMonthHint")}</p>
-            </div>
-            {isAdmin && (
-              <button
-                onClick={() => {
-                  if (progress < 1 && !confirm(t("closeMonthConfirmIncomplete"))) return;
-                  void setClosed("close");
-                }}
-                disabled={busy || pending}
-                className="rounded-lg bg-accent px-4 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
-              >
-                {busy || pending ? t("saving") : t("closeMonthBtn")}
-              </button>
-            )}
-          </div>
-        )}
-        {error && <p className="mt-3 text-[13px] text-danger">{error}</p>}
+            </>
+          ) : (
+            <>
+              <div className="text-[15px] font-semibold">
+                {monthName}: {l({ ru: "внесено", en: "entered" })} {doneCount} {l({ ru: "из", en: "of" })}{" "}
+                {required.length} {l({ ru: "обязательных разделов", en: "required sections" })}
+              </div>
+              <div className="mt-2.5 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-surface-low">
+                <div className="h-full rounded-full bg-accent" style={{ width: `${progress * 100}%` }} />
+              </div>
+              <p className="mt-2.5 text-[13px] leading-snug text-muted">{t("closeMonthHint")}</p>
+            </>
+          )}
+        </div>
+        {isAdmin &&
+          (closedInfo.closed ? (
+            <button
+              onClick={() => {
+                if (confirm(t("reopenMonthConfirm"))) void setClosed("reopen");
+              }}
+              disabled={busy || pending}
+              className="h-9 rounded-md border border-border px-4 text-[13px] font-medium transition-colors hover:bg-surface-low disabled:opacity-50"
+            >
+              {t("reopenMonthBtn")}
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (progress < 1 && !confirm(t("closeMonthConfirmIncomplete"))) return;
+                void setClosed("close");
+              }}
+              disabled={busy || pending}
+              className="h-9 rounded-md bg-accent px-4 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+            >
+              {busy || pending ? t("saving") : t("closeMonthBtn")}
+            </button>
+          ))}
       </div>
+      {error && <p className="-mt-3 mb-4 text-[13px] text-danger">{error}</p>}
 
-      {/* steps */}
-      <div className="space-y-3">
-        {steps.map((s, i) => (
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
+        {steps.map((s) => (
           <Link
             key={s.key}
             href={s.href}
-            className="quiet-card group flex items-center gap-5 rounded-xl p-5 transition-colors"
+            className="flex items-center gap-4 border-b border-border px-5 py-3.5 transition-colors last:border-b-0 hover:bg-surface-low"
           >
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] font-medium">{locale === "ru" ? s.title.ru : s.title.en}</div>
+              <div className="mt-0.5 truncate text-[12.5px] text-muted">{locale === "ru" ? s.note.ru : s.note.en}</div>
+            </div>
             <span
-              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-display text-[15px] font-bold ${
-                s.done ? "bg-ok-soft text-ok" : "bg-surface-low text-muted"
+              className={`shrink-0 rounded-full px-2.5 py-0.5 text-[12px] ${
+                s.done ? "bg-ok-soft text-ok" : s.optional ? "bg-surface-low text-muted" : "bg-warn-soft text-warn"
               }`}
             >
-              {s.done ? <IconCheck size={17} /> : i + 1}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[15px] font-medium">{t(s.key)}</span>
-                {s.done ? (
-                  <span className="rounded bg-ok-soft px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-ok">
-                    {t("stepDone")}
-                  </span>
-                ) : s.optional ? (
-                  <span className="rounded bg-surface-low px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    {t("stepOptional")}
-                  </span>
-                ) : (
-                  <span className="rounded bg-warn-soft px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warn">
-                    {t("stepPending")}
-                  </span>
-                )}
-              </div>
-              <p className="mt-0.5 truncate text-[13px] text-muted">
-                {locale === "ru" ? s.note.ru : s.note.en}
-              </p>
-            </div>
-            <span className="flex items-center gap-1 text-[13px] font-medium text-accent opacity-0 transition-opacity group-hover:opacity-100">
-              {t("open")} <IconChevronRight size={14} />
+              {s.done ? t("stepDone") : s.optional ? t("stepOptional") : t("stepPending")}
             </span>
           </Link>
         ))}
       </div>
-
-      <Sync1cPanel monthId={monthId} monthName={monthName} />
     </div>
   );
 }

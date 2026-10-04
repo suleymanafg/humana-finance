@@ -1,43 +1,22 @@
-import { getComputed } from "@/lib/data";
-import { getSession } from "@/lib/auth";
-import { computeMonthStatus, defaultMonthId } from "@/lib/month-status";
-import { resolveMonthId } from "@/lib/month";
+import { pageContext, type SearchParams } from "@/lib/page-context";
 import CloseView from "@/components/CloseView";
 
-export default async function ClosePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ month?: string }>;
-}) {
-  const { month } = await searchParams;
-  const { dataset, computed } = await getComputed();
-  const status = computeMonthStatus(dataset);
-  const monthId = await resolveMonthId(
-    month,
-    dataset.months,
-    defaultMonthId(status, dataset.months[0]?.id ?? "")
-  );
-  const cur = status.find((s) => s.monthId === monthId) ?? null;
-  const monthly = computed.monthly.find((m) => m.monthId === monthId) ?? null;
-  const session = await getSession();
+export default async function ClosePage({ searchParams }: { searchParams: SearchParams }) {
+  const sp = await searchParams;
+  const ctx = await pageContext(sp.month);
+  const { dataset, monthId } = ctx;
   const monthRow = dataset.months.find((m) => m.id === monthId);
-
   return (
     <CloseView
       months={dataset.months}
       monthId={monthId}
-      status={cur}
+      status={ctx.status.find((s) => s.monthId === monthId) ?? null}
       closedInfo={{
         closed: !!monthRow?.closedAt,
         closedBy: monthRow?.closedBy ?? null,
         closedAt: monthRow?.closedAt ? monthRow.closedAt.toISOString() : null,
       }}
-      isAdmin={session?.role === "ADMIN"}
-      summary={{
-        revenue: monthly?.revenue ?? 0,
-        totalOpex: monthly?.totalOpex ?? 0,
-        netProfit: monthly?.netProfit ?? 0,
-      }}
+      isAdmin={ctx.isAdmin}
     />
   );
 }

@@ -5,14 +5,14 @@
 //   /api/export/opex-fargo?month=…
 //   /api/export/sales?month=…           — product × channel matrix
 //   /api/export/shipments               — every shipment line with landed cost
-//   /api/export/balance?month=…         — assets | liabilities | equity
+// Statements (P&L, balance sheet, settlement, VAT) export from ./statement.
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { getComputed } from "@/lib/data";
 import { getSession } from "@/lib/auth";
-import { monthIdOfDate } from "@/lib/engine/compute";
 import { dict, type DictKey, type Locale } from "@/lib/i18n";
 import { GROUP_LABELS } from "@/lib/groups";
+import { isImportVat } from "@/lib/engine/compute";
 import { tashkentDistrictOf } from "@/lib/sync-1c-core";
 import {
   MONEY,
@@ -165,7 +165,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
       : dataset.months.filter((m) => m.id === monthId);
     const scopeIds = new Set(monthsInScope.map((m) => m.id));
     const scopeLabel = all ? (locale === "ru" ? "все месяцы" : "all months") : monthName(monthId);
-    const monthlyById = new Map(computed.monthly.map((m) => [m.monthId, m]));
+    const fargoById = new Map(computed.fargo.map((m) => [m.monthId, m]));
     const priceOf = new Map(dataset.products.map((p) => [p.id, p.price]));
 
     // qty maps: product|channel (scope total) and product|channel|month
@@ -223,11 +223,12 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
     }
     const boldRows = [rows.length - 1];
 
-    // ── sheet 2: revenue by channel (engine figures, tie to the P&L)
-    const chRevenue = (channelId: string, mid: string) => monthlyById.get(mid)?.revenueByChannel[channelId] ?? 0;
+    // ── sheet 2: sales by channel at selling prices, VAT included (the settlement basis)
+    const salesLabel = locale === "ru" ? "Продажи с НДС" : "Sales incl. VAT";
+    const chRevenue = (channelId: string, mid: string) => fargoById.get(mid)?.salesByChannel[channelId] ?? 0;
     const chRevenueTotal = (channelId: string) =>
       monthsInScope.reduce((a, m) => a + chRevenue(channelId, m.id), 0);
-    const revenueGrand = monthsInScope.reduce((a, m) => a + (monthlyById.get(m.id)?.revenue ?? 0), 0);
+    const revenueGrand = monthsInScope.reduce((a, m) => a + (fargoById.get(m.id)?.salesAtPrice ?? 0), 0);
     const revRows: Array<Array<string | number | null>> = dataset.channels
       .filter((c) => chRevenueTotal(c.id) !== 0)
       .sort((a, b) => chRevenueTotal(b.id) - chRevenueTotal(a.id))
@@ -239,8 +240,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
     const revBold = [revRows.length];
     revRows.push(
       all
-        ? [t("revenue"), ...monthsInScope.map((m) => monthlyById.get(m.id)?.revenue ?? 0), revenueGrand]
-        : [t("revenue"), revenueGrand]
+        ? [salesLabel, ...monthsInScope.map((m) => fargoById.get(m.id)?.salesAtPrice ?? 0), revenueGrand]
+        : [salesLabel, revenueGrand]
     );
 
     // ── sheet 3: geography — Tashkent split by district, every chain and
@@ -341,8 +342,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
         freezeCols: 1,
       },
       {
-        name: locale === "ru" ? "Выручка" : "Revenue",
-        title: `${t("revenue")} — ${scopeLabel}`,
+        name: locale === "ru" ? "Продажи" : "Sales",
+        title: `${salesLabel} — ${scopeLabel}`,
         subtitle: generated,
         columns: all
           ? [
@@ -352,7 +353,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
             ]
           : [
               { header: t("channel"), width: 32 },
-              { header: t("revenue"), numFmt: MONEY, width: 20 },
+              { header: salesLabel, numFmt: MONEY, width: 20 },
             ],
         rows: revRows,
         boldRows: revBold,
@@ -367,12 +368,12 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
               { header: locale === "ru" ? "Место продажи" : "Place", width: 32 },
               ...monthsInScope.map((m) => ({ header: monthName(m.id), numFmt: MONEY, width: 13 })),
               { header: `${t("total")} (${t("qty")})`, numFmt: MONEY, width: 15 },
-              { header: t("revenue"), numFmt: MONEY, width: 18 },
+              { header: salesLabel, numFmt: MONEY, width: 18 },
             ]
           : [
               { header: locale === "ru" ? "Место продажи" : "Place", width: 32 },
               { header: t("qty"), numFmt: MONEY, width: 14 },
-              { header: t("revenue"), numFmt: MONEY, width: 18 },
+              { header: salesLabel, numFmt: MONEY, width: 18 },
               { header: locale === "ru" ? "Доля" : "Share", numFmt: PCT, width: 10 },
             ],
         rows: geoRows,
@@ -383,18 +384,23 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
     ];
     filename = all ? "sales-all-months.xlsx" : `sales-${monthId}.xlsx`;
   } else if (report === "shipments") {
-    // Live formulas: line amount = qty × €price × rate, totals = SUMs, unit
-    // costs derive from the load factor — the sheet recalculates when edited.
-    // Columns: D qty · E priceEur · F rate · G amount · H loadFactor · I tiUnitCost
+    // Live formulas: line amount = qty × €price × rate; the load factor spreads
+    // the import expenses (import VAT excluded — it is recovered) over the
+    // purchase; lines with their own unit cost stay outside it.
+    // Columns: D qty · E priceEur · F rate · G amount · H loadFactor · I unit cost · J cost total
+    const ru = locale === "ru";
     const rows: Array<Array<CellValue>> = [];
     const boldRows: number[] = [];
     const XL = (r: number) => r + firstDataRow(true); // sheet has a subtitle
-    for (const s of computed.shipmentCosts) {
+    for (const s of computed.shipments) {
       const expenses = dataset.importExpenses.filter((x) => x.shipmentId === s.shipmentId);
+      const costed = expenses.filter((e) => !isImportVat(e.categoryName));
+      const vat = expenses.filter((e) => isImportVat(e.categoryName));
       const lineStart = rows.length;
-      const totalRow = lineStart + s.lines.length; // «Итого · закупка»
+      const totalRow = lineStart + s.lines.length; // purchase total
       const expStart = totalRow + 1;
-      const landedRow = expStart + expenses.length; // «Итого с расходами»
+      const landedRow = expStart + costed.length; // total incl. import expenses
+      const own = s.lines.map((l, k) => ({ l, row: XL(lineStart + k) })).filter((x) => !x.l.inFifo);
       for (const l of s.lines) {
         const r = XL(rows.length);
         rows.push([
@@ -405,64 +411,83 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
           l.priceEur,
           l.rate,
           { formula: `D${r}*E${r}*F${r}`, result: l.purchaseAmount },
-          { formula: `$H$${XL(totalRow)}`, result: s.loadFactor },
-          { formula: `G${r}*H${r}/D${r}`, result: l.tiUnitCost },
-          l.fargoUnitCost ?? null,
+          l.inFifo ? { formula: `$H$${XL(landedRow)}`, result: s.loadFactor } : (ru ? "своя" : "own"),
+          l.inFifo ? { formula: `E${r}*F${r}*H${r}`, result: l.unitCost } : l.unitCost,
+          { formula: `D${r}*I${r}`, result: l.landedValue },
         ]);
       }
       boldRows.push(rows.length);
       rows.push([
         s.code,
         monthName(s.monthId),
-        `${t("total")} · ${t("purchaseAmount")}`,
-        { formula: `SUM(D${XL(lineStart)}:D${XL(totalRow - 1)})`, result: s.lines.reduce((a, l) => a + l.qty, 0) },
+        ru ? "Итого закупка" : "Purchase total",
+        { formula: `SUM(D${XL(lineStart)}:D${XL(totalRow - 1)})`, result: s.units },
         null,
         null,
         { formula: `SUM(G${XL(lineStart)}:G${XL(totalRow - 1)})`, result: s.purchaseTotal },
-        { formula: `G${XL(landedRow)}/G${XL(totalRow)}`, result: s.loadFactor },
         null,
         null,
+        { formula: `SUM(J${XL(lineStart)}:J${XL(totalRow - 1)})`, result: s.landedTotal },
       ]);
-      // the shipment's import expenses, itemized by category
-      for (const e of expenses) {
+      for (const e of costed) {
         rows.push([s.code, monthName(s.monthId), `— ${e.categoryName}`, null, null, null, e.amount, null, null, null]);
       }
+      const ownLanded = own.map((x) => `J${x.row}`).join(",");
+      const ownPurchase = own.map((x) => `G${x.row}`).join(",");
+      const factor =
+        own.length > 0
+          ? `IFERROR((G${XL(landedRow)}-SUM(${ownLanded}))/(G${XL(totalRow)}-SUM(${ownPurchase})),1)`
+          : `IFERROR(G${XL(landedRow)}/G${XL(totalRow)},1)`;
       boldRows.push(rows.length);
       rows.push([
         s.code,
         monthName(s.monthId),
-        locale === "ru" ? "Итого с расходами импорта" : "Total incl. import expenses",
+        ru ? "Итого с расходами импорта" : "Total incl. import expenses",
         null,
         null,
         null,
         {
           formula:
-            expenses.length > 0
+            costed.length > 0
               ? `G${XL(totalRow)}+SUM(G${XL(expStart)}:G${XL(landedRow - 1)})`
               : `G${XL(totalRow)}`,
           result: s.purchaseTotal + s.expenseTotal,
         },
-        null,
+        { formula: factor, result: s.loadFactor },
         null,
         null,
       ]);
+      for (const e of vat) {
+        rows.push([
+          s.code,
+          monthName(s.monthId),
+          `${e.categoryName} — ${ru ? "к зачёту, не в себестоимости" : "recoverable, not in cost"}`,
+          null,
+          null,
+          null,
+          e.amount,
+          null,
+          null,
+          null,
+        ]);
+      }
     }
     sheets = [
       {
-        name: locale === "ru" ? "Поставки" : "Shipments",
-        title: t("navShipments"),
+        name: ru ? "Поставки" : "Shipments",
+        title: ru ? "Поставки и себестоимость" : "Shipments and landed cost",
         subtitle: generated,
         columns: [
-          { header: t("shipmentCode"), width: 16 },
+          { header: ru ? "Поставка" : "Shipment", width: 16 },
           { header: t("month"), width: 16 },
-          { header: t("product"), width: 36 },
+          { header: t("product"), width: 40 },
           { header: t("qty"), numFmt: MONEY, width: 12 },
-          { header: t("priceEur"), numFmt: MONEY2, width: 12 },
-          { header: t("rate"), numFmt: MONEY, width: 12 },
-          { header: t("purchaseAmount"), numFmt: MONEY, width: 18 },
-          { header: t("loadFactor"), numFmt: "0.0000", width: 12 },
-          { header: t("tiUnitCost"), numFmt: MONEY, width: 15 },
-          { header: t("fargoUnitCost"), numFmt: MONEY, width: 15 },
+          { header: ru ? "Цена, €" : "Price, €", numFmt: MONEY2, width: 12 },
+          { header: ru ? "Курс" : "Rate", numFmt: MONEY2, width: 12 },
+          { header: ru ? "Сумма закупки" : "Purchase amount", numFmt: MONEY, width: 18 },
+          { header: ru ? "Коэффициент" : "Load factor", numFmt: "0.0000", width: 12 },
+          { header: ru ? "Себестоимость, ед." : "Unit cost", numFmt: MONEY, width: 16 },
+          { header: ru ? "Себестоимость, итого" : "Landed cost", numFmt: MONEY, width: 18 },
         ],
         rows,
         boldRows,
@@ -470,244 +495,6 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ report:
       },
     ];
     filename = `shipments.xlsx`;
-  } else if (report === "balance") {
-    const b = computed.balanceSheets.find((x) => x.monthId === monthId);
-    if (!b) return NextResponse.json({ error: "no balance sheet for month" }, { status: 404 });
-    const rows: Array<Array<string | number | null>> = [];
-    const boldRows: number[] = [];
-    const sectionRows: number[] = [];
-    const section = (label: string) => {
-      sectionRows.push(rows.length);
-      rows.push([label, null]);
-    };
-    const item = (label: string, v: number) => rows.push([`    ${label}`, v]);
-    const total = (label: string, v: number) => {
-      boldRows.push(rows.length);
-      rows.push([label, v]);
-    };
-    section(t("assets"));
-    item(t("inventory"), b.inventory);
-    item(t("settlementReceivable"), b.settlementReceivable);
-    item(t("goodsInTransit"), b.goodsInTransit);
-    item(t("accountsReceivable"), b.arTotal);
-    item(t("tiBankBalance"), b.tiBank);
-    item(t("tiCashBalance"), b.tiCash);
-    item(t("vatPrepayment"), b.vatPrepayment);
-    total(t("total"), b.assetsTotal);
-    section(t("liabilities"));
-    item(t("taxPayable"), b.taxPayable);
-    item(t("priorVatBalance"), b.priorVatBalance);
-    item(t("nutribenLoan"), b.nutribenLoan);
-    total(t("total"), b.liabilitiesTotal);
-    section(t("equity"));
-    item(t("tiCapital"), b.tiCapital);
-    item(t("fargoCapital"), b.fargoCapital);
-    item(t("retainedEarnings"), b.retainedEarnings);
-    item(t("plug"), b.plug);
-    total(t("total"), b.equityTotal);
-    total(t("liabilitiesAndEquity"), b.liabilitiesTotal + b.equityTotal);
-
-    sheets = [
-      {
-        name: locale === "ru" ? "Баланс" : "Balance",
-        title: `${t("balanceStatement")} — ${monthName(monthId)}`,
-        subtitle: generated,
-        columns: [
-          { header: t("balanceStatement"), width: 40 },
-          { header: monthName(monthId), numFmt: MONEY, width: 22 },
-        ],
-        rows,
-        boldRows,
-        sectionRows,
-      },
-    ];
-    filename = `balance-${monthId}.xlsx`;
-  } else if (report === "transfers") {
-    // Payments reconciliation to hand to Fargo: month-by-month accrual vs
-    // payment from the settlement model, plus the full register of transfers
-    // to TI. Figures match the Balance page exactly; the only live formulas
-    // are self-evident ones (Δ, line totals, running cumulative).
-    const ru = locale === "ru";
-    const fmtDate = (iso: string) =>
-      new Date(iso).toLocaleDateString(ru ? "ru-RU" : "en-US", { timeZone: "UTC" });
-
-    // sheet 1 — monthly reconciliation with the full derivation of «начислено»:
-    // collected revenue − Fargo expenses (retro included) − Fargo taxes, as
-    // live formulas, so the counterparty sees where every figure comes from
-    const series = computed.settlement;
-    const monthlyByMonth = new Map(computed.monthly.map((m) => [m.monthId, m]));
-    const monthlyRecon = series
-      .map((s, i) => {
-        const prev = i > 0 ? series[i - 1] : null;
-        const m = monthlyByMonth.get(s.monthId);
-        const paid =
-          s.cumTransfersCash +
-          s.cumTransfersBank -
-          ((prev?.cumTransfersCash ?? 0) + (prev?.cumTransfersBank ?? 0));
-        return {
-          monthId: s.monthId,
-          revenue: m?.revenue ?? 0,
-          expenses: m?.opexFargoTotal ?? 0,
-          taxes: (m?.fargoVat ?? 0) + (m?.fargoIncomeTax ?? 0),
-          paid,
-        };
-      })
-      .filter((d) => Math.round(d.revenue) !== 0 || Math.round(d.paid) !== 0);
-    const last = series.filter((s) => monthlyRecon.some((d) => d.monthId === s.monthId)).at(-1);
-
-    const reconRows: Array<Array<CellValue>> = [];
-    const reconBold: number[] = [];
-    const reconSection: number[] = [];
-    const r1 = firstDataRow(true);
-    let cumDebt = 0;
-    monthlyRecon.forEach((d, i) => {
-      const r = r1 + i;
-      const due = d.revenue - d.expenses - d.taxes;
-      cumDebt += due - d.paid;
-      reconRows.push([
-        monthName(d.monthId),
-        Math.round(d.revenue),
-        Math.round(d.expenses),
-        Math.round(d.taxes),
-        { formula: `B${r}-C${r}-D${r}`, result: Math.round(due) },
-        Math.round(d.paid),
-        { formula: `E${r}-F${r}`, result: Math.round(due - d.paid) },
-        i === 0
-          ? { formula: `G${r}`, result: Math.round(cumDebt) }
-          : { formula: `H${r - 1}+G${r}`, result: Math.round(cumDebt) },
-      ]);
-    });
-    if (last && monthlyRecon.length > 0) {
-      const rLast = r1 + monthlyRecon.length - 1;
-      reconBold.push(reconRows.length);
-      const sum = (col: string, result: number): CellValue => ({
-        formula: `SUM(${col}${r1}:${col}${rLast})`,
-        result: Math.round(result),
-      });
-      reconRows.push([
-        t("total"),
-        sum("B", last.cumRevenue),
-        sum("C", last.cumFargoOpex),
-        sum("D", last.cumFargoVat + last.cumFargoIncomeTax),
-        sum("E", last.dueToTi),
-        sum("F", last.cumTransfersCash + last.cumTransfersBank),
-        sum("G", last.dueToTi - last.cumTransfersCash - last.cumTransfersBank),
-        null,
-      ]);
-    }
-    if (last) {
-      const pad = Array(6).fill(null);
-      reconSection.push(reconRows.length);
-      reconRows.push([`${ru ? "Итог на" : "As of"} ${monthName(last.monthId)}`, null, ...pad]);
-      reconRows.push([
-        `    ${ru ? "Выручка, собранная Fargo, всего" : "Revenue collected by Fargo, total"}`,
-        Math.round(last.cumRevenue),
-        ...pad,
-      ]);
-      reconRows.push([
-        `    − ${ru ? "Расходы Fargo (вкл. ретро-бонусы)" : "Fargo expenses (retro bonuses incl.)"}`,
-        Math.round(last.cumFargoOpex),
-        ...pad,
-      ]);
-      reconRows.push([
-        `    − ${ru ? "Налоги Fargo (НДС + оборотный 1,9%)" : "Fargo taxes (VAT + turnover 1.9%)"}`,
-        Math.round(last.cumFargoVat + last.cumFargoIncomeTax),
-        ...pad,
-      ]);
-      reconRows.push([
-        `    = ${ru ? "Начислено TI всего" : "Total due to TI"}`,
-        Math.round(last.dueToTi),
-        ...pad,
-      ]);
-      reconRows.push([
-        `    − ${ru ? "Перечислено TI всего" : "Transferred to TI, total"}`,
-        Math.round(last.cumTransfersCash + last.cumTransfersBank),
-        ...pad,
-      ]);
-      reconRows.push([
-        `    − ${ru ? "Не собрано с клиентов (дебиторка)" : "Not yet collected from clients (AR)"}`,
-        Math.round(last.outstandingAr),
-        ...pad,
-      ]);
-      reconBold.push(reconRows.length);
-      reconRows.push([t("remainingBalance"), Math.round(last.remaining), ...pad]);
-    }
-
-    // sheet 2 — every payment to TI, date order, with a running cumulative
-    const transfers = [...dataset.transfers].sort((a, b) => a.date.localeCompare(b.date));
-    const payRows: Array<Array<CellValue>> = [];
-    const payBold: number[] = [];
-    let cum = 0;
-    transfers.forEach((tr, i) => {
-      const r = r1 + i;
-      const lineTotal = tr.cashAmount + tr.bankAmount;
-      cum += lineTotal;
-      payRows.push([
-        i + 1,
-        fmtDate(tr.date),
-        monthName(monthIdOfDate(tr.date)),
-        tr.cashAmount,
-        tr.bankAmount,
-        { formula: `D${r}+E${r}`, result: lineTotal },
-        i === 0 ? { formula: `F${r}`, result: cum } : { formula: `G${r - 1}+F${r}`, result: cum },
-      ]);
-    });
-    if (transfers.length > 0) {
-      const pLast = r1 + transfers.length - 1;
-      payBold.push(payRows.length);
-      payRows.push([
-        null,
-        t("total"),
-        null,
-        { formula: `SUM(D${r1}:D${pLast})`, result: transfers.reduce((s, x) => s + x.cashAmount, 0) },
-        { formula: `SUM(E${r1}:E${pLast})`, result: transfers.reduce((s, x) => s + x.bankAmount, 0) },
-        { formula: `SUM(F${r1}:F${pLast})`, result: cum },
-        null,
-      ]);
-    }
-
-    sheets = [
-      {
-        name: ru ? "Сверка по месяцам" : "Monthly reconciliation",
-        title: ru ? "Сверка расчётов Fargo → Turbo Impex" : "Fargo → Turbo Impex reconciliation",
-        subtitle: `${
-          ru
-            ? "Начислено TI = выручка, собранная Fargo − расходы Fargo (вкл. ретро) − налоги Fargo (НДС + оборотный 1,9%)"
-            : "Due to TI = revenue collected by Fargo − Fargo expenses (retro incl.) − Fargo taxes (VAT + turnover 1.9%)"
-        } · ${generated}`,
-        columns: [
-          { header: ru ? "Месяц" : "Month", width: 20 },
-          { header: ru ? "Выручка, собранная Fargo" : "Revenue collected by Fargo", numFmt: MONEY, width: 21 },
-          { header: ru ? "− Расходы Fargo (вкл. ретро)" : "− Fargo expenses (retro incl.)", numFmt: MONEY, width: 21 },
-          { header: ru ? "− Налоги Fargo" : "− Fargo taxes", numFmt: MONEY, width: 18 },
-          { header: ru ? "= Начислено TI" : "= Due to TI", numFmt: MONEY, width: 20 },
-          { header: ru ? "Перечислено TI" : "Transferred to TI", numFmt: MONEY, width: 20 },
-          { header: ru ? "Δ за месяц" : "Δ for month", numFmt: MONEY, width: 17 },
-          { header: ru ? "Долг на конец" : "Debt at month end", numFmt: MONEY, width: 20 },
-        ],
-        rows: reconRows,
-        boldRows: reconBold,
-        sectionRows: reconSection,
-      },
-      {
-        name: ru ? "Платежи" : "Payments",
-        title: ru ? "Платежи Fargo в адрес Turbo Impex" : "Payments from Fargo to Turbo Impex",
-        subtitle: generated,
-        columns: [
-          { header: "№", width: 6 },
-          { header: ru ? "Дата" : "Date", width: 14 },
-          { header: ru ? "Месяц" : "Month", width: 20 },
-          { header: ru ? "Наличные" : "Cash", numFmt: MONEY, width: 17 },
-          { header: ru ? "Банк" : "Bank", numFmt: MONEY, width: 17 },
-          { header: ru ? "Итого" : "Total", numFmt: MONEY, width: 17 },
-          { header: ru ? "Накопительно" : "Cumulative", numFmt: MONEY, width: 18 },
-        ],
-        rows: payRows,
-        boldRows: payBold,
-        freezeCols: 2,
-      },
-    ];
-    filename = "fargo-reconciliation.xlsx";
   } else {
     return NextResponse.json({ error: "unknown report" }, { status: 404 });
   }

@@ -5,7 +5,6 @@
 import { useMemo, useState } from "react";
 import { fmtN, fmtPct } from "@/lib/format";
 import { useT } from "@/lib/locale-context";
-import { IconArrowDown, IconArrowUp, IconChevronDown, IconChevronRight } from "./icons";
 
 /** Small inline trend line for use inside table rows and metric tiles. */
 export function Spark({
@@ -36,7 +35,7 @@ export function Spark({
   );
 }
 
-/** Change vs a comparison figure. `pp` renders percentage-point moves. */
+/** Change vs a comparison figure, as a signed percentage. `pp` renders percentage-point moves. */
 export function Delta({
   current,
   previous,
@@ -59,10 +58,8 @@ export function Delta({
   const up = change >= 0;
   const good = invert ? !up : up;
   return (
-    <span
-      className={`num inline-flex items-center gap-0.5 font-medium ${good ? "text-ok" : "text-danger"}`}
-    >
-      {up ? <IconArrowUp size={10} /> : <IconArrowDown size={10} />}
+    <span className={`num whitespace-nowrap ${good ? "text-ok" : "text-danger"}`}>
+      {up ? "+" : "−"}
       {Math.abs(change).toFixed(1)}
       {pp ? (locale === "ru" ? " пп" : " pp") : "%"}
     </span>
@@ -92,30 +89,31 @@ export interface Metric {
   negative?: boolean;
 }
 
-/** Compact headline row — a few numbers only, no oversized cards. */
+/** Headline figures: label, value, and one line of context with the change. */
 export function MetricStrip({ metrics }: { metrics: Metric[] }) {
+  const { locale } = useT();
   return (
-    <div
-      className="mb-5 grid overflow-hidden rounded-xl border border-border bg-surface"
-      style={{ gridTemplateColumns: `repeat(auto-fit, minmax(178px, 1fr))` }}
-    >
+    <div className="mb-6 grid gap-3" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(190px, 1fr))` }}>
       {metrics.map((m) => (
-        <div key={m.label} className="min-w-0 border-b border-r border-border px-4 py-3 last:border-r-0">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="truncate text-[11px] font-medium uppercase tracking-[0.05em] text-muted" title={m.label}>
-              {m.label}
-            </span>
-            {m.delta && <Delta {...m.delta} />}
+        <div key={m.label} className="min-w-0 rounded-lg border border-border bg-surface px-4 py-3.5">
+          <div className="truncate text-[12px] text-muted" title={m.label}>
+            {m.label}
           </div>
           <div
-            className={`num mt-1 text-left text-[19px] font-semibold leading-tight tracking-[-0.02em] ${m.negative ? "text-danger" : ""}`}
+            className={`figure-num mt-1 text-[20px] font-semibold tracking-[-0.02em] ${m.negative ? "text-danger" : ""}`}
           >
             {m.value}
           </div>
-          <div className="mt-1 flex items-end justify-between gap-2">
-            {m.hint ? <span className="truncate text-[11px] text-muted">{m.hint}</span> : <span />}
-            {m.series && <Spark values={m.series} w={72} h={18} tone="muted" />}
-          </div>
+          {(m.hint || m.delta) && (
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-[12px] leading-snug text-muted">
+              {m.delta && (
+                <span>
+                  <Delta {...m.delta} /> {locale === "ru" ? "к прошлому месяцу" : "vs last month"}
+                </span>
+              )}
+              {m.hint && <span className="truncate">{m.hint}</span>}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -137,15 +135,15 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section className={`mb-5 ${className}`}>
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h2 className="text-[12px] font-semibold uppercase tracking-[0.07em] text-accent/80">{title}</h2>
-          {note && <p className="mt-0.5 text-[12px] text-muted">{note}</p>}
+    <section className={`mb-7 ${className}`}>
+      <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <h2 className="text-[14px] font-semibold tracking-[-0.01em]">{title}</h2>
+          {note && <span className="text-[12.5px] text-muted">{note}</span>}
         </div>
         {right && <div className="flex items-center gap-2">{right}</div>}
       </div>
-      <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-surface">{children}</div>
+      <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">{children}</div>
     </section>
   );
 }
@@ -162,18 +160,18 @@ export function Collapsible({
   defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
+  const { locale } = useT();
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <section className="mb-5">
-      <button
-        onClick={() => setOpen(!open)}
-        className="mb-2 flex w-full items-center gap-1.5 text-left transition-colors hover:text-accent"
-      >
-        <span className="text-muted">{open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}</span>
-        <span className="text-[12px] font-semibold uppercase tracking-[0.07em] text-accent/80">{title}</span>
-        {note && <span className="ml-1 text-[12px] normal-case text-muted">· {note}</span>}
-      </button>
-      {open && <div className="overflow-hidden rounded-xl border border-border bg-surface">{children}</div>}
+    <section className="mb-7">
+      <div className="mb-2.5 flex flex-wrap items-baseline gap-x-2">
+        <h2 className="text-[14px] font-semibold tracking-[-0.01em]">{title}</h2>
+        {note && <span className="text-[12.5px] text-muted">{note}</span>}
+        <button onClick={() => setOpen(!open)} className="ml-auto text-[12.5px] text-accent hover:underline">
+          {open ? (locale === "ru" ? "Скрыть" : "Hide") : locale === "ru" ? "Показать" : "Show"}
+        </button>
+      </div>
+      {open && <div className="overflow-hidden rounded-lg border border-border bg-surface">{children}</div>}
     </section>
   );
 }

@@ -34,6 +34,8 @@ model Product {
   stockCounts   StockCount[]
   clientSales   ClientSale[]
   planningSku   PlanningSku?
+  tiInvoices    TiInvoiceLine[]
+  tiWriteOffs   TiWriteOff[]
 }
 
 // ───────────────── Supply planning (Планирование закупок) ─────────────────
@@ -43,24 +45,24 @@ model Product {
 // the Month table — the planning horizon runs past the P&L's month list.
 
 model PlanningSku {
-  id              String  @id @default(cuid())
-  article         String  @unique // Germany's current Product ID (e.g. 70987)
+  id              String   @id @default(cuid())
+  article         String   @unique // Germany's current Product ID (e.g. 70987)
   altArticles     String? // superseded article numbers, comma-separated (70836,…)
   name            String // Germany's item description
-  productId       String? @unique
+  productId       String?  @unique
   product         Product? @relation(fields: [productId], references: [id])
-  pcsPerCarton    Int     @default(0)
-  pcsPerLayer     Int     @default(0)
-  pcsPerPallet    Int     @default(0)
-  layersPerPallet Int     @default(0)
-  grossKgPerUnit  Float   @default(0)
-  netKgPerUnit    Float   @default(0)
-  priceEur        Float   @default(0)
-  sortOrder       Int     @default(0)
-  active          Boolean @default(true)
+  pcsPerCarton    Int      @default(0)
+  pcsPerLayer     Int      @default(0)
+  pcsPerPallet    Int      @default(0)
+  layersPerPallet Int      @default(0)
+  grossKgPerUnit  Float    @default(0)
+  netKgPerUnit    Float    @default(0)
+  priceEur        Float    @default(0)
+  sortOrder       Int      @default(0)
+  active          Boolean  @default(true)
   // committed to DMK but not yet delivered ("Open Orders" in the IBP export) —
   // snapshot units, synced by prisma/import-ibp-sync.ts
-  openOrderQty    Int     @default(0)
+  openOrderQty    Int      @default(0)
 
   forecasts     PlanningForecast[]
   contractLines PlanningContractLine[]
@@ -137,8 +139,8 @@ model Channel {
   sortOrder Int     @default(0)
   active    Boolean @default(true)
 
-  sales      Sale[]
-  clientMaps ClientChannelMap[]
+  sales       Sale[]
+  clientMaps  ClientChannelMap[]
   clientSales ClientSale[]
 }
 
@@ -279,21 +281,21 @@ model Sale {
 }
 
 model Shipment {
-  id        String    @id @default(cuid())
-  code      String    @unique // "Авиа №1", "Фура №2", ...
-  monthId   String
-  month     Month     @relation(fields: [monthId], references: [id])
+  id           String    @id @default(cuid())
+  code         String    @unique // "Авиа №1", "Фура №2", ...
+  monthId      String
+  month        Month     @relation(fields: [monthId], references: [id])
   // TRANSIT trucks are visible to supply planning (arriving ~etaDate) but are
   // EXCLUDED from COGS/stock flow until marked ARRIVED.
-  status    String    @default("ARRIVED") // TRANSIT | ARRIVED
-  etaDate   DateTime? // estimated warehouse arrival while in transit
+  status       String    @default("ARRIVED") // TRANSIT | ARRIVED
+  etaDate      DateTime? // estimated warehouse arrival while in transit
   // invoice/dispatch date — when the truck loaded at DMK. Partner Purchase
   // and Open Orders count the pickup in THIS month; when absent the engine
   // assumes dispatch = arrival − 1 month.
   dispatchDate DateTime?
-  notes     String?
-  deletedAt DateTime?
-  createdAt DateTime  @default(now())
+  notes        String?
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
 
   lines    ShipmentLine[]
   expenses ImportExpense[]
@@ -308,21 +310,27 @@ model ShipmentLine {
   qty           Float
   priceEur      Float
   rate          Float // EUR -> UZS
-  fargoUnitCost Float? // Себест Fargo (declared transfer price), manual
+  fargoUnitCost Float? // legacy: Fargo cost now comes from TI invoices
+  // Units with their own cost (e.g. free goods from Humana HQ): valued at this
+  // UZS cost per unit and kept out of the truck batches FIFO draws from.
+  fixedUnitCost Float?
   deletedAt     DateTime?
 }
 
 model ImportExpense {
-  id         String                @id @default(cuid())
-  monthId    String
-  month      Month                 @relation(fields: [monthId], references: [id])
-  shipmentId String
-  shipment   Shipment              @relation(fields: [shipmentId], references: [id])
-  categoryId String
-  category   ImportExpenseCategory @relation(fields: [categoryId], references: [id])
-  amount     Float
-  notes      String?
-  deletedAt  DateTime?
+  id          String                @id @default(cuid())
+  monthId     String
+  month       Month                 @relation(fields: [monthId], references: [id])
+  shipmentId  String
+  shipment    Shipment              @relation(fields: [shipmentId], references: [id])
+  categoryId  String
+  category    ImportExpenseCategory @relation(fields: [categoryId], references: [id])
+  amount      Float
+  // month the service was actually paid, when later than monthId: until then
+  // it is a liability on TI's balance sheet
+  paidMonthId String?
+  notes       String?
+  deletedAt   DateTime?
 }
 
 model OpexTiEntry {
@@ -367,6 +375,7 @@ model TiTaxFiling {
   bookedMonthId    String // P&L month the charge lands in
   bookedMonth      Month     @relation(fields: [bookedMonthId], references: [id])
   declaredExpenses Float     @default(0) // input for the audit recomputation
+  paidMonthId      String? // month the tax was paid; unpaid tax is a liability
   deletedAt        DateTime?
 }
 
@@ -375,6 +384,9 @@ model CapitalContribution {
   date        DateTime
   tiAmount    Float     @default(0)
   fargoAmount Float     @default(0)
+  // paid from Fargo's bank account: the reconciliation act counts it as a
+  // Fargo payment, so the settlement adds it back
+  viaFargo    Boolean   @default(false)
   notes       String?
   deletedAt   DateTime?
 }
@@ -386,6 +398,117 @@ model FargoTransfer {
   bankAmount Float     @default(0)
   notes      String?
   deletedAt  DateTime?
+}
+
+// ───────────────────────── Turbo Impex ↔ Fargo ─────────────────────────
+
+// One line of a TI → Fargo invoice (счёт-фактура). TI's revenue and Fargo's
+// purchases; Fargo's cost of goods draws on these lines first in, first out.
+model TiInvoiceLine {
+  id          String    @id @default(cuid())
+  date        DateTime
+  number      String // invoice number as printed
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+  qty         Float
+  price       Float // ex-VAT, per unit
+  amount      Float // value ex-VAT, as on the invoice
+  vat         Float // VAT, as on the invoice
+  // TI cost per unit for goods outside the truck FIFO (free goods from HQ)
+  ownUnitCost Float?
+  sortOrder   Int       @default(0) // order of lines within the same day
+  notes       String?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([date])
+}
+
+// Units TI gave away (samples, laboratory): a TI loss at FIFO cost.
+model TiWriteOff {
+  id        String    @id @default(cuid())
+  date      DateTime
+  productId String
+  product   Product   @relation(fields: [productId], references: [id])
+  qty       Float
+  reason    String?
+  deletedAt DateTime?
+}
+
+// ───────────────────────── Taxes ─────────────────────────
+
+// TI's VAT account with the budget (КЛС), one row per operation.
+model TiVatAccountEntry {
+  id           String    @id @default(cuid())
+  period       String // reporting month the operation counts in, "2025-08"
+  date         DateTime? // operation date on the statement
+  description  String
+  charged      Float     @default(0) // начислено
+  reduced      Float     @default(0) // уменьшено / зачёт
+  paid         Float     @default(0) // paid, or the opening balance
+  refunded     Float     @default(0)
+  balanceAfter Float? // as printed on the statement, for checking
+  sortOrder    Int       @default(0)
+  deletedAt    DateTime?
+}
+
+// VAT charged to TI's tax account outside the Fargo invoices (one-off retail
+// sales). bearer: "PRIOR_OWNER" (paid from their overpayment) | "TI" (a TI cost)
+model TiVatCharge {
+  id          String    @id @default(cuid())
+  monthId     String
+  description String
+  amount      Float
+  bearer      String
+  notes       String?
+  deletedAt   DateTime?
+}
+
+// Fargo's filed VAT returns, compared with the model's VAT ledger.
+model FargoVatReturn {
+  id            String  @id @default(cuid())
+  monthId       String  @unique
+  declaredSales Float   @default(0)
+  outputVat     Float   @default(0)
+  inputVat      Float   @default(0)
+  paid          Float   @default(0)
+  notes         String?
+}
+
+// ───────────────────────── Funding ─────────────────────────
+
+// Loans and financial help received by TI, and their repayment.
+model LoanMovement {
+  id        String    @id @default(cuid())
+  monthId   String
+  lender    String
+  received  Float     @default(0)
+  repaid    Float     @default(0)
+  notes     String?
+  deletedAt DateTime?
+}
+
+// Money of TI's previous owner that passed through TI.
+model PriorOwnerEntry {
+  id          String    @id @default(cuid())
+  date        DateTime
+  description String
+  received    Float     @default(0) // received from or for the previous owner
+  paid        Float     @default(0) // paid on their behalf
+  // arrived from Fargo's bank account (the act counts it as a Fargo payment)
+  viaFargo    Boolean   @default(false)
+  notes       String?
+  deletedAt   DateTime?
+}
+
+// Cash TI received from customers other than Fargo.
+model OtherReceipt {
+  id        String    @id @default(cuid())
+  date      DateTime
+  payer     String
+  amount    Float
+  notes     String?
+  deletedAt DateTime?
 }
 
 // ───────────────────────── Month-end snapshots ─────────────────────────

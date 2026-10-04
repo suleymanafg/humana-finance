@@ -3,11 +3,11 @@
 // Reference module: products, channels, months, category mappings, tax constants.
 import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardHeader, Input, PageTitle, Select } from "./ui";
+import { Badge, Button, Card, CardHeader, Input, Select } from "./ui";
 import EntryGrid, { type Col } from "./EntryGrid";
 import { useT } from "@/lib/locale-context";
 import { crud } from "@/lib/crud-client";
-import { GROUP_LABELS, TI_GROUPS, FARGO_GROUPS } from "@/lib/groups";
+import { GROUP_LABELS, TI_GROUPS, FARGO_GROUPS, FARGO_WRITEOFF_GROUP } from "@/lib/groups";
 import { fmtN, parseNum } from "@/lib/format";
 import type { TaxSettings } from "@/lib/engine/types";
 import type { DictKey } from "@/lib/i18n";
@@ -70,7 +70,7 @@ export default function SettingsView({
 
   const groupOptions = (company: string) => [
     { value: "", label: GROUP_LABELS.UNMAPPED[locale] },
-    ...(company === "TI" ? TI_GROUPS : FARGO_GROUPS).map((g) => ({
+    ...(company === "TI" ? [...TI_GROUPS] : [...FARGO_GROUPS, FARGO_WRITEOFF_GROUP]).map((g) => ({
       value: g,
       label: GROUP_LABELS[g][locale],
     })),
@@ -87,7 +87,6 @@ export default function SettingsView({
 
   return (
     <div>
-      <PageTitle title={t("navSettings")} subtitle={t("descSettings")} />
       <div className="space-y-4">
         <Card>
           <CardHeader title={`${t("settingsProducts")} (${products.length})`} />
@@ -314,7 +313,7 @@ function ClientsCard({
   );
 }
 
-const TAX_FIELDS: Array<{ field: keyof TaxSettings; key: DictKey }> = [
+const TAX_FIELDS: Array<{ field: Exclude<keyof TaxSettings, "writeOffDeduct">; key: DictKey }> = [
   { field: "vatRate", key: "vatRate" },
   { field: "deemedCashMargin", key: "deemedCashMargin" },
   { field: "fargoIncomeTaxRate", key: "fargoIncomeTaxRate" },
@@ -322,16 +321,17 @@ const TAX_FIELDS: Array<{ field: keyof TaxSettings; key: DictKey }> = [
 ];
 
 function TaxesCard({ taxes, readOnly }: { taxes: TaxSettings; readOnly: boolean }) {
-  const { t } = useT();
+  const { t, l } = useT();
   const router = useRouter();
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     Object.fromEntries(TAX_FIELDS.map(({ field }) => [field, String(taxes[field])]))
   );
+  const [deduct, setDeduct] = useState(taxes.writeOffDeduct);
   const [busy, setBusy] = useState(false);
 
   async function save() {
     setBusy(true);
-    const value: Record<string, number> = {};
+    const value: Record<string, number | boolean> = { writeOffDeduct: deduct };
     for (const { field } of TAX_FIELDS) value[field] = parseNum(draft[field]) ?? 0;
     await crud("setting", "upsert", { data: { key: "taxes", value: JSON.stringify(value) } });
     setBusy(false);
@@ -353,6 +353,19 @@ function TaxesCard({ taxes, readOnly }: { taxes: TaxSettings; readOnly: boolean 
             />
           </div>
         ))}
+        <label className="flex h-9 items-center gap-2 text-[12.5px]">
+          <input
+            type="checkbox"
+            checked={deduct}
+            disabled={readOnly}
+            onChange={(e) => setDeduct(e.target.checked)}
+            className="h-4 w-4 accent-[var(--accent)]"
+          />
+          {l({
+            ru: "Fargo вычитает свои списания из суммы к передаче TI",
+            en: "Fargo deducts its write-offs from what it pays TI",
+          })}
+        </label>
         {!readOnly && (
           <Button onClick={save} disabled={busy}>
             {t("save")}

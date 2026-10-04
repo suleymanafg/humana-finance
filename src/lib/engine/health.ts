@@ -1,24 +1,11 @@
-// Data-integrity checks. Every check returns ok/warn + where to fix it.
-// Nothing is ever silently dropped — anything unmapped or inconsistent lands here.
-
-import type { Dataset, HealthCheck, MonthlyResult, ProductCost, ShipmentCost } from "./types";
-import { costProductIdOf } from "./compute";
-
-interface Ctx {
-  shipmentCosts: ShipmentCost[];
-  productCosts: Record<string, ProductCost>;
-  monthly: MonthlyResult[];
-  ytd: MonthlyResult;
-}
+// Data-integrity checks. Each returns ok/warn and where to fix it, so nothing
+// inconsistent is ever silently absorbed into the statements.
+import type { Computed, Dataset, HealthCheck } from "./types";
 
 const LIST_LIMIT = 12;
+const fmt = (v: number) => Math.round(v).toLocaleString("en-US");
 
-function check(
-  key: string,
-  items: string[],
-  href: string,
-  severity: "warn" | "info" = "warn"
-): HealthCheck {
+function check(key: string, items: string[], href: string, severity: "warn" | "info" = "warn"): HealthCheck {
   return {
     key,
     status: items.length > 0 ? "warn" : "ok",
@@ -29,41 +16,40 @@ function check(
   };
 }
 
-export function buildHealthChecks(ds: Dataset, ctx: Ctx): HealthCheck[] {
-  const checks: HealthCheck[] = [];
+export function buildHealthChecks(
+  ds: Dataset,
+  c: Computed,
+  extra: {
+    oversold: Array<{ productId: string; monthId: string; units: number }>;
+    overdrawn: Map<string, number>;
+  }
+): HealthCheck[] {
   const productIds = new Set(ds.products.map((p) => p.id));
-  const channelIds = new Set(ds.channels.map((c) => c.id));
+  const channelIds = new Set(ds.channels.map((ch) => ch.id));
   const monthIds = new Set(ds.months.map((m) => m.id));
+  const name = (id: string) => ds.products.find((p) => p.id === id)?.nameRu ?? id;
+  const checks: HealthCheck[] = [];
 
-  // unknown references in sales (possible via raw imports)
   checks.push(
     check(
       "unknownSaleRefs",
       ds.sales
-        .filter(
-          (s) => !productIds.has(s.productId) || !channelIds.has(s.channelId) || !monthIds.has(s.monthId)
-        )
+        .filter((s) => !productIds.has(s.productId) || !channelIds.has(s.channelId) || !monthIds.has(s.monthId))
         .map((s) => `${s.monthId} / ${s.productId} / ${s.channelId}`),
       "/sales"
     )
   );
-
-  // negative quantities are returns (возвраты) — expected, so informational only:
-  // returns booked against a prior month's sales legitimately go negative
-  const productName = (id: string) => ds.products.find((p) => p.id === id)?.nameRu ?? id;
   checks.push(
     check(
       "negativeSaleQty",
       ds.sales
         .filter((s) => s.qty < 0)
         .sort((a, b) => a.qty - b.qty)
-        .map((s) => `${s.monthId} · ${productName(s.productId)}: ${s.qty}`),
+        .map((s) => `${s.monthId} · ${name(s.productId)}: ${s.qty}`),
       "/sales",
       "info"
     )
   );
-
-  // unmapped OPEX categories that actually carry entries
   checks.push(
     check(
       "unmappedOpexTi",
@@ -78,106 +64,78 @@ export function buildHealthChecks(ds: Dataset, ctx: Ctx): HealthCheck[] {
       "/settings"
     )
   );
-
   checks.push(
     check(
       "shipmentsNoExpenses",
-      ctx.shipmentCosts.filter((s) => s.expenseTotal === 0 && s.purchaseTotal > 0).map((s) => s.code),
-      "/shipments"
+      c.shipments
+        .filter((s) => s.status === "ARRIVED" && s.expenseTotal === 0 && s.purchaseTotal > 0)
+        .map((s) => s.code),
+      "/goods/shipments"
     )
   );
-
-  // expenses attached to shipments with no purchase value (cannot be allocated)
   checks.push(
     check(
       "expensesUnallocatable",
-      ctx.shipmentCosts
+      c.shipments
         .filter((s) => s.expenseTotal > 0 && s.purchaseTotal === 0)
-        .map((s) => `${s.code}: ${s.expenseTotal}`),
-      "/shipments"
+        .map((s) => `${s.code}: ${fmt(s.expenseTotal)}`),
+      "/goods/shipments"
     )
   );
-
   checks.push(
     check(
-      "linesMissingFargoCost",
-      ctx.shipmentCosts.filter((s) => s.hasMissingFargoCost).map((s) => s.code),
-      "/shipments"
+      "invoicedBeyondArrived",
+      [...extra.overdrawn].map(([pid, units]) => `${name(pid)}: ${fmt(units)}`),
+      "/goods/fifo"
     )
   );
-
-  // products sold without any landed-cost data => COGS understated
-  const soldNoCost = new Set<string>();
-  for (const m of ctx.monthly) {
-    for (const pid of Object.keys(m.qtyByProduct)) {
-      const costId = costProductIdOf(pid, ds);
-      if (!ctx.productCosts[costId] || ctx.productCosts[costId].totalQty === 0) {
-        soldNoCost.add(ds.products.find((p) => p.id === pid)?.nameRu ?? pid);
-      }
-    }
-  }
-  checks.push(check("soldWithoutCost", [...soldNoCost], "/shipments"));
-
-  // 1C clients that fell through to «Прочие» and were never reviewed — an
-  // admin assigning a channel (even «Прочие» itself) clears them
+  checks.push(
+    check(
+      "soldBeyondInvoiced",
+      extra.oversold.map((o) => `${o.monthId} · ${name(o.productId)}: ${fmt(o.units)}`),
+      "/goods/stock"
+    )
+  );
+  checks.push(
+    check(
+      "invoiceVatMismatch",
+      c.invoices
+        .filter((l) => Math.abs(l.vat - l.amount * ds.taxes.vatRate) > 1)
+        .map((l) => `${l.date.slice(0, 10)} № ${l.number} · ${name(l.productId)}`),
+      "/goods/invoices",
+      "info"
+    )
+  );
+  checks.push(
+    check(
+      "settlementCheck",
+      c.settlement.filter((s) => Math.abs(s.check) >= 1).map((s) => `${s.monthId}: ${fmt(s.check)}`),
+      "/settlement/monthly"
+    )
+  );
+  checks.push(
+    check(
+      "groupReconCheck",
+      c.group.filter((g) => Math.abs(g.recon.check) >= 1).map((g) => `${g.monthId}: ${fmt(g.recon.check)}`),
+      "/statements/pnl"
+    )
+  );
+  checks.push(
+    check(
+      "tiVatDifference",
+      c.ti
+        .filter((t) => Math.abs(t.vat.difference) >= 1 && (t.vat.netModel !== 0 || t.vat.perAccount !== 0))
+        .map((t) => `${t.monthId}: ${fmt(t.vat.difference)}`),
+      "/taxes/ti-vat",
+      "info"
+    )
+  );
   checks.push(
     check(
       "clientsUnassigned",
-      (ds.clientMaps ?? []).filter((c) => !c.channelId).map((c) => c.displayName),
+      (ds.clientMaps ?? []).filter((cm) => !cm.channelId).map((cm) => cm.displayName),
       "/settings"
     )
   );
-
-  // tie: sales qty vs VAT-detail qty per month
-  const qtyTies: string[] = [];
-  for (const m of ctx.monthly) {
-    const vatQty = m.vatRows.reduce((s, r) => s + r.qty, 0);
-    if (Math.abs(vatQty - m.totalQty) > 1e-6) qtyTies.push(`${m.monthId}: ${m.totalQty} vs ${vatQty}`);
-  }
-  checks.push(check("qtyTieSalesVsVat", qtyTies, "/taxes"));
-
-  // tie: P&L revenue vs channel detail; VAT total vs detail rows
-  const revTies: string[] = [];
-  const vatTies: string[] = [];
-  for (const m of ctx.monthly) {
-    const chSum = Object.values(m.revenueByChannel).reduce((s, v) => s + v, 0);
-    if (Math.abs(chSum - m.revenue) > 0.01) revTies.push(`${m.monthId}`);
-    const vatSum = m.vatRows.reduce((s, r) => s + r.totalVat, 0);
-    if (Math.abs(vatSum - m.fargoVat) > 0.01) vatTies.push(`${m.monthId}`);
-  }
-  checks.push(check("revenueTie", revTies, "/pnl"));
-  checks.push(check("vatTie", vatTies, "/taxes"));
-
-  // golden values vs workbook (once real data is imported these should match)
-  if (ds.golden) {
-    const upto = ds.months.filter((m) => m.id <= ds.golden!.toMonthId).map((m) => m.id);
-    const set = new Set(upto);
-    let revenue = 0,
-      cogs = 0,
-      net = 0;
-    for (const m of ctx.monthly) {
-      if (set.has(m.monthId)) {
-        revenue += m.revenue;
-        cogs += m.cogs;
-        net += m.netProfit;
-      }
-    }
-    // relative tolerance: price rounding to whole som moves multi-billion
-    // totals by a few thousand, which is not a data problem
-    const REL_TOL = 0.0005; // 0.05%
-    const items: string[] = [];
-    const compare = (label: string, actual: number, expected: number | null) => {
-      if (expected == null) return; // reference not available yet
-      const tol = Math.max(1000, Math.abs(expected) * REL_TOL);
-      if (Math.abs(actual - expected) > tol) {
-        items.push(`${label}: ${Math.round(actual)} vs ${expected}`);
-      }
-    };
-    compare("Revenue", revenue, ds.golden.revenue);
-    compare("COGS", cogs, ds.golden.cogs);
-    compare("Net", net, ds.golden.netProfit);
-    checks.push(check("goldenValues", items, "/settings"));
-  }
-
   return checks;
 }

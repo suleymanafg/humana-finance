@@ -6,8 +6,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardHeader, Input, PageTitle, Select } from "./ui";
-import { IconCheck, IconCopy, IconPencil, IconPlus, IconSend, IconTrash, IconX } from "./icons";
+import { Badge, Button, Card, CardHeader, Input, Select } from "./ui";
+import { IconCheck, IconCopy, IconPencil, IconSend, IconTrash, IconX } from "./icons";
 import { Collapsible } from "./analysis";
 import { crud } from "@/lib/crud-client";
 import { useT } from "@/lib/locale-context";
@@ -158,21 +158,16 @@ export default function RequestsView({
 
   return (
     <div className="pb-16">
-      <PageTitle
-        title={ru ? "Запросы данных" : "Data requests"}
-        subtitle={
-          ru
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <p className="max-w-2xl text-[13px] leading-snug text-muted">
+          {ru
             ? "Отправьте список того, что нужно заполнить. Ответы попадают на проверку и в отчёты только после вашего подтверждения."
-            : "Send someone a list of figures to fill in. Their answers wait for your confirmation before they reach the reports."
-        }
-        right={
-          !readOnly && (
-            <Button onClick={() => setComposing((v) => !v)}>
-              <IconPlus size={14} /> {ru ? "Новый запрос" : "New request"}
-            </Button>
-          )
-        }
-      />
+            : "Send someone a list of figures to fill in. Their answers wait for your confirmation before they reach the reports."}
+        </p>
+        {!readOnly && (
+          <Button onClick={() => setComposing((v) => !v)}>{ru ? "Новый запрос" : "New request"}</Button>
+        )}
+      </div>
 
       {flash && (
         <div className="mb-4 rounded-lg border border-border bg-surface-low px-3 py-2 text-[12.5px]">
@@ -727,7 +722,7 @@ function ContactsPanel({
           />
           <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" className="w-56" />
           <Button variant="secondary" onClick={add} disabled={!name.trim()}>
-            <IconPlus size={13} /> {ru ? "Добавить" : "Add"}
+            {ru ? "Добавить" : "Add"}
           </Button>
         </div>
       )}

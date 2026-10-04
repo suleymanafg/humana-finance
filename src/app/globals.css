@@ -25,6 +25,7 @@
   --sidebar-line: rgba(255, 255, 255, 0.08);
   --sidebar-fg: #adaae3;
   --sidebar-fg-strong: #ffffff;
+  --sidebar-accent: #a9a7ff;
 }
 
 @theme inline {
@@ -49,6 +50,7 @@
   --color-sidebar-line: var(--sidebar-line);
   --color-sidebar-fg: var(--sidebar-fg);
   --color-sidebar-fg-strong: var(--sidebar-fg-strong);
+  --color-sidebar-accent: var(--sidebar-accent);
   --font-sans: var(--font-inter);
   --font-display: var(--font-manrope);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -68,22 +70,18 @@ h3,
   font-family: var(--font-manrope), var(--font-inter), system-ui, sans-serif;
 }
 
-/* uppercase micro-labels ("label-caps" in the design system) */
+/* small field and group labels */
 .label-caps {
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
-/* ── numbers: JetBrains Mono, right-aligned, negatives red ── */
 /* Figures: Inter (the body face) carries real medium weights — Arial only ships
    400/700, so a 500 there silently rendered thin. tabular-nums keeps every digit
    the same width so columns line up. */
 .num {
   font-family: var(--font-inter), Arial, Helvetica, sans-serif;
-  font-size: 0.95em;
   font-weight: 550;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
@@ -108,16 +106,13 @@ h3,
   position: sticky;
   top: 0;
   z-index: 5;
-  /* soft indigo header band (per the approved Stitch mocks) */
-  background: var(--accent-soft-bg);
-  color: color-mix(in srgb, var(--accent) 42%, var(--muted));
-  font-size: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   text-align: left;
-  padding: 0.75rem 0.75rem;
-  border-bottom: 1px solid var(--accent-soft);
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border-strong);
   white-space: nowrap;
 }
 /* globals.css is unlayered, so `.tbl th { text-align: left }` outranks the
@@ -134,15 +129,16 @@ h3,
   text-align: right;
 }
 .tbl td {
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding: 0.45rem 0.75rem;
+  font-size: 13px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   vertical-align: middle;
 }
 .tbl tbody tr {
   transition: background-color 0.15s ease;
 }
 .tbl tbody tr:hover td {
-  background: var(--surface-low);
+  background: color-mix(in srgb, var(--surface-low) 70%, var(--surface));
 }
 .tbl tbody tr:last-child td {
   border-bottom: none;
@@ -156,7 +152,7 @@ h3,
 }
 .tbl th.sticky-col {
   z-index: 6;
-  background: var(--accent-soft-bg);
+  background: var(--surface);
 }
 .tbl tbody tr:hover .sticky-col {
   background: var(--surface-low);
@@ -170,8 +166,8 @@ h3,
   background: #e0e3fb;
 }
 .tbl th.col-hl {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--foreground);
+  background: var(--accent-soft-bg);
 }
 
 .tbl tr.row-section > td {
@@ -181,12 +177,126 @@ h3,
 .tbl tbody tr.row-section:hover td {
   background: color-mix(in srgb, var(--accent-soft-bg) 80%, var(--surface));
 }
+.tbl tr.row-total > td {
+  font-weight: 650;
+  background: var(--surface-low);
+  border-top: 1px solid var(--foreground);
+}
+.tbl tbody tr.row-total:hover td {
+  background: var(--surface-low);
+}
 .tbl tr.row-grand > td {
   border-top: 2px solid var(--border-strong);
   background: var(--accent-soft-bg);
 }
 .tbl tbody tr.row-grand:hover td {
   background: #e0e3fb;
+}
+
+/* headline figures: tabular digits, aligned with their label */
+.figure-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  white-space: nowrap;
+}
+
+/* ── financial statements ──
+   One table style for every statement: label column on the left (sticky when
+   the grid scrolls), figures right-aligned in tabular digits, structure shown
+   by weight and hairlines rather than colour. */
+.stmt {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+.stmt th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border-strong);
+}
+.stmt th:first-child {
+  text-align: left;
+}
+.stmt td {
+  padding: 0.42rem 0.9rem;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.stmt td:first-child {
+  text-align: left;
+  white-space: normal;
+  min-width: 300px;
+}
+/* wide analysis tables: a narrower label column and tighter cells */
+.stmt.is-compact td:first-child {
+  min-width: 180px;
+}
+.stmt.is-compact th,
+.stmt.is-compact td {
+  padding-left: 0.7rem;
+  padding-right: 0.7rem;
+}
+.stmt .sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+.stmt th.sticky-col {
+  z-index: 4;
+}
+.stmt tr.is-header td {
+  padding-top: 1.1rem;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom-color: var(--border);
+}
+.stmt tr.is-subtotal td {
+  font-weight: 650;
+  border-top: 1px solid var(--border-strong);
+}
+.stmt tr.is-total td {
+  font-weight: 700;
+  background: var(--surface-low);
+  border-top: 1px solid var(--foreground);
+  border-bottom: 1px solid var(--border-strong);
+}
+.stmt tr.is-total td.sticky-col {
+  background: var(--surface-low);
+}
+.stmt tr.is-ratio td,
+.stmt tr.is-memo td {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.stmt tr.is-check td {
+  color: var(--muted);
+  font-size: 12px;
+}
+.stmt td.is-focus,
+.stmt th.is-focus {
+  background: color-mix(in srgb, var(--accent-soft-bg) 70%, var(--surface));
+}
+.stmt tr.is-total td.is-focus {
+  background: color-mix(in srgb, var(--accent-soft-bg) 85%, var(--surface-low));
+}
+.stmt tbody tr:hover td {
+  background: color-mix(in srgb, var(--surface-low) 70%, var(--surface));
 }
 
 /* ── quiet cards: 1px border, no shadow, border tints on hover ── */

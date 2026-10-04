@@ -22,6 +22,9 @@ export const FARGO_GROUPS = [
   "FG_RETRO",
 ] as const;
 
+/** Fargo's write-off category: excluded from operating costs. */
+export const FARGO_WRITEOFF_GROUP = "FG_WRITEOFF";
+
 export type TiGroup = (typeof TI_GROUPS)[number];
 export type FargoGroup = (typeof FARGO_GROUPS)[number];
 
@@ -43,5 +46,7 @@ export const GROUP_LABELS: Record<string, { ru: string; en: string }> = {
   // retro bonuses are entered manually per channel since 2026-09 (previously
   // computed automatically from Channel.retroPct)
   FG_RETRO: { ru: "Ретро-бонусы", en: "Retro Bonuses" },
-  UNMAPPED: { ru: "⚠ БЕЗ ГРУППЫ", en: "⚠ UNMAPPED" },
+  // recorded by Fargo, but part of the stock loss at the count — never an operating cost
+  FG_WRITEOFF: { ru: "Списания (в потерях по инвентаризации)", en: "Write-offs (part of the stock loss)" },
+  UNMAPPED: { ru: "Без группы", en: "No group" },
 };

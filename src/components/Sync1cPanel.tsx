@@ -114,19 +114,17 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
   const mismatched = reconcile?.months.filter((m) => m.appQty !== m.apiQty) ?? [];
 
   return (
-    <div className="quiet-card rounded-xl p-6">
-      <div className="mb-1 flex items-center gap-2">
-        <h2 className="font-display text-[17px] font-semibold">{t("sync1cTitle")}</h2>
-        <span className="rounded bg-surface-low px-1.5 py-0.5 text-[11px] font-semibold text-muted">
-          {monthName}
-        </span>
+    <div className="mb-7 rounded-lg border border-border bg-surface p-5">
+      <div className="mb-1 flex flex-wrap items-baseline gap-x-2">
+        <h2 className="text-[14px] font-semibold tracking-[-0.01em]">{t("sync1cTitle")}</h2>
+        <span className="text-[12.5px] text-muted">{monthName}</span>
       </div>
       <p className="mb-4 text-[13px] text-muted">{t("sync1cSubtitle")}</p>
 
       {/* credentials + load */}
       <div className="flex flex-wrap items-end gap-3">
         <label className="block">
-          <span className="label-caps mb-1 block">{t("sync1cLogin")}</span>
+          <span className="mb-1 block text-[12px] text-muted">{t("sync1cLogin")}</span>
           <Input
             value={login}
             onChange={(e) => setLogin(e.target.value)}
@@ -136,7 +134,7 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
           />
         </label>
         <label className="block">
-          <span className="label-caps mb-1 block">{t("sync1cPassword")}</span>
+          <span className="mb-1 block text-[12px] text-muted">{t("sync1cPassword")}</span>
           <Input
             type="password"
             value={password}
@@ -180,12 +178,12 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
           {/* summary */}
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px]">
             <span>
-              <span className="label-caps mr-2">{t("sync1cDocs")}</span>
+              <span className="mr-2 text-muted">{t("sync1cDocs")}</span>
               <span className="num font-medium">{fmtN(report.fetched.sales)}</span> {t("sync1cSales")} ·{" "}
               <span className="num font-medium">{fmtN(report.fetched.returns)}</span> {t("sync1cReturns")}
             </span>
             <span>
-              <span className="label-caps mr-2">{t("sync1cQtyNet")}</span>
+              <span className="mr-2 text-muted">{t("sync1cQtyNet")}</span>
               <span className="num font-medium">{fmtN(totalCur)}</span> →{" "}
               <span className="num font-semibold text-accent">{fmtN(totalNew)}</span>
             </span>
@@ -194,12 +192,12 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
                 {fmtN(report.fetched.outsidePeriod)} {t("sync1cOutsidePeriod")}
               </span>
             )}
-            {done && <Badge tone="ok">✓ {t("sync1cApplied")}</Badge>}
+            {done && <Badge tone="ok">{t("sync1cApplied")}</Badge>}
           </div>
 
           {/* per-product comparison */}
           <div>
-            <div className="label-caps mb-2">{t("sync1cByProduct")}</div>
+            <div className="mb-2 text-[12px] font-semibold text-muted">{t("sync1cByProduct")}</div>
             <div className="max-h-72 overflow-auto rounded-lg border border-border">
               <table className="tbl w-full">
                 <thead>
@@ -236,7 +234,7 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
 
           {/* per-channel distribution */}
           <div>
-            <div className="label-caps mb-2">{t("sync1cByChannel")}</div>
+            <div className="mb-2 text-[12px] font-semibold text-muted">{t("sync1cByChannel")}</div>
             <div className="max-h-56 overflow-auto rounded-lg border border-border">
               <table className="tbl w-full">
                 <tbody>
@@ -341,12 +339,12 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
       {reconcile && (
         <div className="mt-5 space-y-4 border-t border-border pt-5">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="label-caps">{t("sync1cReconcile")}</span>
+            <span className="text-[13px] font-semibold">{t("sync1cReconcile")}</span>
             <span className="text-[12px] text-muted">
               {reconcile.dateFrom} — {reconcile.dateTo}
             </span>
             {mismatched.length === 0 ? (
-              <Badge tone="ok">✓ {t("sync1cAllMatch")}</Badge>
+              <Badge tone="ok">{t("sync1cAllMatch")}</Badge>
             ) : (
               <Badge tone="warn">
                 {mismatched.length} {t("sync1cMismatch")}
@@ -393,7 +391,7 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
                           d === 0 ? "text-ok" : "text-warn"
                         }`}
                       >
-                        {d === 0 ? "✓" : `${d > 0 ? "+" : ""}${fmtN(d)}`}
+                        {d === 0 ? "—" : `${d > 0 ? "+" : ""}${fmtN(d)}`}
                       </td>
                     </tr>
                   );
@@ -434,7 +432,7 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
       {batch && (
         <div className="mt-5 space-y-4 border-t border-border pt-5">
           <div className="flex flex-wrap items-center gap-3">
-            <Badge tone="ok">✓ {t("sync1cReplaceAllDone")}</Badge>
+            <Badge tone="ok">{t("sync1cReplaceAllDone")}</Badge>
             <span className="text-[12px] text-muted">
               {batch.dateFrom} — {batch.dateTo}
             </span>

@@ -9,7 +9,8 @@ export function fmtN(value: number | null | undefined, decimals = 0): string {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
-  return value < 0 ? `(${s})` : s;
+  // a value that rounds to zero is shown without a sign: "0", never "(0)"
+  return value < 0 && /[1-9]/.test(s) ? `(${s})` : s;
 }
 
 /** fraction -> "43.4%" (0.1% precision) */
@@ -17,7 +18,7 @@ export function fmtPct(fraction: number | null | undefined, decimals = 1): strin
   if (fraction == null || Number.isNaN(fraction)) return "—";
   const v = fraction * 100;
   const s = Math.abs(v).toFixed(decimals);
-  return v < 0 ? `(${s}%)` : `${s}%`;
+  return v < 0 && /[1-9]/.test(s) ? `(${s}%)` : `${s}%`;
 }
 
 export function fmtEur(value: number | null | undefined): string {

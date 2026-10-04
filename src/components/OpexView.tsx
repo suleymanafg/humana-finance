@@ -13,16 +13,14 @@
 // month, adjust, save. TI splits Банк/Наличные; Fargo has a single amount.
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Input, PageTitle, Select } from "./ui";
-import { IconDownload, IconPencil, IconPlus, IconTrash, IconX } from "./icons";
+import { Badge, Button, Input, Select } from "./ui";
+import { IconPencil, IconTrash, IconX } from "./icons";
 import { Collapsible, Delta, MetricStrip, fmtN, fmtPct, type Metric } from "./analysis";
-import MonthStrip from "./MonthStrip";
 import { useT } from "@/lib/locale-context";
 import { crud } from "@/lib/crud-client";
 import { toNum } from "@/lib/format";
 import { FARGO_GROUPS, GROUP_LABELS, TI_GROUPS } from "@/lib/groups";
 import type { MonthIn } from "@/lib/engine/types";
-import type { DictKey } from "@/lib/i18n";
 
 export interface OpexCategoryLite {
   id: string;
@@ -195,8 +193,6 @@ function NameCell({
 export default function OpexView({
   variant,
   entity,
-  titleKey,
-  descKey,
   months,
   monthId,
   categories,
@@ -206,8 +202,6 @@ export default function OpexView({
 }: {
   variant: "TI" | "FARGO";
   entity: "opexTi" | "opexFargo";
-  titleKey: DictKey;
-  descKey: DictKey;
   months: MonthIn[];
   monthId: string;
   categories: OpexCategoryLite[];
@@ -433,30 +427,18 @@ export default function OpexView({
 
   return (
     <div>
-      <PageTitle
-        title={t(titleKey)}
-        subtitle={t(descKey)}
-        right={
-          <div className="flex items-center gap-2">
-            <a href={`/api/export/${entity === "opexTi" ? "opex-ti" : "opex-fargo"}?month=${monthId}&locale=${locale}`}>
-              <Button variant="secondary">
-                <IconDownload size={14} /> {t("export")}
-              </Button>
-            </a>
-            {!readOnly && (
-              <Button onClick={() => setShowFill(true)}>{ru ? "Заполнить месяц" : "Fill the month"}</Button>
-            )}
-          </div>
-        }
-      />
-
-      <MonthStrip months={months} monthId={monthId} hasData={monthsWithData} />
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+        <a href={`/api/export/${entity === "opexTi" ? "opex-ti" : "opex-fargo"}?month=${monthId}&locale=${locale}`}>
+          <Button variant="secondary">{ru ? "Скачать Excel" : "Download Excel"}</Button>
+        </a>
+        {!readOnly && <Button onClick={() => setShowFill(true)}>{ru ? "Заполнить месяц" : "Fill the month"}</Button>}
+      </div>
 
       <MetricStrip metrics={metrics} />
 
-      <div className="quiet-card mb-5 overflow-hidden rounded-xl">
+      <div className="mb-7 overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-          <h2 className="font-display text-[16px] font-semibold">
+          <h2 className="text-[14px] font-semibold tracking-[-0.01em]">
             {ru ? "Расходы за" : "Expenses for"} {monthLabel(monthId)}
           </h2>
           <div className="flex items-center gap-3">
@@ -471,7 +453,7 @@ export default function OpexView({
             </label>
             {canManage && (
               <Button variant="secondary" onClick={() => setAdding((v) => !v)}>
-                <IconPlus size={13} /> {ru ? "Категория" : "Category"}
+                {ru ? "Добавить категорию" : "Add category"}
               </Button>
             )}
           </div>
@@ -497,12 +479,8 @@ export default function OpexView({
             <Button onClick={addCategory} disabled={!newName.trim()}>
               {t("add")}
             </Button>
-            <button
-              onClick={() => setAdding(false)}
-              className="text-muted transition-colors hover:text-ink"
-              title={t("cancel")}
-            >
-              <IconX size={15} />
+            <button onClick={() => setAdding(false)} className="text-[12.5px] text-muted hover:text-foreground">
+              {t("cancel")}
             </button>
           </div>
         )}
@@ -623,43 +601,30 @@ export default function OpexView({
                   }),
                 ];
               })}
-              <tr>
-                <td
-                  className="font-display text-[13px] font-bold uppercase tracking-wide !text-white"
-                  style={{ background: "var(--accent)" }}
-                >
-                  {t("total")}
-                </td>
+              <tr className="row-total">
+                <td>{t("total")}</td>
                 {split && (
                   <>
-                    <td className="text-right !text-white" style={{ background: "var(--accent)" }}>
+                    <td className="text-right">
                       <NumCell value={cur.bank} className="font-semibold" />
                     </td>
-                    <td className="text-right !text-white" style={{ background: "var(--accent)" }}>
+                    <td className="text-right">
                       <NumCell value={cur.cash} className="font-semibold" />
                     </td>
                   </>
                 )}
-                <td className="text-right !text-white" style={{ background: "var(--accent)" }}>
-                  <NumCell value={cur.total} className="font-bold" />
+                <td className="text-right">
+                  <NumCell value={cur.total} className="font-semibold" />
                 </td>
-                <td className="text-right !text-white" style={{ background: "var(--accent)" }}>
-                  {/* mirrors the body rows: prior value, then the change chip */}
+                <td className="text-right">
                   <div className="flex items-center justify-end gap-2">
-                    <span className="num text-[11.5px] text-white/70">{prior ? fmtN(prior.total) : "—"}</span>
+                    <span className="num text-[11.5px] text-muted">{prior ? fmtN(prior.total) : "—"}</span>
                     <span className="w-14 text-right text-[12px]">
-                      {prior && prior.total !== 0 ? (
-                        <span className="num font-semibold">
-                          {cur.total >= prior.total ? "+" : ""}
-                          {(((cur.total - prior.total) / Math.abs(prior.total)) * 100).toFixed(1)}%
-                        </span>
-                      ) : (
-                        "—"
-                      )}
+                      {prior ? <Delta current={cur.total} previous={prior.total} invert /> : "—"}
                     </span>
                   </div>
                 </td>
-                {!readOnly && <td style={{ background: "var(--accent)" }} />}
+                {canManage && <td />}
               </tr>
             </tbody>
           </table>

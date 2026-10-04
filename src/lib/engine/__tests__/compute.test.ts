@@ -1,291 +1,305 @@
 import { describe, expect, it } from "vitest";
-import { compute, monthIdOfDate, quarterLabelOf } from "../compute";
+import { compute } from "../compute";
+import { FifoCurve } from "../fifo";
 import type { Dataset } from "../types";
 
-// Synthetic fixture with hand-computed expected values.
-// Products: A (regular, 100 000), A-promo (75 000, costs via A), B (135 800).
-// Shipment S1 (Aug): A 100 × 5 EUR × 14 000 = 70 000; B 50 × 6 EUR × 14 000 = 84 000.
-//   purchase = 7 000 000 + 4 200 000 = 11 200 000; expenses 1 120 000 → loadFactor 1.1
-//   TI costs: A 77 000, B 92 400. Fargo costs: A 80 000, B 95 000.
-// Shipment S2 (Sep): A 100 × 5 EUR × 15 000 = 75 000; no expenses → loadFactor 1.
-//   Fargo cost missing (null) → health check.
-// avg TI cost A = (100×77 000 + 100×75 000)/200 = 76 000; avg Fargo A = 80 000.
+// Synthetic fixture, values worked out by hand.
+//
+// Truck S1 (Aug): A 100 × 4 EUR × 14 000 = 56 000; B 50 × 5 EUR × 14 000 = 70 000;
+//   A 10 free from HQ at an own cost of 5 000. Expenses 960 000 (+ import VAT,
+//   which is not a cost). Load factor = (9 100 000 + 960 000 − 50 000) / 9 100 000 = 1.1
+//   → A 61 600, B 77 000.
+// Truck S2 (Sep): A 100 × 5 EUR × 14 000 = 70 000, no expenses → 70 000.
+// Truck S3 is still in transit: outside every cost.
+//
+// TI invoices: A 80 @ 65 000 (Aug 20), A 10 free (Aug 25, own cost 5 000),
+//   A 60 @ 72 000 and B 50 @ 80 000 (Sep 10). TI write-off: A 5 (Oct 31).
+// Sales: Aug A 50 city + A-promo 10 chain; Sep A 30 city, B 20 chain; Oct A 10 city.
+// Count at Sep: A 57 (book 60 → 3 missing), B 30 (book 30).
 
 function fixture(): Dataset {
   return {
     products: [
-      { id: "A", nameRu: "A", price: 100_000, isPromo: false, regularProductId: null, sortOrder: 0 },
-      { id: "A-promo", nameRu: "A (АКЦИЯ)", price: 75_000, isPromo: true, regularProductId: "A", sortOrder: 1 },
-      { id: "B", nameRu: "B", price: 135_800, isPromo: false, regularProductId: null, sortOrder: 2 },
+      { id: "A", nameRu: "A", price: 120_000, isPromo: false, regularProductId: null, sortOrder: 0 },
+      { id: "A-promo", nameRu: "A (АКЦИЯ)", price: 90_000, isPromo: true, regularProductId: "A", sortOrder: 1 },
+      { id: "B", nameRu: "B", price: 150_000, isPromo: false, regularProductId: null, sortOrder: 2 },
     ],
     channels: [
-      { id: "C1", name: "Город", cashPct: 0.5, sortOrder: 0 },
-      { id: "C2", name: "Корзинка", cashPct: 0, sortOrder: 1 },
+      { id: "CITY", name: "Город", cashPct: 0.5, sortOrder: 0 },
+      { id: "CHAIN", name: "Сеть", cashPct: 0, sortOrder: 1 },
     ],
     months: [
       { id: "2025-08", nameRu: "Август 2025", nameEn: "August 2025", sortOrder: 0 },
       { id: "2025-09", nameRu: "Сентябрь 2025", nameEn: "September 2025", sortOrder: 1 },
+      { id: "2025-10", nameRu: "Октябрь 2025", nameEn: "October 2025", sortOrder: 2 },
     ],
-    warehouses: [
-      { id: "W1", name: "Основной склад", sortOrder: 0 },
-      { id: "W2", name: "Склад 2", sortOrder: 1 },
-    ],
+    warehouses: [{ id: "W1", name: "Основной склад", sortOrder: 0 }],
     sales: [
-      { monthId: "2025-08", productId: "A", channelId: "C1", qty: 10 },
-      { monthId: "2025-08", productId: "A-promo", channelId: "C1", qty: 4 },
-      { monthId: "2025-08", productId: "B", channelId: "C2", qty: 5 },
+      { monthId: "2025-08", productId: "A", channelId: "CITY", qty: 50 },
+      { monthId: "2025-08", productId: "A-promo", channelId: "CHAIN", qty: 10 },
+      { monthId: "2025-09", productId: "A", channelId: "CITY", qty: 30 },
+      { monthId: "2025-09", productId: "B", channelId: "CHAIN", qty: 20 },
+      { monthId: "2025-10", productId: "A", channelId: "CITY", qty: 10 },
     ],
     shipments: [
       {
         id: "S1",
-        code: "Авиа №1",
+        code: "Truck 1",
         monthId: "2025-08",
+        status: "ARRIVED",
         lines: [
-          { id: "L1", productId: "A", qty: 100, priceEur: 5, rate: 14_000, fargoUnitCost: 80_000 },
-          { id: "L2", productId: "B", qty: 50, priceEur: 6, rate: 14_000, fargoUnitCost: 95_000 },
+          { id: "L1", productId: "A", qty: 100, priceEur: 4, rate: 14_000, fixedUnitCost: null },
+          { id: "L2", productId: "B", qty: 50, priceEur: 5, rate: 14_000, fixedUnitCost: null },
+          { id: "L3", productId: "A", qty: 10, priceEur: 0, rate: 14_000, fixedUnitCost: 5_000 },
         ],
       },
       {
         id: "S2",
-        code: "Фура №2",
+        code: "Truck 2",
         monthId: "2025-09",
-        lines: [{ id: "L3", productId: "A", qty: 100, priceEur: 5, rate: 15_000, fargoUnitCost: null }],
+        status: "ARRIVED",
+        lines: [{ id: "L4", productId: "A", qty: 100, priceEur: 5, rate: 14_000, fixedUnitCost: null }],
+      },
+      {
+        id: "S3",
+        code: "Truck 3",
+        monthId: "2025-10",
+        status: "TRANSIT",
+        lines: [{ id: "L5", productId: "A", qty: 100, priceEur: 1, rate: 14_000, fixedUnitCost: null }],
       },
     ],
     importExpenses: [
-      { id: "E1", shipmentId: "S1", monthId: "2025-08", categoryName: "Транспорт", amount: 800_000 },
-      { id: "E2", shipmentId: "S1", monthId: "2025-08", categoryName: "НДС (импорт)", amount: 320_000 },
+      { id: "E1", shipmentId: "S1", monthId: "2025-08", categoryName: "Транспорт", amount: 960_000 },
+      { id: "E2", shipmentId: "S1", monthId: "2025-08", categoryName: "НДС (импорт)", amount: 1_200_000 },
+      { id: "E3", shipmentId: "S2", monthId: "2025-09", categoryName: "Хранение", amount: 0, paidMonthId: "2025-10" },
     ],
+    invoices: [
+      { id: "I1", date: "2025-08-20", number: "1", productId: "A", qty: 80, price: 65_000, amount: 5_200_000, vat: 624_000, ownUnitCost: null, sortOrder: 0 },
+      { id: "I2", date: "2025-08-25", number: "—", productId: "A", qty: 10, price: 0, amount: 0, vat: 0, ownUnitCost: 5_000, sortOrder: 1 },
+      { id: "I3", date: "2025-09-10", number: "2", productId: "A", qty: 60, price: 72_000, amount: 4_320_000, vat: 518_400, ownUnitCost: null, sortOrder: 2 },
+      { id: "I4", date: "2025-09-10", number: "2", productId: "B", qty: 50, price: 80_000, amount: 4_000_000, vat: 480_000, ownUnitCost: null, sortOrder: 3 },
+    ],
+    writeOffs: [{ id: "W1", date: "2025-10-31", productId: "A", qty: 5 }],
     opexTi: [
-      {
-        id: "OT1",
-        monthId: "2025-08",
-        categoryName: "Зарплата",
-        plGroup: "TI_SALARIES",
-        bankAmount: 200_000,
-        cashAmount: 50_000,
-      },
+      { id: "OT1", monthId: "2025-08", categoryName: "Зарплата", plGroup: "TI_SALARIES", bankAmount: 300_000, cashAmount: 100_000 },
     ],
     opexFargo: [
-      { id: "OF1", monthId: "2025-08", categoryName: "Склад", plGroup: "FG_WAREHOUSE", amount: 300_000 },
-      { id: "OF2", monthId: "2025-08", categoryName: "Новая", plGroup: null, amount: 10_000 },
+      { id: "OF1", monthId: "2025-08", categoryName: "Склад", plGroup: "FG_WAREHOUSE", amount: 250_000 },
+      { id: "OF2", monthId: "2025-09", categoryName: "Списания", plGroup: "FG_WRITEOFF", amount: 77_000 },
     ],
-    taxFilings: [
-      {
-        id: "F1",
-        quarterLabel: "Q3 2025",
-        taxAmount: 500_000,
-        bookedMonthId: "2025-09",
-        declaredExpenses: 100_000,
-      },
+    taxFilings: [{ id: "F1", quarterLabel: "Q3 2025", taxAmount: 40_000, bookedMonthId: "2025-09", paidMonthId: "2025-10", declaredExpenses: 0 }],
+    vatAccount: [
+      { id: "V0", period: "2025-07", date: null, description: "Opening", charged: 0, reduced: 0, paid: 1_000_000, refunded: 0, balanceAfter: null, sortOrder: 0 },
+      { id: "V1", period: "2025-08", date: null, description: "August", charged: 300_000, reduced: 0, paid: 0, refunded: 0, balanceAfter: null, sortOrder: 1 },
     ],
-    contributions: [{ id: "K1", date: "2025-08-01T00:00:00.000Z", tiAmount: 1_000_000, fargoAmount: 400_000 }],
-    transfers: [{ id: "T1", date: "2025-08-20T00:00:00.000Z", cashAmount: 100_000, bankAmount: 200_000 }],
-    // stock split across two warehouses; balance sheet sums them
+    vatCharges: [
+      { id: "C1", monthId: "2025-08", description: "Prior owner sale", amount: 200_000, bearer: "PRIOR_OWNER" },
+      { id: "C2", monthId: "2025-08", description: "Paid twice", amount: 50_000, bearer: "TI" },
+    ],
+    fargoVatReturns: [],
+    loans: [{ id: "LN1", monthId: "2025-09", lender: "Bank", received: 500_000, repaid: 100_000 }],
+    priorOwner: [
+      { id: "P1", date: "2025-09-05", description: "Cash via Fargo", received: 300_000, paid: 0, viaFargo: true },
+      { id: "P2", date: "2025-09-06", description: "Paid for them", received: 0, paid: 250_000, viaFargo: false },
+    ],
+    otherReceipts: [{ id: "O1", date: "2025-09-30", payer: "Clinic", amount: 20_000 }],
+    contributions: [
+      { id: "K1", date: "2025-07-25", tiAmount: 2_000_000, fargoAmount: 0, viaFargo: false },
+      { id: "K2", date: "2025-08-02", tiAmount: 0, fargoAmount: 1_500_000, viaFargo: true },
+    ],
+    transfers: [
+      { id: "T1", date: "2025-08-28", cashAmount: 1_000_000, bankAmount: 2_000_000 },
+      { id: "T2", date: "2025-09-15", cashAmount: 500_000, bankAmount: 3_000_000 },
+    ],
     stockCounts: [
-      { monthId: "2025-08", productId: "A", warehouseId: "W1", qty: 12 },
-      { monthId: "2025-08", productId: "A", warehouseId: "W2", qty: 8 },
+      { monthId: "2025-09", productId: "A", warehouseId: "W1", qty: 57 },
+      { monthId: "2025-09", productId: "B", warehouseId: "W1", qty: 30 },
     ],
-    monthBalances: [
-      {
-        monthId: "2025-08",
-        tiBank: 500_000,
-        tiCash: 0,
-        goodsInTransit: 200_000,
-        vatPrepayment: 10_000,
-        priorVatBalance: 20_000,
-        nutribenLoan: 30_000,
-      },
-    ],
-    arEntries: [{ id: "AR1", monthId: "2025-08", customerName: "Дарвоза", amount: 50_000 }],
-    taxes: { vatRate: 0.12, deemedCashMargin: 0.03, fargoIncomeTaxRate: 0.019, tiIncomeTaxRate: 0.15 },
-    golden: null,
+    monthBalances: [{ monthId: "2025-09", tiBank: 400_000, tiCash: 50_000, goodsInTransit: 0 }],
+    arEntries: [{ id: "AR1", monthId: "2025-09", customerName: "Сеть", amount: 600_000 }],
+    taxes: { vatRate: 0.12, deemedCashMargin: 0.03, fargoIncomeTaxRate: 0.019, tiIncomeTaxRate: 0.15, writeOffDeduct: false },
   };
 }
 
-describe("landed cost (3.1)", () => {
-  it("allocates import expenses via load factor and computes TI unit costs", () => {
-    const c = compute(fixture());
-    const s1 = c.shipmentCosts.find((s) => s.shipmentId === "S1")!;
-    expect(s1.purchaseTotal).toBe(11_200_000);
-    expect(s1.expenseTotal).toBe(1_120_000);
-    expect(s1.loadFactor).toBeCloseTo(1.1, 10);
-    expect(s1.lines.find((l) => l.productId === "A")!.tiUnitCost).toBeCloseTo(77_000, 6);
-    expect(s1.lines.find((l) => l.productId === "B")!.tiUnitCost).toBeCloseTo(92_400, 6);
-    const s2 = c.shipmentCosts.find((s) => s.shipmentId === "S2")!;
-    expect(s2.loadFactor).toBe(1);
-    expect(s2.lines[0].tiUnitCost).toBe(75_000);
-  });
+const month = <T extends { monthId: string }>(rows: T[], id: string) => rows.find((r) => r.monthId === id)!;
 
-  it("computes qty-weighted average costs across all shipments", () => {
-    const c = compute(fixture());
-    expect(c.productCosts["A"].avgTiCost).toBeCloseTo(76_000, 6);
-    expect(c.productCosts["A"].avgFargoCost).toBeCloseTo(80_000, 6); // only lines with a cost
-    expect(c.productCosts["B"].avgTiCost).toBeCloseTo(92_400, 6);
-    expect(c.productCosts["B"].avgFargoCost).toBeCloseTo(95_000, 6);
+describe("FIFO curve", () => {
+  const curve = new FifoCurve([
+    { qty: 10, unit: 100 },
+    { qty: 5, unit: 200 },
+  ]);
+  it("values the first units at the first batch, then the next", () => {
+    expect(curve.valueAt(0)).toBe(0);
+    expect(curve.valueAt(4)).toBe(400);
+    expect(curve.valueAt(10)).toBe(1_000);
+    expect(curve.valueAt(12)).toBe(1_400);
+    expect(curve.between(8, 12)).toBe(600);
   });
-});
-
-describe("revenue (3.2)", () => {
-  it("computes revenue with promo prices, cash/bank splits per channel", () => {
-    const c = compute(fixture());
-    const aug = c.monthly.find((m) => m.monthId === "2025-08")!;
-    expect(aug.revenue).toBe(1_979_000); // 10×100k + 4×75k + 5×135.8k
-    expect(aug.revenueByChannel["C1"]).toBe(1_300_000);
-    expect(aug.revenueByChannel["C2"]).toBe(679_000);
-    expect(aug.cashRevenue).toBeCloseTo(650_000, 6);
-    expect(aug.bankRevenue).toBeCloseTo(1_329_000, 6);
+  it("continues at the last batch past the end and at the first below zero", () => {
+    expect(curve.valueAt(17)).toBe(2_400);
+    expect(curve.valueAt(-2)).toBe(-200);
+  });
+  it("is zero without batches", () => {
+    expect(new FifoCurve([]).valueAt(5)).toBe(0);
   });
 });
 
-describe("invoiced amount overrides list price", () => {
-  it("uses the sale's amount for revenue when present, list price otherwise", () => {
+describe("landed cost", () => {
+  const c = compute(fixture());
+  const s1 = c.shipments.find((s) => s.shipmentId === "S1")!;
+  it("spreads import expenses by value, excluding import VAT and own-cost lines", () => {
+    expect(s1.expenseTotal).toBe(960_000);
+    expect(s1.importVat).toBe(1_200_000);
+    expect(s1.loadFactor).toBeCloseTo(1.1, 12);
+    expect(s1.lines.find((l) => l.id === "L1")!.unitCost).toBeCloseTo(61_600, 6);
+    expect(s1.lines.find((l) => l.id === "L2")!.unitCost).toBeCloseTo(77_000, 6);
+    expect(s1.lines.find((l) => l.id === "L3")!.unitCost).toBe(5_000);
+    expect(s1.lines.find((l) => l.id === "L3")!.inFifo).toBe(false);
+  });
+  it("keeps trucks in transit out of the batches", () => {
+    expect(c.fifo.A.tiBatches.map((b) => b.code)).toEqual(["Truck 1", "Truck 2"]);
+  });
+});
+
+describe("TI cost of goods, FIFO by truck", () => {
+  const c = compute(fixture());
+  const line = (id: string) => c.invoices.find((l) => l.id === id)!;
+  it("draws invoices from the oldest truck first", () => {
+    expect(line("I1").tiCost).toBeCloseTo(80 * 61_600, 4);
+    expect(line("I3").tiCost).toBeCloseTo(20 * 61_600 + 40 * 70_000, 4);
+    expect(line("I4").tiCost).toBeCloseTo(50 * 77_000, 4);
+  });
+  it("values own-cost goods at their own cost, outside FIFO", () => {
+    expect(line("I2").tiCost).toBe(50_000);
+    expect(line("I2").outsideFifo).toBe(true);
+  });
+  it("draws write-offs after the invoices", () => {
+    expect(c.writeOffs[0].value).toBeCloseTo(5 * 70_000, 4);
+  });
+});
+
+describe("Fargo cost of goods, FIFO by TI invoice", () => {
+  const c = compute(fixture());
+  const a = (m: string) => c.fifo.A.months[m];
+  it("uses invoice lines in date order, promo units included", () => {
+    expect(a("2025-08").fargoCogs).toBeCloseTo(60 * 65_000, 4);
+    expect(a("2025-08").groupCogs).toBeCloseTo(60 * 61_600, 4);
+  });
+  it("books the count shortfall as a loss after the month's sales", () => {
+    expect(a("2025-09").fargoCogs).toBeCloseTo(20 * 65_000 + 10 * 0, 4);
+    expect(a("2025-09").fargoLoss).toBeCloseTo(3 * 72_000, 4);
+    expect(a("2025-09").groupCogs).toBeCloseTo(20 * 61_600 + 10 * 5_000, 4);
+    expect(a("2025-09").groupLoss).toBeCloseTo(3 * 67_200, 4);
+    expect(a("2025-10").fargoCogs).toBeCloseTo(10 * 72_000, 4);
+    expect(a("2025-10").fargoLoss).toBeCloseTo(0, 6);
+  });
+  it("values Fargo's stock at the count", () => {
+    expect(a("2025-09").fargoStockUnits).toBe(57);
+    expect(a("2025-09").fargoStock).toBeCloseTo(57 * 72_000, 4);
+  });
+  it("ignores a month whose count rows are all zero", () => {
     const ds = fixture();
-    // A sold at a 10% discount in C1; promo row keeps its list-price basis
-    ds.sales = [
-      { monthId: "2025-08", productId: "A", channelId: "C1", qty: 10, amount: 900_000 },
-      { monthId: "2025-08", productId: "A-promo", channelId: "C1", qty: 4 },
-    ];
-    const c = compute(ds);
-    const aug = c.monthly.find((m) => m.monthId === "2025-08")!;
-    // 900 000 (invoiced) + 4 × 75 000 (list) = 1 200 000
-    expect(aug.revenue).toBe(1_200_000);
-    expect(aug.revenueByChannel["C1"]).toBe(1_200_000);
-    // quantities are untouched, so COGS still costs 14 units at 76 000
-    expect(aug.cogs).toBeCloseTo(14 * 76_000, 6);
-    // cash/bank splits follow the invoiced revenue
-    expect(aug.cashRevenue).toBeCloseTo(600_000, 6);
-  });
-
-  it("treats a zero amount as a real zero, not as missing", () => {
-    const ds = fixture();
-    ds.sales = [{ monthId: "2025-08", productId: "A", channelId: "C1", qty: 10, amount: 0 }];
-    const c = compute(ds);
-    expect(c.monthly.find((m) => m.monthId === "2025-08")!.revenue).toBe(0);
-  });
-});
-
-describe("COGS (3.3)", () => {
-  it("costs sales at weighted-average TI cost; promo uses regular product cost", () => {
-    const c = compute(fixture());
-    const aug = c.monthly.find((m) => m.monthId === "2025-08")!;
-    // A: 10×76 000 + promo 4×76 000 + B: 5×92 400
-    expect(aug.cogs).toBeCloseTo(760_000 + 304_000 + 462_000, 6);
-    expect(aug.grossProfit).toBeCloseTo(1_979_000 - 1_526_000, 6);
-  });
-});
-
-describe("Fargo VAT (3.4)", () => {
-  it("splits qty by month cash share; bank VAT on real margin, cash VAT on deemed 3%", () => {
-    const c = compute(fixture());
-    const aug = c.monthly.find((m) => m.monthId === "2025-08")!;
-    const cashShare = 650_000 / 1_979_000;
-    const rowA = aug.vatRows.find((r) => r.productId === "A")!;
-    expect(rowA.qtyCash).toBeCloseTo(10 * cashShare, 10);
-    expect(rowA.qtyBank).toBeCloseTo(10 - 10 * cashShare, 10);
-    expect(rowA.bankVat).toBeCloseTo((10 - 10 * cashShare) * (100_000 - 80_000) * 0.12, 6);
-    expect(rowA.cashVat).toBeCloseTo(10 * cashShare * 80_000 * 0.03 * 0.12, 6);
-    // promo uses regular Fargo cost but its own (promo) sell price
-    const rowP = aug.vatRows.find((r) => r.productId === "A-promo")!;
-    expect(rowP.fargoUnitCost).toBeCloseTo(80_000, 6);
-    expect(rowP.sellPrice).toBe(75_000);
-    expect(aug.fargoVat).toBeCloseTo(
-      aug.vatRows.reduce((s, r) => s + r.bankVat + r.cashVat, 0),
-      6
+    ds.stockCounts.push(
+      { monthId: "2025-10", productId: "A", warehouseId: "W1", qty: 0 },
+      { monthId: "2025-10", productId: "B", warehouseId: "W1", qty: 0 }
     );
-  });
-
-  it("handles a zero-revenue month without NaN", () => {
-    const c = compute(fixture());
-    const sep = c.monthly.find((m) => m.monthId === "2025-09")!;
-    expect(sep.revenue).toBe(0);
-    expect(sep.fargoVat).toBe(0);
-    expect(Number.isNaN(sep.netProfit)).toBe(false);
+    const z = compute(ds).fifo.A.months["2025-10"];
+    expect(z.fargoLoss).toBeCloseTo(0, 6);
+    expect(z.cumCountDiff).toBe(a("2025-09").cumCountDiff);
   });
 });
 
-describe("P&L rollup (3.5–3.7)", () => {
-  it("computes income taxes, OPEX groups, EBITDA and net profit", () => {
-    const c = compute(fixture());
-    const aug = c.monthly.find((m) => m.monthId === "2025-08")!;
-    expect(aug.fargoIncomeTax).toBeCloseTo(1_979_000 * 0.019, 6);
-    expect(aug.tiIncomeTax).toBe(0); // filing booked in Sep
-    const sep = c.monthly.find((m) => m.monthId === "2025-09")!;
-    expect(sep.tiIncomeTax).toBe(500_000);
-    expect(aug.opexTiByGroup["TI_SALARIES"]).toBe(250_000);
-    expect(aug.opexFargoByGroup["FG_WAREHOUSE"]).toBe(300_000);
-    expect(aug.opexFargoByGroup["UNMAPPED"]).toBe(10_000); // never dropped
-    // OPEX TI + OPEX Fargo (marketing and retro are OPEX categories)
-    expect(aug.totalOpex).toBeCloseTo(250_000 + 310_000, 6);
-    expect(aug.ebitda).toBeCloseTo(aug.grossProfit - aug.totalOpex, 6);
-    expect(aug.netProfit).toBeCloseTo(aug.ebitda - (aug.fargoVat + aug.fargoIncomeTax + aug.tiIncomeTax), 6);
-    // YTD aggregates
-    expect(c.ytd.revenue).toBe(1_979_000);
-    expect(c.ytd.tiIncomeTax).toBe(500_000);
+describe("Fargo results and VAT", () => {
+  const c = compute(fixture());
+  const aug = month(c.fargo, "2025-08");
+  it("takes VAT out of revenue: 12/112 on bank sales, 12% of cost × 1.03 on cash sales", () => {
+    const bankVat = (3_000_000 + 900_000) * (0.12 / 1.12);
+    const cashVat = 50 * 0.5 * 65_000 * 1.03 * 0.12;
+    expect(aug.salesAtPrice).toBe(6_900_000);
+    expect(aug.vat.outputBank).toBeCloseTo(bankVat, 4);
+    expect(aug.vat.outputCash).toBeCloseTo(cashVat, 4);
+    expect(aug.revenue).toBeCloseTo(6_900_000 - bankVat - cashVat, 4);
+    expect(aug.incomeTax).toBeCloseTo(6_900_000 * 0.019, 6);
+  });
+  it("carries a VAT credit forward instead of paying", () => {
+    const net = aug.vat.outputBank + aug.vat.outputCash - 624_000;
+    expect(net).toBeLessThan(0);
+    expect(aug.vat.paid).toBe(0);
+    expect(aug.vat.creditOut).toBeCloseTo(-net, 6);
+    expect(month(c.fargo, "2025-09").vat.creditIn).toBeCloseTo(-net, 6);
+  });
+  it("keeps recorded write-offs out of operating costs", () => {
+    const sep = month(c.fargo, "2025-09");
+    expect(sep.writeOffsRecorded).toBe(77_000);
+    expect(sep.opex).toBe(0);
   });
 });
 
-describe("settlement (3.9)", () => {
-  it("accumulates dues, subtracts transfers by date and outstanding AR", () => {
-    const c = compute(fixture());
-    const aug = c.settlement.find((s) => s.monthId === "2025-08")!;
-    const m = c.monthly.find((x) => x.monthId === "2025-08")!;
-    const due = m.revenue - m.opexFargoTotal - m.fargoVat - m.fargoIncomeTax;
-    expect(aug.dueToTi).toBeCloseTo(due, 6);
-    expect(aug.cumTransfersCash).toBe(100_000);
-    expect(aug.cumTransfersBank).toBe(200_000);
-    expect(aug.outstandingAr).toBe(50_000);
-    expect(aug.remaining).toBeCloseTo(due - 350_000, 6);
+describe("Turbo Impex results and VAT", () => {
+  const c = compute(fixture());
+  const aug = month(c.ti, "2025-08");
+  it("books invoices as revenue at TI cost", () => {
+    expect(aug.revenue).toBe(5_200_000);
+    expect(aug.cogs).toBeCloseTo(80 * 61_600 + 50_000, 4);
+    expect(aug.netProfit).toBeCloseTo(5_200_000 - 4_978_000 - 400_000 - 50_000, 4);
+  });
+  it("separates the previous owner's VAT overpayment", () => {
+    expect(c.priorOwnerVatOpening).toBe(1_000_000);
+    expect(aug.vat.accountBalance).toBe(700_000);
+    expect(aug.vat.priorOwnerPart).toBe(800_000);
+    expect(aug.vat.jvPosition).toBe(-100_000);
+    expect(aug.vat.netModel).toBe(624_000 + 250_000 - 1_200_000);
   });
 });
 
-describe("balance sheet (3.8)", () => {
-  it("values inventory at avg TI cost and balances A = L + E via explicit plug", () => {
-    const c = compute(fixture());
-    const bs = c.balanceSheets.find((b) => b.monthId === "2025-08")!;
-    expect(bs.inventory).toBeCloseTo(20 * 76_000, 6);
-    expect(bs.tiCapital).toBe(1_000_000);
-    expect(bs.fargoCapital).toBe(400_000);
-    const m = c.monthly.find((x) => x.monthId === "2025-08")!;
-    expect(bs.retainedEarnings).toBeCloseTo(m.netProfit, 6);
-    expect(bs.assetsTotal).toBeCloseTo(bs.liabilitiesTotal + bs.equityTotal, 6);
+describe("consistency checks", () => {
+  for (const writeOffDeduct of [false, true]) {
+    const ds = fixture();
+    ds.taxes.writeOffDeduct = writeOffDeduct;
+    const c = compute(ds);
+    it(`group profit ties to the company results (write-offs deducted: ${writeOffDeduct})`, () => {
+      for (const g of c.group) expect(Math.abs(g.recon.check)).toBeLessThan(1e-6);
+    });
+    it(`both settlement methods agree (write-offs deducted: ${writeOffDeduct})`, () => {
+      for (const s of c.settlement) expect(Math.abs(s.check)).toBeLessThan(1e-6);
+    });
+    it(`balance sheets tie (write-offs deducted: ${writeOffDeduct})`, () => {
+      for (const b of c.balance) {
+        expect(Math.abs(b.fargo.check)).toBeLessThan(1e-6);
+        expect(Math.abs(b.group.unreconciled - b.ti.unreconciled)).toBeLessThan(1e-6);
+        expect(Math.abs(b.ti.unreconciledCash + b.ti.unreconciledVat - b.ti.unreconciled)).toBeLessThan(1e-6);
+      }
+    });
+  }
+});
+
+describe("settlement with Fargo", () => {
+  const c = compute(fixture());
+  const sep = month(c.settlement, "2025-09");
+  it("counts every bank payment from Fargo's account in the act", () => {
+    expect(sep.invoicesInclVatCum).toBeCloseTo(5_824_000 + 4_838_400 + 4_480_000, 6);
+    expect(sep.allBankCum).toBe(5_000_000 + 1_500_000 + 300_000);
+    expect(sep.notGoods).toBe(1_800_000);
+    expect(sep.byBank + sep.inCash).toBeCloseTo(sep.owes, 6);
+  });
+  it("deducts customers' debts and payments received", () => {
+    const due = c.settlement.filter((s) => s.monthId <= "2025-09").reduce((t, s) => t + s.accrued, 0);
+    expect(sep.owes).toBeCloseTo(due - 1_500_000 - 5_000_000 - 600_000, 6);
   });
 });
 
-describe("TI quarterly audit (3.6)", () => {
-  it("recomputes tax from shipment Fargo values and shows variance vs filing", () => {
-    const c = compute(fixture());
-    const q3 = c.quarterAudits.find((q) => q.quarterLabel === "Q3 2025")!;
-    expect(q3.fargoValue).toBe(12_750_000); // S2 missing cost contributes 0
-    const gp = (12_750_000 / 1.12 / 1.03) * 0.03;
-    expect(q3.grossProfit).toBeCloseTo(gp, 6);
-    expect(q3.computedTax).toBeCloseTo(0.15 * Math.max(0, gp - 100_000), 6);
-    expect(q3.filedTax).toBe(500_000);
-    expect(q3.taxVariance).toBeCloseTo(500_000 - q3.computedTax, 6);
-    expect(q3.computedVat).toBeCloseTo(gp * 0.12, 6);
+describe("balance sheet inputs", () => {
+  const c = compute(fixture());
+  const sep = month(c.balance, "2025-09");
+  it("carries funding and unpaid items as liabilities", () => {
+    expect(sep.ti.loans).toBe(400_000);
+    expect(sep.ti.priorOwnerCash).toBe(50_000);
+    expect(sep.ti.otherReceipts).toBe(20_000);
+    expect(sep.ti.profitTaxPayable).toBe(40_000);
+    expect(month(c.balance, "2025-10").ti.profitTaxPayable).toBe(0);
   });
-});
-
-describe("health checks", () => {
-  it("flags missing Fargo costs, zero-expense shipments, unmapped categories; ties are ok", () => {
-    const c = compute(fixture());
-    const by = Object.fromEntries(c.healthChecks.map((h) => [h.key, h]));
-    expect(by["linesMissingFargoCost"].status).toBe("warn");
-    expect(by["linesMissingFargoCost"].details).toContain("Фура №2");
-    expect(by["shipmentsNoExpenses"].status).toBe("warn");
-    expect(by["unmappedOpexFargo"].status).toBe("warn");
-    expect(by["unmappedOpexTi"].status).toBe("ok");
-    expect(by["qtyTieSalesVsVat"].status).toBe("ok");
-    expect(by["revenueTie"].status).toBe("ok");
-    expect(by["vatTie"].status).toBe("ok");
-  });
-});
-
-describe("helpers", () => {
-  it("derives quarter labels and month buckets", () => {
-    expect(quarterLabelOf("2025-08")).toBe("Q3 2025");
-    expect(quarterLabelOf("2026-01")).toBe("Q1 2026");
-    expect(quarterLabelOf("2026-12")).toBe("Q4 2026");
-    expect(monthIdOfDate("2025-08-20T00:00:00.000Z")).toBe("2025-08");
+  it("includes partner capital paid before the first month", () => {
+    expect(sep.ti.tiCapital).toBe(2_000_000);
+    expect(sep.ti.fargoCapital).toBe(1_500_000);
   });
 });

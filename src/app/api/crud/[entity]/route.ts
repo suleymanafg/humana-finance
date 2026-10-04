@@ -27,12 +27,64 @@ const registry: Record<string, EntityConfig> = {
   },
   shipmentLine: {
     delegate: () => prisma.shipmentLine,
-    fields: ["shipmentId", "productId", "qty", "priceEur", "rate", "fargoUnitCost"],
+    fields: ["shipmentId", "productId", "qty", "priceEur", "rate", "fargoUnitCost", "fixedUnitCost"],
     softDelete: true,
   },
   importExpense: {
     delegate: () => prisma.importExpense,
-    fields: ["monthId", "shipmentId", "categoryId", "amount", "notes"],
+    fields: ["monthId", "shipmentId", "categoryId", "amount", "paidMonthId", "notes"],
+    softDelete: true,
+  },
+  tiInvoiceLine: {
+    delegate: () => prisma.tiInvoiceLine,
+    fields: ["date", "number", "productId", "qty", "price", "amount", "vat", "ownUnitCost", "sortOrder", "notes"],
+    dateFields: ["date"],
+    requiredFields: ["date", "number", "productId"],
+    softDelete: true,
+  },
+  tiWriteOff: {
+    delegate: () => prisma.tiWriteOff,
+    fields: ["date", "productId", "qty", "reason"],
+    dateFields: ["date"],
+    requiredFields: ["date", "productId"],
+    softDelete: true,
+  },
+  tiVatAccountEntry: {
+    delegate: () => prisma.tiVatAccountEntry,
+    fields: ["period", "date", "description", "charged", "reduced", "paid", "refunded", "balanceAfter", "sortOrder"],
+    dateFields: ["date"],
+    requiredFields: ["period", "description"],
+    softDelete: true,
+  },
+  tiVatCharge: {
+    delegate: () => prisma.tiVatCharge,
+    fields: ["monthId", "description", "amount", "bearer", "notes"],
+    requiredFields: ["monthId", "description", "bearer"],
+    softDelete: true,
+  },
+  fargoVatReturn: {
+    delegate: () => prisma.fargoVatReturn,
+    fields: ["monthId", "declaredSales", "outputVat", "inputVat", "paid", "notes"],
+    upsertWhere: (d) => ({ monthId: d.monthId }),
+  },
+  loanMovement: {
+    delegate: () => prisma.loanMovement,
+    fields: ["monthId", "lender", "received", "repaid", "notes"],
+    requiredFields: ["monthId", "lender"],
+    softDelete: true,
+  },
+  priorOwnerEntry: {
+    delegate: () => prisma.priorOwnerEntry,
+    fields: ["date", "description", "received", "paid", "viaFargo", "notes"],
+    dateFields: ["date"],
+    requiredFields: ["date", "description"],
+    softDelete: true,
+  },
+  otherReceipt: {
+    delegate: () => prisma.otherReceipt,
+    fields: ["date", "payer", "amount", "notes"],
+    dateFields: ["date"],
+    requiredFields: ["date", "payer"],
     softDelete: true,
   },
   opexTi: {
@@ -52,12 +104,12 @@ const registry: Record<string, EntityConfig> = {
   },
   taxFiling: {
     delegate: () => prisma.tiTaxFiling,
-    fields: ["quarterLabel", "taxAmount", "bookedMonthId", "declaredExpenses"],
+    fields: ["quarterLabel", "taxAmount", "bookedMonthId", "paidMonthId", "declaredExpenses"],
     softDelete: true,
   },
   contribution: {
     delegate: () => prisma.capitalContribution,
-    fields: ["date", "tiAmount", "fargoAmount", "notes"],
+    fields: ["date", "tiAmount", "fargoAmount", "viaFargo", "notes"],
     dateFields: ["date"],
     softDelete: true,
   },
@@ -146,8 +198,7 @@ const registry: Record<string, EntityConfig> = {
 };
 
 // Which field ties each figure entity to a month, for the closed-month guard.
-// shipmentLine resolves through its shipment; entities absent here are either
-// month-less (contributions, transfers) or structural (ADMIN-only anyway).
+// shipmentLine resolves through its shipment; dated entities through their date.
 const MONTH_FIELD: Record<string, string> = {
   shipment: "monthId",
   importExpense: "monthId",
@@ -158,7 +209,25 @@ const MONTH_FIELD: Record<string, string> = {
   stockCount: "monthId",
   monthBalance: "monthId",
   taxFiling: "bookedMonthId",
+  tiVatCharge: "monthId",
+  fargoVatReturn: "monthId",
+  loanMovement: "monthId",
+  tiVatAccountEntry: "period",
 };
+const DATE_FIELD: Record<string, string> = {
+  tiInvoiceLine: "date",
+  tiWriteOff: "date",
+  priorOwnerEntry: "date",
+  otherReceipt: "date",
+  transfer: "date",
+  contribution: "date",
+};
+const monthOfValue = (v: unknown): string | null =>
+  v instanceof Date && !Number.isNaN(v.getTime())
+    ? v.toISOString().slice(0, 7)
+    : typeof v === "string" && /^\d{4}-\d{2}/.test(v)
+      ? v.slice(0, 7)
+      : null;
 
 /** Every month a write touches: the incoming payload's month and, for
  *  update/delete, the month the existing row already belongs to. */
@@ -184,13 +253,15 @@ async function affectedMonths(
     }
     return [...out];
   }
-  const field = MONTH_FIELD[entity];
+  const field = MONTH_FIELD[entity] ?? DATE_FIELD[entity];
   if (!field) return [];
-  if (typeof data[field] === "string") out.add(data[field] as string);
+  const incoming = monthOfValue(data[field]);
+  if (incoming) out.add(incoming);
   if (id) {
     const delegate = config.delegate() as Delegate;
     const row = (await delegate.findUnique({ where: { id } })) as Record<string, unknown> | null;
-    if (row && typeof row[field] === "string") out.add(row[field] as string);
+    const existing = row ? monthOfValue(row[field]) : null;
+    if (existing) out.add(existing);
   }
   return [...out];
 }

@@ -254,8 +254,8 @@ export const dict = {
   clientSearch: { ru: "Поиск клиента…", en: "Search clients…" },
   salesClients: { ru: "Клиенты", en: "Clients" },
   salesClientsHint: {
-    ru: "Поклиентская детализация появится после синхронизации месяца с 1С («Ввод данных» → Синхронизация 1С)",
-    en: "Per-client detail appears once the month is synced from 1C (Data entry → 1C sync)",
+    ru: "Детализация по клиентам появляется после синхронизации месяца с 1С (Продажи → Данные)",
+    en: "The client breakdown appears once the month is synced from 1C (Sales → Data)",
   },
   clientLastSeen: { ru: "Последняя продажа", en: "Last seen" },
   sourceManual: { ru: "вручную", en: "manual" },
@@ -311,48 +311,42 @@ export const dict = {
   hcOk: { ru: "ОК", en: "OK" },
   hcWarn: { ru: "Проверить", en: "Attention" },
   hc_unknownSaleRefs: {
-    ru: "Продажи со ссылками на неизвестные товары/каналы/месяцы",
-    en: "Sales referencing unknown products/channels/months",
+    ru: "Продажи с неизвестным товаром, каналом или месяцем",
+    en: "Sales with an unknown product, channel or month",
   },
-  hc_negativeSaleQty: {
-    ru: "Возвраты (отрицательное количество) — информационно",
-    en: "Returns (negative quantity) — informational",
-  },
-  hc_unmappedOpexTi: { ru: "Категории OPEX TI без группы P&L", en: "TI OPEX categories without P&L group" },
-  hc_unmappedOpexFargo: {
-    ru: "Категории OPEX Fargo без группы P&L",
-    en: "Fargo OPEX categories without P&L group",
-  },
-  hc_shipmentsNoExpenses: {
-    ru: "Поставки без импортных расходов",
-    en: "Shipments with zero import expenses",
-  },
+  hc_negativeSaleQty: { ru: "Возвраты (отрицательное количество)", en: "Returns (negative quantity)" },
+  hc_unmappedOpexTi: { ru: "Расходы TI в категориях без группы", en: "TI expenses in categories without a group" },
+  hc_unmappedOpexFargo: { ru: "Расходы Fargo в категориях без группы", en: "Fargo expenses in categories without a group" },
+  hc_shipmentsNoExpenses: { ru: "Прибывшие фуры без импортных расходов", en: "Arrived trucks without import expenses" },
   hc_expensesUnallocatable: {
-    ru: "Импортные расходы на поставках без строк (нераспределяемые)",
-    en: "Import expenses on shipments without lines (unallocatable)",
+    ru: "Импортные расходы фур без товарных строк",
+    en: "Import expenses on trucks without product lines",
   },
-  hc_linesMissingFargoCost: {
-    ru: "Строки поставок без себестоимости Fargo",
-    en: "Shipment lines missing Fargo cost",
+  hc_invoicedBeyondArrived: {
+    ru: "TI выставил Fargo больше товара, чем пришло на фурах",
+    en: "TI invoiced Fargo more units than its trucks brought",
   },
-  hc_soldWithoutCost: {
-    ru: "Проданные товары без данных о себестоимости",
-    en: "Products sold without landed-cost data",
+  hc_soldBeyondInvoiced: {
+    ru: "Fargo продал больше товара, чем получил по счетам TI",
+    en: "Fargo sold more units than TI invoiced",
   },
-  hc_clientsUnassigned: {
-    ru: "Клиенты без канала (в «Прочие»)",
-    en: "Clients without a channel (in «Прочие»)",
+  hc_invoiceVatMismatch: {
+    ru: "НДС в счёте-фактуре не равен 12% суммы",
+    en: "Invoice VAT is not 12% of the amount",
   },
-  hc_qtyTieSalesVsVat: {
-    ru: "Сверка: кол-во продаж = кол-во в расчёте НДС",
-    en: "Tie: sales qty = VAT detail qty",
+  hc_settlementCheck: {
+    ru: "Два расчёта долга Fargo расходятся",
+    en: "The two calculations of Fargo's debt disagree",
   },
-  hc_revenueTie: { ru: "Сверка: выручка P&L = сумма по каналам", en: "Tie: P&L revenue = channel detail" },
-  hc_vatTie: { ru: "Сверка: НДС P&L = сумма деталей", en: "Tie: P&L VAT = detail total" },
-  hc_goldenValues: {
-    ru: "Сверка с контрольными значениями Excel (Авг'25–Апр'26)",
-    en: "Tie to Excel golden values (Aug'25–Apr'26)",
+  hc_groupReconCheck: {
+    ru: "Прибыль группы не сходится с прибылью компаний",
+    en: "Group profit does not tie to the companies' results",
   },
+  hc_tiVatDifference: {
+    ru: "НДС TI по приложению отличается от лицевого счёта",
+    en: "TI VAT per the app differs from the tax account",
+  },
+  hc_clientsUnassigned: { ru: "Клиенты 1С без канала", en: "1C clients without a channel" },
 
   // analysis vocabulary
   vsPrior: { ru: "к пред. мес.", en: "vs prior" },
@@ -459,9 +453,9 @@ export const dict = {
   stepOpexTi: { ru: "Расходы Turbo Impex", en: "Turbo Impex expenses" },
   stepOpexFargo: { ru: "Расходы Fargo", en: "Fargo expenses" },
   stepStockBalance: { ru: "Остатки и балансовые вводы", en: "Stock & balance inputs" },
-  stepDone: { ru: "Заполнено", en: "Done" },
-  stepPending: { ru: "Не заполнено", en: "Pending" },
-  stepOptional: { ru: "Не обязательно каждый месяц", en: "Not required every month" },
+  stepDone: { ru: "Внесено", en: "Entered" },
+  stepPending: { ru: "Не внесено", en: "Missing" },
+  stepOptional: { ru: "По необходимости", en: "When needed" },
   open: { ru: "Открыть", en: "Open" },
   monthProgress: { ru: "Готовность месяца", en: "Month progress" },
 
@@ -470,16 +464,16 @@ export const dict = {
   reopenMonthBtn: { ru: "Открыть заново", en: "Reopen month" },
   monthClosedBadge: { ru: "Месяц закрыт", en: "Month closed" },
   closeMonthHint: {
-    ru: "После закрытия данные месяца фиксируются: изменять их может только администратор, а месяц появляется в P&L.",
-    en: "Closing freezes the month's figures: only an administrator can change them, and the month appears on the P&L.",
+    ru: "После закрытия цифры месяца фиксируются и перестают быть предварительными. Изменять их может только администратор.",
+    en: "Closing freezes the month's figures and they stop being preliminary. Only an administrator can change them.",
   },
   closeMonthConfirmIncomplete: {
     ru: "Не все шаги заполнены. Всё равно закрыть месяц?",
     en: "Not all steps are complete. Close the month anyway?",
   },
   reopenMonthConfirm: {
-    ru: "Открыть месяц заново? Он исчезнет из P&L, и сотрудники снова смогут менять данные.",
-    en: "Reopen this month? It will disappear from the P&L and staff will be able to edit it again.",
+    ru: "Открыть месяц заново? Его цифры снова станут предварительными, и сотрудники смогут их менять.",
+    en: "Reopen this month? Its figures become preliminary again and staff can edit them.",
   },
   monthClosedReadOnly: {
     ru: "Месяц закрыт — данные доступны только для чтения",
@@ -553,10 +547,10 @@ export const dict = {
   isPromo: { ru: "Акционный", en: "Promo" },
   productLine: { ru: "Линейка", en: "Line" },
   regularProduct: { ru: "Базовый товар", en: "Regular product" },
-  vatRate: { ru: "Ставка НДС Fargo", en: "Fargo VAT rate" },
-  deemedCashMargin: { ru: "Условная маржа по наличным", en: "Deemed cash margin" },
-  fargoIncomeTaxRate: { ru: "Налог с оборота Fargo", en: "Fargo income tax (of revenue)" },
-  tiIncomeTaxRate: { ru: "Налог на прибыль TI", en: "TI income tax (of profit)" },
+  vatRate: { ru: "Ставка НДС", en: "VAT rate" },
+  deemedCashMargin: { ru: "Наценка к себестоимости в декларации по наличным", en: "Mark-up on cost declared for cash sales" },
+  fargoIncomeTaxRate: { ru: "Налог с оборота Fargo", en: "Fargo turnover tax" },
+  tiIncomeTaxRate: { ru: "Налог на прибыль TI", en: "TI profit tax" },
 
   // 1C sync panel (close page)
   sync1cTitle: { ru: "Синхронизация 1С", en: "1C sync" },

@@ -42,6 +42,10 @@ export interface SheetSpec {
   boldRows?: number[];
   /** 0-based indexes of rows that are section headings (indigo, no numbers) */
   sectionRows?: number[];
+  /** 0-based indexes of rows whose first cell is indented (detail lines) */
+  indentRows?: number[];
+  /** numFmt overrides for whole rows (e.g. a percentage line in a money table) */
+  rowFormats?: Record<number, string>;
   /** freeze after this many leading columns (default 1) */
   freezeCols?: number;
 }
@@ -91,6 +95,8 @@ export function buildWorkbook(sheets: SheetSpec[]): ExcelJS.Workbook {
       const excelRow = ws.getRow(headerRowIdx + 1 + r);
       const isBold = spec.boldRows?.includes(r) ?? false;
       const isSection = spec.sectionRows?.includes(r) ?? false;
+      const indent = spec.indentRows?.includes(r) ?? false;
+      const rowFmt = spec.rowFormats?.[r];
       row.forEach((value, i) => {
         const col = spec.columns[i];
         const cell = excelRow.getCell(i + 1);
@@ -106,8 +112,8 @@ export function buildWorkbook(sheets: SheetSpec[]): ExcelJS.Workbook {
           bold: isBold || isSection,
           color: { argb: isSection ? ACCENT : "FF0B1C30" },
         };
-        if (numeric && col?.numFmt) cell.numFmt = col.numFmt;
-        cell.alignment = { horizontal: numeric ? "right" : "left" };
+        if (numeric && (rowFmt ?? col?.numFmt)) cell.numFmt = (rowFmt ?? col?.numFmt)!;
+        cell.alignment = { horizontal: numeric ? "right" : "left", indent: indent && i === 0 ? 1 : undefined };
         if (isBold) cell.border = { top: { style: "thin", color: { argb: RULE } } };
         if (isSection) {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7F7FB" } };

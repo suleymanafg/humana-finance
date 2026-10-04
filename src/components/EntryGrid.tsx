@@ -42,7 +42,7 @@ export default function EntryGrid({
   defaults?: Record<string, unknown>;
   emptyLabel?: string;
 }) {
-  const { t } = useT();
+  const { t, l } = useT();
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
@@ -111,8 +111,8 @@ export default function EntryGrid({
           onChange={(e) => setDraft({ ...draft, [c.field]: e.target.value })}
           className="w-full"
         >
-          <option value="true">✓</option>
-          <option value="false">—</option>
+          <option value="true">{l({ ru: "да", en: "yes" })}</option>
+          <option value="false">{l({ ru: "нет", en: "no" })}</option>
         </Select>
       );
     }
@@ -143,9 +143,12 @@ export default function EntryGrid({
 
   function cellDisplay(row: Row, c: Col) {
     const v = row[c.field];
-    if (c.type === "bool") return <span>{v ? "✓" : "—"}</span>;
+    if (c.type === "bool") return <span>{v ? l({ ru: "да", en: "yes" }) : "—"}</span>;
     if (c.type === "number") return <Num v={typeof v === "number" ? v : null} decimals={c.decimals ?? 0} />;
-    if (c.type === "date" && v) return <span>{String(v).slice(0, 10)}</span>;
+    if (c.type === "date" && v) {
+      const [y, m, d] = String(v).slice(0, 10).split("-");
+      return <span className="whitespace-nowrap">{`${d}.${m}.${y}`}</span>;
+    }
     if (c.type === "select") {
       const o = c.options?.find((x) => x.value === v);
       return <span>{o?.label ?? String(v ?? "")}</span>;

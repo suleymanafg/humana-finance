@@ -1,30 +1,16 @@
 "use client";
 
-// COGS workspace redesigned per the owner's Stitch mock (2026-07-31):
-//   metric tiles → «Поставки» list where clicking a row expands its full
-//   detail inline (product lines + import expenses, both editable) →
-//   secondary analytics collapsed below. «Новая поставка» opens a single
-//   modal where the whole shipment — lines, rate, expenses — is entered at
-//   once with a live landed-cost summary. Simplicity first.
+// Trucks: landed cost per line (EUR price × rate × the truck's load factor),
+// import expenses, arrival status. Click a truck to edit its lines and costs.
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Input, Modal, Num, PageTitle, Select } from "./ui";
-import { IconAlert, IconCheck, IconChevronDown, IconChevronRight, IconDownload, IconPlus, IconTrash, IconTruck, IconUpload } from "./icons";
-import {
-  Collapsible,
-  MetricStrip,
-  Money,
-  ShareBar,
-  Th,
-  fmtN,
-  fmtPct,
-  useSort,
-  type Metric,
-} from "./analysis";
+import { Badge, Button, Input, Modal, Num, Select } from "./ui";
+import { IconChevronDown, IconChevronRight, IconTrash } from "./icons";
+import { MetricStrip, fmtN, fmtPct, type Metric } from "./analysis";
 import { useT } from "@/lib/locale-context";
 import { crud } from "@/lib/crud-client";
 import { toNum } from "@/lib/format";
-import type { MonthIn, ProductCost, ShipmentCost } from "@/lib/engine/types";
+import type { MonthIn, ShipmentCost } from "@/lib/engine/types";
 
 interface ProductLite {
   id: string;
@@ -43,6 +29,8 @@ interface ExpenseRow {
   categoryId: string;
   categoryName: string;
   amount: number;
+  paidMonthId: string | null;
+  isVat: boolean;
   notes: string | null;
 }
 
@@ -56,55 +44,7 @@ const isAir = (code: string) => /avia|авиа|air/i.test(code);
 
 const num = toNum;
 
-// ── inline-editable Fargo transfer cost on an existing line ──────────
-function FargoCell({
-  lineId,
-  value,
-  readOnly,
-  onSaved,
-}: {
-  lineId: string;
-  value: number | null;
-  readOnly: boolean;
-  onSaved: () => void;
-}) {
-  const [text, setText] = useState(value == null ? "" : fmtN(value));
-  const [last, setLast] = useState(value);
-  if (last !== value) {
-    setLast(value);
-    setText(value == null ? "" : fmtN(value));
-  }
-  if (readOnly) {
-    return value == null ? (
-      <Badge tone="warn">—</Badge>
-    ) : (
-      <span className="num">{fmtN(value)}</span>
-    );
-  }
-  const missing = text.trim() === "";
-  return (
-    <input
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={async () => {
-        const v = text.trim() === "" ? null : num(text);
-        setText(v == null ? "" : fmtN(v));
-        if (v !== value) {
-          await crud("shipmentLine", "update", { id: lineId, data: { fargoUnitCost: v } });
-          onSaved();
-        }
-      }}
-      placeholder="—"
-      className={`num w-24 rounded-md border px-2 py-1 text-right text-[12.5px] outline-none focus:border-accent ${
-        missing ? "border-warn/50 bg-warn-soft placeholder:text-warn" : "border-border bg-surface"
-      }`}
-    />
-  );
-}
-
-// ── generic inline-editable numeric field on an existing record ──────
-// Same behaviour as FargoCell: plain input, commit on blur, server figures
-// (amounts, TI cost, load factor) recompute via router.refresh().
+// ── inline-editable numeric field: commits on blur, figures recompute on refresh ──
 function NumEditCell({
   entity,
   id,
@@ -114,30 +54,35 @@ function NumEditCell({
   readOnly,
   onSaved,
   width = "w-24",
+  nullable = false,
 }: {
   entity: "shipmentLine" | "importExpense";
   id: string;
   field: string;
-  value: number;
+  value: number | null;
   decimals?: number;
   readOnly: boolean;
   onSaved: () => void;
   width?: string;
+  /** empty input clears the field */
+  nullable?: boolean;
 }) {
-  const [text, setText] = useState(fmtN(value, decimals));
+  const shown = (v: number | null) => (v == null ? "" : fmtN(v, decimals));
+  const [text, setText] = useState(shown(value));
   const [last, setLast] = useState(value);
   if (last !== value) {
     setLast(value);
-    setText(fmtN(value, decimals));
+    setText(shown(value));
   }
-  if (readOnly) return <span className="num">{fmtN(value, decimals)}</span>;
+  if (readOnly) return <span className="num">{value == null ? "—" : fmtN(value, decimals)}</span>;
   return (
     <input
       value={text}
+      placeholder={nullable ? "—" : undefined}
       onChange={(e) => setText(e.target.value)}
       onBlur={async () => {
-        const v = num(text);
-        setText(fmtN(v, decimals));
+        const v = nullable && text.trim() === "" ? null : num(text);
+        setText(shown(v));
         if (v !== value) {
           await crud(entity, "update", { id, data: { [field]: v } });
           onSaved();
@@ -145,6 +90,52 @@ function NumEditCell({
       }}
       className={`num ${width} rounded-md border border-border bg-surface px-2 py-1 text-right text-[12.5px] outline-none focus:border-accent`}
     />
+  );
+}
+
+// ── month an import service was paid, when later than the truck's month ──
+function PaidMonthCell({
+  id,
+  value,
+  monthId,
+  months,
+  readOnly,
+  onSaved,
+}: {
+  id: string;
+  value: string | null;
+  monthId: string;
+  months: MonthIn[];
+  readOnly: boolean;
+  onSaved: () => void;
+}) {
+  const { locale } = useT();
+  const ru = locale === "ru";
+  const label = (id: string) => {
+    const m = months.find((x) => x.id === id);
+    return m ? (ru ? m.nameRu : m.nameEn) : id;
+  };
+  if (readOnly) {
+    return <span className="text-[12px] text-muted">{value ? label(value) : ru ? "в том же месяце" : "same month"}</span>;
+  }
+  return (
+    <select
+      value={value ?? ""}
+      onChange={async (e) => {
+        await crud("importExpense", "update", { id, data: { paidMonthId: e.target.value || null } });
+        onSaved();
+      }}
+      className="h-7 rounded-md border border-border bg-surface px-1.5 text-[12px] text-muted outline-none focus:border-accent"
+    >
+      <option value="">{ru ? "оплачено в том же месяце" : "paid the same month"}</option>
+      {months
+        .filter((m) => m.id > monthId)
+        .map((m) => (
+          <option key={m.id} value={m.id}>
+            {ru ? `оплачено: ${m.nameRu}` : `paid: ${m.nameEn}`}
+          </option>
+        ))}
+    </select>
   );
 }
 
@@ -224,7 +215,6 @@ function AddLineRow({
         qty: num(qty),
         priceEur: num(priceEur),
         rate: num(rate),
-        fargoUnitCost: null,
       },
     });
     setProductId("");
@@ -248,7 +238,7 @@ function AddLineRow({
       <Input value={priceEur} onChange={(e) => setPriceEur(e.target.value)} placeholder="EUR" className="w-24 text-right" />
       <Input value={rate} onChange={(e) => setRate(e.target.value)} placeholder={t("rate")} className="w-28 text-right" />
       <Button variant="secondary" onClick={save} disabled={!valid || busy}>
-        <IconPlus size={13} /> {t("add")}
+        {t("add")}
       </Button>
     </div>
   );
@@ -296,7 +286,7 @@ function AddExpenseRow({
       </Select>
       <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={t("amount")} className="w-36 text-right" />
       <Button variant="secondary" onClick={save} disabled={!valid || busy}>
-        <IconPlus size={13} /> {t("add")}
+        {t("add")}
       </Button>
     </div>
   );
@@ -377,7 +367,7 @@ function TransitRow({
               onSaved();
             }}
           >
-            <IconCheck size={13} /> {ru ? "Прибыла" : "Arrived"}
+            {ru ? "Отметить прибытие" : "Mark arrived"}
           </Button>
         </span>
       )}
@@ -684,7 +674,6 @@ function NewShipmentModal({
           qty: num(l.qty),
           priceEur: num(l.priceEur),
           rate: rateN,
-          fargoUnitCost: null,
         },
       });
       if (res.error) {
@@ -718,7 +707,6 @@ function NewShipmentModal({
                 invoiceBusy ? "pointer-events-none opacity-50" : ""
               }`}
             >
-              <IconUpload size={14} />
               {invoiceBusy
                 ? ru
                   ? "Читаю инвойс…"
@@ -886,7 +874,7 @@ function NewShipmentModal({
               onClick={() => setLines((ls) => [...ls, { productId: "", qty: "", priceEur: "" }])}
               className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-medium text-accent hover:underline"
             >
-              <IconPlus size={13} /> {ru ? "Добавить товар" : "Add product"}
+              {ru ? "Добавить товар" : "Add product"}
             </button>
           </div>
 
@@ -933,7 +921,7 @@ function NewShipmentModal({
               onClick={() => setExps((xs) => [...xs, { categoryId: "", amount: "" }])}
               className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-medium text-accent hover:underline"
             >
-              <IconPlus size={13} /> {ru ? "Добавить статью расходов" : "Add expense item"}
+              {ru ? "Добавить статью расходов" : "Add expense item"}
             </button>
           </div>
         </div>
@@ -1012,12 +1000,6 @@ export default function ShipmentsView({
   months,
   products,
   shipmentCosts,
-  productCosts,
-  soldQty,
-  soldRevenue,
-  ytdCogs,
-  ytdRevenue,
-  ytdGpMargin,
   expenses,
   importCategories,
   transit,
@@ -1027,13 +1009,8 @@ export default function ShipmentsView({
 }: {
   months: MonthIn[];
   products: ProductLite[];
+  /** arrived trucks, costed */
   shipmentCosts: ShipmentCost[];
-  productCosts: Record<string, ProductCost>;
-  soldQty: Record<string, number>;
-  soldRevenue: Record<string, number>;
-  ytdCogs: number;
-  ytdRevenue: number;
-  ytdGpMargin: number;
   expenses: ExpenseRow[];
   importCategories: Array<{ id: string; name: string }>;
   /** trucks still on the road — planning-only until marked arrived */
@@ -1126,11 +1103,6 @@ export default function ShipmentsView({
     return m;
   }, [expenses]);
 
-  const missingFargoCount = shipmentCosts.reduce(
-    (a, s) => a + s.lines.filter((l) => l.fargoUnitCost == null).length,
-    0
-  );
-
   async function deleteShipment(id: string) {
     if (!confirm(t("confirmDelete"))) return;
     await crud("shipment", "delete", { id });
@@ -1148,91 +1120,16 @@ export default function ShipmentsView({
     router.refresh();
   }
 
-  // ── secondary analytics (collapsed) ───────────────────────────
-  const marginRows = useMemo(() => {
-    return products
-      .map((p) => {
-        const cost = productCosts[p.costProductId]?.avgTiCost ?? 0;
-        const fargoCost = productCosts[p.costProductId]?.avgFargoCost ?? 0;
-        const hasFargo = productCosts[p.costProductId]?.hasFargoCost ?? false;
-        const sold = soldQty[p.id] ?? 0;
-        const revenue = soldRevenue[p.id] ?? 0;
-        const realised = sold !== 0 ? revenue / sold : p.price;
-        const gpUnit = realised - cost;
-        return {
-          product: p,
-          cost,
-          fargoCost,
-          hasFargo,
-          sold,
-          revenue,
-          realised,
-          gpUnit,
-          gpTotal: sold * gpUnit,
-          gpPct: realised !== 0 ? gpUnit / realised : 0,
-        };
-      })
-      .filter((r) => r.sold !== 0);
-  }, [products, productCosts, soldQty, soldRevenue]);
-
-  const marginSort = useSort(marginRows, "gpTotal", {
-    name: (r) => r.product.nameRu,
-    cost: (r) => r.cost,
-    realised: (r) => r.realised,
-    gpUnit: (r) => r.gpUnit,
-    gpPct: (r) => r.gpPct,
-    gpTotal: (r) => r.gpTotal,
-    sold: (r) => r.sold,
-  });
-  const maxGp = Math.max(1, ...marginRows.map((r) => Math.abs(r.gpTotal)));
-
-  const balanceRows = useMemo(() => {
-    const byCostId = new Map<string, { name: string; purchased: number; sold: number; cost: number }>();
-    for (const p of products) {
-      const key = p.costProductId;
-      const entry =
-        byCostId.get(key) ?? {
-          name: products.find((x) => x.id === key)?.nameRu ?? p.nameRu,
-          purchased: productCosts[key]?.totalQty ?? 0,
-          sold: 0,
-          cost: productCosts[key]?.avgTiCost ?? 0,
-        };
-      entry.sold += soldQty[p.id] ?? 0;
-      byCostId.set(key, entry);
-    }
-    return [...byCostId.values()]
-      .filter((r) => r.purchased !== 0 || r.sold !== 0)
-      .map((r) => ({ ...r, balance: r.purchased - r.sold, value: (r.purchased - r.sold) * r.cost }));
-  }, [products, productCosts, soldQty]);
-
-  const balanceTotals = balanceRows.reduce(
-    (a, r) => ({ purchased: a.purchased + r.purchased, sold: a.sold + r.sold, value: a.value + r.value }),
-    { purchased: 0, sold: 0, value: 0 }
-  );
-  const maxBalanceQty = Math.max(1, ...balanceRows.map((r) => Math.max(r.purchased, r.sold)));
-
   const defaultMonthId = shipmentsSorted[0]?.monthId ?? months[0]?.id ?? "";
 
   return (
     <div>
-      <PageTitle
-        title={t("navShipments")}
-        subtitle={t("descShipmentsLong")}
-        right={
-          <div className="flex items-center gap-2">
-            <a href={`/api/export/shipments?locale=${locale}`}>
-              <Button variant="secondary">
-                <IconDownload size={14} /> {t("export")}
-              </Button>
-            </a>
-            {!readOnly && (
-              <Button onClick={() => setShowNew(true)}>
-                <IconPlus size={14} /> {t("addShipment")}
-              </Button>
-            )}
-          </div>
-        }
-      />
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+        <a href={`/api/export/shipments?locale=${locale}`}>
+          <Button variant="secondary">{ru ? "Скачать Excel" : "Download Excel"}</Button>
+        </a>
+        {!readOnly && <Button onClick={() => setShowNew(true)}>{t("addShipment")}</Button>}
+      </div>
 
       <MetricStrip metrics={metrics} />
 
@@ -1240,14 +1137,11 @@ export default function ShipmentsView({
       {transit.length > 0 && (
         <div className="mb-5 overflow-hidden rounded-xl border border-accent-soft bg-accent-soft-bg/60">
           <div className="flex items-center gap-2 border-b border-accent-soft px-4 py-2.5">
-            <IconTruck size={15} className="text-accent" />
             <span className="text-[13px] font-semibold text-accent">
               {ru ? "В пути" : "In transit"} · {transit.length}
             </span>
             <span className="text-[11.5px] text-muted">
-              {ru
-                ? "учитываются в планировании; в себестоимость попадут после отметки «Прибыла»"
-                : "counted in planning; enters COGS once marked arrived"}
+              {ru ? "в себестоимость попадут после прибытия" : "enter cost of goods on arrival"}
             </span>
           </div>
           <div className="divide-y divide-accent-soft/70">
@@ -1262,18 +1156,6 @@ export default function ShipmentsView({
               />
             ))}
           </div>
-        </div>
-      )}
-
-      {missingFargoCount > 0 && (
-        <div className="mb-5 flex items-start gap-2 rounded-xl border border-warn/20 bg-warn-soft px-4 py-3 text-[13px] text-warn">
-          <IconAlert size={15} />
-          <span>
-            {missingFargoCount}{" "}
-            {ru
-              ? "строк поставок без себестоимости Fargo — НДС Fargo по этим товарам занижен, пока они не заполнены."
-              : "shipment lines have no Fargo cost — Fargo VAT for those products is understated until filled in."}
-          </span>
         </div>
       )}
 
@@ -1347,7 +1229,6 @@ export default function ShipmentsView({
                             ? ru ? "В пути" : "Transit"
                             : ru ? "Прибыла" : "Arrived"}
                         </Badge>
-                        {s.hasMissingFargoCost && <Badge tone="warn">Fargo —</Badge>}
                       </span>
                     </td>
                   </tr>,
@@ -1386,8 +1267,10 @@ export default function ShipmentsView({
                                   <th className="text-right">{ru ? "Цена EUR" : "Price EUR"}</th>
                                   <th className="text-right">{t("rate")}</th>
                                   <th className="text-right">{ru ? "Сумма UZS" : "Amount UZS"}</th>
-                                  <th className="text-right">{ru ? "Себест. TI" : "TI cost"}</th>
-                                  <th className="text-right">Fargo</th>
+                                  <th className="text-right">{ru ? "Себестоимость, шт" : "Unit cost"}</th>
+                                  <th className="text-right" title={ru ? "Для товара вне FIFO (например, бесплатного от Humana): своя себестоимость за штуку" : "For goods outside FIFO (e.g. free goods from Humana): own cost per unit"}>
+                                    {ru ? "Своя себест." : "Own cost"}
+                                  </th>
                                   {!readOnly && <th className="w-8" />}
                                 </tr>
                               </thead>
@@ -1435,14 +1318,18 @@ export default function ShipmentsView({
                                       <Num v={l.purchaseAmount} />
                                     </td>
                                     <td className="text-right">
-                                      <Num v={l.tiUnitCost} />
+                                      <Num v={l.unitCost} />
                                     </td>
                                     <td className="text-right">
-                                      <FargoCell
-                                        lineId={l.id}
-                                        value={l.fargoUnitCost}
+                                      <NumEditCell
+                                        entity="shipmentLine"
+                                        id={l.id}
+                                        field="fixedUnitCost"
+                                        value={l.fixedUnitCost}
                                         readOnly={readOnly}
                                         onSaved={() => router.refresh()}
+                                        width="w-24"
+                                        nullable
                                       />
                                     </td>
                                     {!readOnly && (
@@ -1482,8 +1369,22 @@ export default function ShipmentsView({
                                 <tbody>
                                   {shipExpenses.map((e) => (
                                     <tr key={e.id}>
-                                      <td className="max-w-[200px] truncate" title={e.categoryName}>
-                                        {e.categoryName}
+                                      <td className="max-w-[200px]" title={e.categoryName}>
+                                        <div className="truncate">{e.categoryName}</div>
+                                        {e.isVat ? (
+                                          <div className="text-[11px] text-muted">
+                                            {ru ? "НДС к зачёту, не в себестоимости" : "VAT offset, not in landed cost"}
+                                          </div>
+                                        ) : (
+                                          <PaidMonthCell
+                                            id={e.id}
+                                            value={e.paidMonthId}
+                                            monthId={s.monthId}
+                                            months={months}
+                                            readOnly={readOnly}
+                                            onSaved={() => router.refresh()}
+                                          />
+                                        )}
                                       </td>
                                       <td className="text-right">
                                         <NumEditCell
@@ -1510,7 +1411,7 @@ export default function ShipmentsView({
                                     </tr>
                                   ))}
                                   <tr className="font-semibold">
-                                    <td>{t("total")}</td>
+                                    <td>{ru ? "Итого в себестоимость" : "Total in landed cost"}</td>
                                     <td className="text-right">
                                       <Num v={s.expenseTotal} strong />
                                     </td>
@@ -1535,7 +1436,7 @@ export default function ShipmentsView({
                                   onClick={() => deleteShipment(s.shipmentId)}
                                   className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-danger hover:underline"
                                 >
-                                  <IconTrash size={13} /> {ru ? "Удалить поставку" : "Delete shipment"}
+                                  {ru ? "Удалить поставку" : "Delete shipment"}
                                 </button>
                               </div>
                             )}
@@ -1550,165 +1451,6 @@ export default function ShipmentsView({
           </table>
         </div>
       </div>
-
-      {/* secondary analytics, collapsed by default */}
-      <Collapsible title={t("marginPerSku")} note={t("marginPerSkuNote")}>
-        <div className="overflow-x-auto">
-          <table className="tbl min-w-max">
-            <thead>
-              <tr>
-                <Th sortKey="name" sort={marginSort.sort} onSort={marginSort.onSort}>
-                  {t("product")}
-                </Th>
-                <Th sortKey="sold" sort={marginSort.sort} onSort={marginSort.onSort} numeric>
-                  {t("sold")}
-                </Th>
-                <Th sortKey="realised" sort={marginSort.sort} onSort={marginSort.onSort} numeric>
-                  {t("realisedPrice")}
-                </Th>
-                <Th sortKey="cost" sort={marginSort.sort} onSort={marginSort.onSort} numeric>
-                  {t("avgTiCost")}
-                </Th>
-                <Th numeric>{t("avgFargoCost")}</Th>
-                <Th sortKey="gpUnit" sort={marginSort.sort} onSort={marginSort.onSort} numeric>
-                  {t("gpUnit")}
-                </Th>
-                <Th sortKey="gpPct" sort={marginSort.sort} onSort={marginSort.onSort} numeric>
-                  {t("gpMargin")}
-                </Th>
-                <Th sortKey="gpTotal" sort={marginSort.sort} onSort={marginSort.onSort} numeric>
-                  {t("contribution")}
-                </Th>
-              </tr>
-            </thead>
-            <tbody>
-              {marginSort.sorted.map((r) => (
-                <tr key={r.product.id}>
-                  <td className="max-w-[260px]">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate" title={r.product.nameRu}>
-                        {r.product.nameRu}
-                      </span>
-                      {r.product.isPromo && <Badge tone="accent">promo</Badge>}
-                    </div>
-                    <div className="text-[11px] text-muted">{r.product.productLine ?? "—"}</div>
-                  </td>
-                  <td className="text-right">
-                    <Num v={r.sold} />
-                  </td>
-                  <td>
-                    <Money v={r.realised} sub={`${t("listPrice")} ${fmtN(r.product.price)}`} />
-                  </td>
-                  <td className="text-right">
-                    <Num v={r.cost} />
-                  </td>
-                  <td className="text-right">
-                    {r.hasFargo ? <Num v={r.fargoCost} /> : <Badge tone="warn">—</Badge>}
-                  </td>
-                  <td className="text-right">
-                    <Num v={r.gpUnit} />
-                  </td>
-                  <td className="text-right">
-                    <span className={`num ${r.gpPct < 0.25 ? "text-warn" : ""}`}>{fmtPct(r.gpPct)}</span>
-                  </td>
-                  <td>
-                    <div className="flex items-center justify-end gap-2">
-                      <div className="w-16">
-                        <ShareBar value={Math.abs(r.gpTotal)} max={maxGp} />
-                      </div>
-                      <Money v={r.gpTotal} strong />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              <tr className="row-section font-semibold">
-                <td>{t("total")}</td>
-                <td className="text-right">
-                  <Num v={marginRows.reduce((a, r) => a + r.sold, 0)} strong />
-                </td>
-                <td colSpan={4} />
-                <td className="text-right">
-                  <span className="num">{fmtPct(ytdGpMargin)}</span>
-                </td>
-                <td>
-                  <Money v={ytdRevenue - ytdCogs} strong />
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Collapsible>
-
-      <Collapsible title={t("purchasedVsSold")} note={t("purchasedVsSoldNote")}>
-        <div className="overflow-x-auto">
-          <table className="tbl min-w-max">
-            <thead>
-              <tr>
-                <th>{t("product")}</th>
-                <th className="text-right">{t("purchased")}</th>
-                <th className="text-right">{t("sold")}</th>
-                <th className="w-40"></th>
-                <th className="text-right">{t("coverage")}</th>
-                <th className="text-right">{t("stockValue")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {balanceRows
-                .slice()
-                .sort((a, b) => b.value - a.value)
-                .map((r) => (
-                  <tr key={r.name}>
-                    <td className="max-w-[260px] truncate" title={r.name}>
-                      {r.name}
-                    </td>
-                    <td className="text-right">
-                      <Num v={r.purchased} />
-                    </td>
-                    <td className="text-right">
-                      <Num v={r.sold} />
-                    </td>
-                    <td>
-                      <div className="space-y-1">
-                        <ShareBar value={r.purchased} max={maxBalanceQty} />
-                        <ShareBar value={r.sold} max={maxBalanceQty} tone="warn" />
-                      </div>
-                    </td>
-                    <td className="text-right">
-                      <span className={`num ${r.balance < 0 ? "text-danger" : ""}`}>{fmtN(r.balance)}</span>
-                    </td>
-                    <td>
-                      <Money v={r.value} />
-                    </td>
-                  </tr>
-                ))}
-              <tr className="row-section font-semibold">
-                <td>{t("total")}</td>
-                <td className="text-right">
-                  <Num v={balanceTotals.purchased} strong />
-                </td>
-                <td className="text-right">
-                  <Num v={balanceTotals.sold} strong />
-                </td>
-                <td />
-                <td className="text-right">
-                  <Num v={balanceTotals.purchased - balanceTotals.sold} strong />
-                </td>
-                <td>
-                  <Money v={balanceTotals.value} strong />
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-border px-4 py-2 text-[11px] text-muted">
-          <span className="flex items-center gap-1.5">
-            <span className="h-1.5 w-4 rounded-full bg-accent" /> {t("purchased")}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-1.5 w-4 rounded-full bg-warn" /> {t("sold")}
-          </span>
-        </div>
-      </Collapsible>
 
       {showNew && (
         <NewShipmentModal

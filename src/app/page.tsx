@@ -1,121 +1,78 @@
-import { getComputed } from "@/lib/data";
-import { dict } from "@/lib/i18n";
-import { computeMonthStatus, defaultMonthId } from "@/lib/month-status";
-import { resolveMonthId } from "@/lib/month";
-import { UZ_REGIONS } from "@/lib/uz-map";
-import { costProductIdOf } from "@/lib/engine/compute";
-import DashboardView from "@/components/DashboardView";
+import { pageContext, type SearchParams } from "@/lib/page-context";
+import { dict, type DictKey } from "@/lib/i18n";
+import { shortMonth } from "@/lib/statement-ui";
+import OverviewView from "@/components/OverviewView";
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ month?: string }>;
-}) {
-  const { month } = await searchParams;
-  const { dataset, computed } = await getComputed();
-  const status = computeMonthStatus(dataset);
-  const monthId = await resolveMonthId(
-    month,
-    dataset.months,
-    defaultMonthId(status, dataset.months[0]?.id ?? "")
-  );
+export default async function OverviewPage({ searchParams }: { searchParams: SearchParams }) {
+  const sp = await searchParams;
+  const ctx = await pageContext(sp.month);
+  const { computed, monthId, status, dataset } = ctx;
+  const i = computed.monthIds.indexOf(monthId);
+  const prev = i > 0 ? i - 1 : -1;
+  const g = computed.group[i];
+  const s = computed.settlement[i];
+  const b = computed.balance[i];
+  const sumTo = (rows: Array<{ netProfit: number }>) => rows.slice(0, i + 1).reduce((t, r) => t + r.netProfit, 0);
+  const month = dataset.months[i];
 
-  const idx = computed.monthly.findIndex((m) => m.monthId === monthId);
-  const monthly = idx >= 0 ? computed.monthly[idx] : null;
-  const prior = idx > 0 ? computed.monthly[idx - 1] : null;
-  const active = computed.monthly.filter((m) => m.revenue !== 0);
-
-  // ── attention list: missing data for the month + top health warnings ──
-  const cur = status.find((s) => s.monthId === monthId);
-  const attention: Array<{ text: { ru: string; en: string }; href: string; tone: "warn" | "danger" }> = [];
+  const cur = status.find((x) => x.monthId === monthId);
+  const attention: Array<{ text: { ru: string; en: string }; href: string }> = [];
   if (cur) {
-    const missing: Array<[boolean, { ru: string; en: string }, string]> = [
-      [cur.hasSales, { ru: "Продажи за месяц не внесены", en: "Sales not entered" }, `/sales?month=${monthId}`],
-      [cur.hasOpexTi, { ru: "Расходы Turbo Impex не внесены", en: "Turbo Impex expenses missing" }, `/opex-ti?month=${monthId}`],
-      [cur.hasOpexFargo, { ru: "Расходы Fargo не внесены", en: "Fargo expenses missing" }, `/opex-fargo?month=${monthId}`],
-      [cur.hasStock, { ru: "Остатки на складах не внесены", en: "Stock counts missing" }, `/close?month=${monthId}`],
-      [cur.hasInputs, { ru: "Балансовые вводы не заполнены", en: "Balance inputs missing" }, `/close?month=${monthId}`],
+    const gaps: Array<[boolean, { ru: string; en: string }, string]> = [
+      [cur.hasSales, { ru: "Продажи за месяц не внесены", en: "Sales not entered" }, "/sales"],
+      [cur.hasOpexTi, { ru: "Расходы Turbo Impex не внесены", en: "Turbo Impex expenses not entered" }, "/expenses/ti"],
+      [cur.hasOpexFargo, { ru: "Расходы Fargo не внесены", en: "Fargo expenses not entered" }, "/expenses/fargo"],
+      [cur.hasStock, { ru: "Пересчёт склада не внесён", en: "Warehouse count not entered" }, "/goods/stock"],
+      [cur.hasInputs, { ru: "Денежные остатки на конец месяца не внесены", en: "Month-end cash balances not entered" }, "/funding/balances"],
+      [cur.hasAr, { ru: "Долги покупателей не внесены", en: "Customer receivables not entered" }, "/settlement/receivables"],
     ];
-    for (const [ok, text, href] of missing) {
-      if (!ok) attention.push({ text, href, tone: "warn" });
-    }
+    for (const [ok, text, href] of gaps) if (!ok) attention.push({ text, href });
   }
-  // informational checks don't belong on the dashboard action list
-  const INFO_CHECKS = new Set(["goldenValues", "negativeSaleQty"]);
-  for (const h of computed.healthChecks.filter((h) => h.status === "warn")) {
-    if (INFO_CHECKS.has(h.key)) continue;
-    const k = `hc_${h.key}` as keyof typeof dict;
+  for (const h of computed.healthChecks.filter((h) => h.status === "warn" && h.severity === "warn")) {
+    const k = `hc_${h.key}` as DictKey;
     const label = k in dict ? dict[k] : { ru: h.key, en: h.key };
-    attention.push({ text: { ru: label.ru, en: label.en }, href: h.href, tone: "danger" });
+    attention.push({ text: { ru: label.ru, en: label.en }, href: h.href });
   }
 
-  // ── region distribution for the month ──
-  const channelByName = new Map(dataset.channels.map((c) => [c.name, c.id]));
-  const seen = new Set<string>();
-  const regions: Array<{ name: { ru: string; en: string }; revenue: number }> = [];
-  for (const r of UZ_REGIONS) {
-    if (r.channels.length === 0) continue;
-    const sig = [...r.channels].sort().join("|");
-    if (seen.has(sig)) continue;
-    seen.add(sig);
-    const revenue = r.channels.reduce(
-      (a, name) => a + (monthly?.revenueByChannel[channelByName.get(name) ?? ""] ?? 0),
-      0
-    );
-    if (revenue > 0) regions.push({ name: { ru: r.nameRu, en: r.nameEn }, revenue });
-  }
-  regions.sort((a, b) => b.revenue - a.revenue);
-  const regionTotal = regions.reduce((a, r) => a + r.revenue, 0);
-  const top3 = regions.slice(0, 3);
-  const monthRevenue = monthly?.revenue ?? 0;
-  const others = monthRevenue - top3.reduce((a, r) => a + r.revenue, 0);
-  void regionTotal;
-
-  // ── top products for the month ──
-  const topProducts = Object.entries(monthly?.revenueByProduct ?? {})
-    .map(([pid, revenue]) => {
-      const p = dataset.products.find((x) => x.id === pid);
-      const qty = monthly?.qtyByProduct[pid] ?? 0;
-      const cost = computed.productCosts[costProductIdOf(pid, dataset)]?.avgTiCost ?? 0;
-      const realised = qty !== 0 ? revenue / qty : 0;
+  const recent = computed.monthIds.slice(Math.max(0, i - 11), i + 1);
+  const points = (pick: (m: string) => number) =>
+    recent.map((m) => {
+      const row = dataset.months.find((x) => x.id === m);
       return {
-        name: p?.nameRu ?? pid,
-        qty,
-        revenue,
-        marginPct: realised !== 0 ? (realised - cost) / realised : 0,
+        key: m,
+        short: shortMonth(m, ctx.locale),
+        long: row ? ctx.l({ ru: row.nameRu, en: row.nameEn }) : m,
+        value: pick(m),
+        focus: m === monthId,
       };
-    })
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 5);
+    });
+  const groupOf = (m: string) => computed.group[computed.monthIds.indexOf(m)];
 
   return (
-    <DashboardView
-      months={dataset.months}
-      monthId={monthId}
-      netProfit={monthly?.netProfit ?? 0}
-      cumNetProfit={computed.monthly
-        .filter((m) => m.monthId <= monthId)
-        .reduce((a, m) => a + m.netProfit, 0)}
-      priorNetProfit={prior?.netProfit ?? null}
-      priorMonthId={prior?.monthId ?? null}
-      // running total, so the ghost sparkline mirrors the cumulative figure
-      netSeries={active.map((_, i) =>
-        active.slice(0, i + 1).reduce((a, m) => a + m.netProfit, 0)
-      )}
-      revenue={monthRevenue}
-      priorRevenue={prior?.revenue ?? null}
-      gpMarginPct={monthly?.gpMarginPct ?? 0}
-      priorGpMarginPct={prior?.gpMarginPct ?? null}
-      expenses={monthly?.totalOpex ?? 0}
-      expensesShare={monthRevenue !== 0 ? (monthly?.totalOpex ?? 0) / monthRevenue : 0}
-      trend={active.map((m) => ({ monthId: m.monthId, revenue: m.revenue }))}
-      attention={attention.slice(0, 3)}
-      moreAttention={Math.max(0, attention.length - 3)}
-      regions={[...top3, ...(others > 0 ? [{ name: { ru: "Другие каналы", en: "Other channels" }, revenue: others }] : [])]}
-      settlement={
-        computed.settlement.find((s) => s.monthId === monthId) ?? null
-      }
-      topProducts={topProducts}
+    <OverviewView
+      monthName={month ? ctx.l({ ru: month.nameRu, en: month.nameEn }) : monthId}
+      figures={{
+        net: g?.netProfit ?? 0,
+        netCum: sumTo(computed.group),
+        revenue: g?.revenue ?? 0,
+        revenuePrev: prev >= 0 ? computed.group[prev].revenue : null,
+        margin: g && g.revenue !== 0 ? g.grossProfit / g.revenue : null,
+        owes: s?.owes ?? 0,
+        owesPrev: prev >= 0 ? computed.settlement[prev].owes : null,
+        stock: b?.group.stock ?? 0,
+        stockUnits: Object.values(computed.fifo).reduce(
+          (t, p) => t + (p.months[monthId]?.fargoStockUnits ?? 0) + (p.months[monthId]?.tiStockUnits ?? 0),
+          0
+        ),
+      }}
+      results={[
+        { label: { ru: "Turbo Impex", en: "Turbo Impex" }, month: computed.ti[i]?.netProfit ?? 0, cum: sumTo(computed.ti), href: "/statements/pnl?entity=ti" },
+        { label: { ru: "Fargo, бизнес Humana", en: "Fargo, Humana business" }, month: computed.fargo[i]?.netProfit ?? 0, cum: sumTo(computed.fargo), href: "/statements/pnl?entity=fargo" },
+        { label: { ru: "Группа", en: "Group" }, month: g?.netProfit ?? 0, cum: sumTo(computed.group), strong: true, href: "/statements/pnl" },
+      ]}
+      attention={attention}
+      revenue={points((m) => groupOf(m)?.revenue ?? 0)}
+      net={points((m) => groupOf(m)?.netProfit ?? 0)}
     />
   );
 }

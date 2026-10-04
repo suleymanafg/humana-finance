@@ -21,7 +21,7 @@ const STORAGE_KEY = "hf-chat";
 const STARTERS: { ru: string; en: string }[] = [
   { ru: "Почему изменилась прибыль в мае 2026?", en: "Why did profit change in May 2026?" },
   { ru: "Что сейчас не так с данными?", en: "What is currently wrong with the data?" },
-  { ru: "Сходится ли баланс за апрель 2026?", en: "Does the April 2026 balance sheet reconcile?" },
+  { ru: "Сколько Fargo должен TI и как это разделено?", en: "How much does Fargo owe TI, and how is it split?" },
   { ru: "Какой продукт даёт лучшую маржу?", en: "Which product has the best margin?" },
 ];
 

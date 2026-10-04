@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Card, PageTitle } from "./ui";
+import { Card } from "./ui";
 import { IconAlert, IconCheck } from "./icons";
 import { useT } from "@/lib/locale-context";
 import { dict, type DictKey } from "@/lib/i18n";
 import type { HealthCheck } from "@/lib/engine/types";
 
 export default function HealthView({ checks }: { checks: HealthCheck[] }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const warns = checks.filter((c) => c.status === "warn" && c.severity === "warn");
   const infos = checks.filter((c) => c.status === "warn" && c.severity === "info");
   const oks = checks.filter((c) => c.status === "ok");
@@ -66,41 +66,25 @@ export default function HealthView({ checks }: { checks: HealthCheck[] }) {
     </div>
   );
 
+  const group = (title: { ru: string; en: string }, list: HealthCheck[]) =>
+    list.length > 0 && (
+      <section className="mb-6">
+        <h2 className="mb-2 text-[14px] font-semibold">
+          {title[locale]} <span className="font-normal text-muted">{list.length}</span>
+        </h2>
+        <Card>
+          {list.map((c) => (
+            <Item key={c.key} c={c} />
+          ))}
+        </Card>
+      </section>
+    );
+
   return (
     <div>
-      <PageTitle
-        title={t("healthTitle")}
-        subtitle={t("descHealth")}
-        right={
-          <span className="flex items-center gap-2 text-[13px] text-muted">
-            <span className="flex items-center gap-1 text-warn">
-              <IconAlert size={13} /> {warns.length}
-            </span>
-            <span className="flex items-center gap-1 text-ok">
-              <IconCheck size={13} /> {oks.length}
-            </span>
-          </span>
-        }
-      />
-      {warns.length > 0 && (
-        <Card className="mb-4">
-          {warns.map((c) => (
-            <Item key={c.key} c={c} />
-          ))}
-        </Card>
-      )}
-      {infos.length > 0 && (
-        <Card className="mb-4">
-          {infos.map((c) => (
-            <Item key={c.key} c={c} />
-          ))}
-        </Card>
-      )}
-      <Card>
-        {oks.map((c) => (
-          <Item key={c.key} c={c} />
-        ))}
-      </Card>
+      {group({ ru: "Требуют внимания", en: "Need attention" }, warns)}
+      {group({ ru: "Для сведения", en: "For information" }, infos)}
+      {group({ ru: "В порядке", en: "In order" }, oks)}
     </div>
   );
 }
