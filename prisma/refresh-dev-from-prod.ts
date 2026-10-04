@@ -5,10 +5,15 @@ import "dotenv/config";
 //
 //   npx tsx prisma/refresh-dev-from-prod.ts            # dry run (counts only)
 //   npx tsx prisma/refresh-dev-from-prod.ts --commit   # wipe dev + copy
+//
+// It refuses when the target holds the new version's own records (TI invoices
+// and the rest of the new financial model): those exist nowhere else.
+// --force overrides that.
 import { readFileSync } from "node:fs";
 import { newPrismaClient } from "../src/lib/prisma-factory";
 
 const COMMIT = process.argv.includes("--commit");
+const FORCE = process.argv.includes("--force");
 
 function productionUrl(): string {
   const env = readFileSync(".env", "utf8");
@@ -74,6 +79,16 @@ async function main() {
 
   const src = newPrismaClient(SOURCE);
   const dst = newPrismaClient(TARGET);
+
+  // a target that already runs the new version holds records production does not have
+  const ownInvoices = await dst.tiInvoiceLine.count({ where: { deletedAt: null } }).catch(() => 0);
+  if (ownInvoices > 0 && !FORCE) {
+    console.error(
+      `Stopped: the target holds ${ownInvoices} TI invoice lines — data of the new version that exists nowhere else. Nothing was read or written. Add --force only if you really mean to wipe it.`
+    );
+    await Promise.all([src.$disconnect(), dst.$disconnect()]);
+    process.exit(1);
+  }
 
   // read everything from production first
   const data: Record<string, Record<string, unknown>[]> = {};
