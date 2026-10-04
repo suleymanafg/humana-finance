@@ -9,6 +9,8 @@ import AppShell from "@/components/AppShell";
 import { getComputed } from "@/lib/data";
 import { computeMonthStatus, defaultMonthId } from "@/lib/month-status";
 import { MONTH_COOKIE } from "@/lib/month-cookie";
+import { databaseProblem, type DbProblem } from "@/lib/db-problem";
+import DatabaseNotice from "@/components/DatabaseNotice";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin", "cyrillic"] });
 const manrope = Manrope({ variable: "--font-manrope", subsets: ["latin", "cyrillic"] });
@@ -54,19 +56,26 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     healthWarnings: number;
   } | null = null;
 
+  let dbProblem: DbProblem | null = null;
   if (session && !standalone) {
-    const { dataset, computed } = await getComputed();
-    const status = computeMonthStatus(dataset);
-    const fallback = defaultMonthId(status, dataset.months[0]?.id ?? "");
-    // resolve the sticky month cookie on the server so SSR and hydration agree
-    const cookieMonth = store.get(MONTH_COOKIE)?.value;
-    shellData = {
-      months: dataset.months.map((m) => ({ id: m.id, nameRu: m.nameRu, nameEn: m.nameEn })),
-      status: status.map((s) => ({ monthId: s.monthId, status: s.status, closed: s.closed })),
-      fallbackMonth:
-        cookieMonth && dataset.months.some((m) => m.id === cookieMonth) ? cookieMonth : fallback,
-      healthWarnings: computed.healthChecks.filter((h) => h.status === "warn" && h.severity === "warn").length,
-    };
+    try {
+      const { dataset, computed } = await getComputed();
+      const status = computeMonthStatus(dataset);
+      const fallback = defaultMonthId(status, dataset.months[0]?.id ?? "");
+      // resolve the sticky month cookie on the server so SSR and hydration agree
+      const cookieMonth = store.get(MONTH_COOKIE)?.value;
+      shellData = {
+        months: dataset.months.map((m) => ({ id: m.id, nameRu: m.nameRu, nameEn: m.nameEn })),
+        status: status.map((s) => ({ monthId: s.monthId, status: s.status, closed: s.closed })),
+        fallbackMonth:
+          cookieMonth && dataset.months.some((m) => m.id === cookieMonth) ? cookieMonth : fallback,
+        healthWarnings: computed.healthChecks.filter((h) => h.status === "warn" && h.severity === "warn").length,
+      };
+    } catch (e) {
+      // a database the app cannot use gets a plain explanation, not a crash page
+      dbProblem = databaseProblem(e);
+      if (!dbProblem) throw e;
+    }
   }
 
   return (
@@ -76,7 +85,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     >
       <body className="min-h-full">
         <LocaleProvider initial={locale}>
-          {session && shellData && !standalone ? (
+          {dbProblem ? (
+            <DatabaseNotice problem={dbProblem} locale={locale} />
+          ) : session && shellData && !standalone ? (
             <AppShell
               username={session.username}
               role={session.role}
