@@ -76,12 +76,10 @@ async function main() {
   }
 
   // ── 2. reference data ──
-  const [products, channels, months, warehouses, importCats, opexCats, shipments] = await Promise.all([
+  const [products, channels, months, opexCats, shipments] = await Promise.all([
     prisma.product.findMany(),
     prisma.channel.findMany(),
     prisma.month.findMany(),
-    prisma.warehouse.findMany(),
-    prisma.importExpenseCategory.findMany(),
     prisma.opexCategory.findMany(),
     prisma.shipment.findMany({ where: { deletedAt: null } }),
   ]);
