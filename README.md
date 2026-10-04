@@ -320,6 +320,15 @@ Set every key from `.env.example` in the project settings, with `APP_URL` set to
 the real deployed domain — data-request links are built from it, and a localhost
 value produces links recipients cannot open.
 
+**Preview deployments.** Every branch pushed to GitHub gets its own Vercel
+preview URL, separate from production (`master`). Previews read the Vercel
+environment variables scoped to *Preview*; if `DATABASE_URL` is shared with
+Production, a preview reads and writes live figures. Point Preview's
+`DATABASE_URL` at a Neon dev branch before testing anything that writes data or
+changes the schema. Vercel skips a build when a branch head is a commit it has
+already deployed, so a new branch needs one commit of its own before a preview
+appears.
+
 **Note on long requests.** The 1C sync (especially «Заменить все месяцы») and any
 future agentic chat run well past a typical serverless timeout. If they time out
 on the deployed plan, they need streaming or a background job rather than a
