@@ -155,7 +155,9 @@ async function main() {
   const arMonths = [...new Set(ds.arEntries.map((a) => a.monthId))].sort();
   const arOutside = [...new Set(arNow.map((a) => a.monthId))].filter((m) => m <= wb.reportTo && !arMonths.includes(m)).sort();
   if (arOutside.length > 0) console.log(`  receivables the workbook does not have, hidden: ${arOutside.join(", ")}`);
-  const countMonths = [...new Set(ds.stockCounts.map((c) => c.monthId))].sort();
+  // a month whose counts are all zero is a placeholder, not a count: it is left
+  // alone, so a real count entered in the app for that month survives
+  const countMonths = [...new Set(ds.stockCounts.filter((c) => c.qty !== 0).map((c) => c.monthId))].sort();
   console.log(`  receivables for ${arMonths.join(", ")}; stock counts for ${countMonths.join(", ")}; month-end balances for ${ds.monthBalances.map((b) => b.monthId).join(", ")}`);
 
   // sales are compared, not replaced, unless asked
@@ -379,7 +381,7 @@ async function main() {
       });
       await tx.stockCount.deleteMany({ where: { monthId: { in: countMonths } } });
       await tx.stockCount.createMany({
-        data: ds.stockCounts.map((c) => ({
+        data: ds.stockCounts.filter((c) => countMonths.includes(c.monthId)).map((c) => ({
           monthId: c.monthId,
           productId: c.productId,
           warehouseId: warehouseId.get(c.warehouseId)!,
