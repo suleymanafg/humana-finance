@@ -99,8 +99,36 @@ function grid(wb: XLSX.WorkBook, name: string): Row[] {
   return XLSX.utils.sheet_to_json<Row>(ws, { header: 1, defval: null, raw: true });
 }
 
-/** Monthly figures from a statement tab: label in column A, months from column C. */
-function statementRows(rows: Row[], wanted: Record<string, number>): Expected {
+/**
+ * The English label of every row of a tab: the Translations entry its label
+ * formula points to, else the text shown. Lines are found by these labels, so a
+ * line added or removed above them does not shift what is read.
+ */
+function rowLabels(wb: XLSX.WorkBook, name: string): string[] {
+  const ws = wb.Sheets[name];
+  if (!ws) throw new Error(`The workbook has no tab «${name}»`);
+  const translations = grid(wb, "Translations");
+  const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
+  const out: string[] = [];
+  for (let r = 0; r <= range.e.r; r++) {
+    const cell = ws[XLSX.utils.encode_cell({ r, c: 0 })] as XLSX.CellObject | undefined;
+    const ref = cell?.f?.match(/Translations!\$B\$(\d+)/);
+    out.push(String(ref ? (translations[Number(ref[1]) - 1]?.[1] ?? "") : (cell?.v ?? "")).trim());
+  }
+  return out;
+}
+
+/** The full label of the first line that starts with `start` (long labels end in detail that may change). */
+function rowStartingWith(wb: XLSX.WorkBook, name: string, start: string): string {
+  const label = rowLabels(wb, name).find((l) => l.startsWith(start));
+  if (!label) throw new Error(`The tab «${name}» has no line starting «${start}»`);
+  return label;
+}
+
+/** Monthly figures from a statement tab: lines found by label, months from column C. */
+function statementRows(wb: XLSX.WorkBook, name: string, wanted: Record<string, string>): Expected {
+  const rows = grid(wb, name);
+  const labels = rowLabels(wb, name);
   const header = rows[2] ?? [];
   const months: string[] = [];
   const cols: number[] = [];
@@ -112,15 +140,17 @@ function statementRows(rows: Row[], wanted: Record<string, number>): Expected {
     }
   });
   const out: Expected = { months, rows: {} };
-  for (const [key, rowNo] of Object.entries(wanted)) {
-    const r = rows[rowNo - 1] ?? [];
+  for (const [key, label] of Object.entries(wanted)) {
+    const at = labels.indexOf(label);
+    if (at < 0) throw new Error(`The tab «${name}» has no line «${label}»`);
+    const r = rows[at] ?? [];
     out.rows[key] = Object.fromEntries(months.map((m, j) => [m, num(r[cols[j]])]));
   }
   return out;
 }
 
 export function readWorkbook(path: string): WorkbookData {
-  const wb = XLSX.readFile(path);
+  const wb = XLSX.readFile(path, { cellFormula: true });
   const body = (name: string, from = 3) => grid(wb, name).slice(from);
 
   // ── settings ──
@@ -322,7 +352,8 @@ export function readWorkbook(path: string): WorkbookData {
       viaFargo: /^Cash via Fargo/i.test(str(r[2])),
       notes: str(r[5]) || null,
     }));
-  const otherReceipts = body("Other receipts")
+  // from Oct 2026 the workbook counts these as Fargo's cash payments and has no such tab
+  const otherReceipts = (wb.Sheets["Other receipts"] ? body("Other receipts") : [])
     .filter((r) => isoDate(r[0]) && typeof r[3] === "number")
     .map((r, i) => ({
       id: `OR${i + 1}`,
@@ -419,30 +450,92 @@ export function readWorkbook(path: string): WorkbookData {
 
   // ── the workbook's own figures ──
   const expected = mergeExpected([
-    prefix("ti.", statementRows(grid(wb, "P&L TI"), {
-      revenue: 5, cogs: 7, giveaways: 8, grossProfit: 9, opex: 22, ebitda: 24, profitTax: 26, vatCost: 27, netProfit: 29,
-      importVat: 33, outputInvoices: 34, outputOther: 35, netModel: 36, perAccount: 37, accountBalance: 39, priorOwnerPart: 40,
+    prefix("ti.", statementRows(wb, "P&L TI", {
+      revenue: "Sales to Fargo (invoices, ex-VAT)",
+      cogs: "− COGS (invoiced units, FIFO by truck)",
+      giveaways: "− Goods given away free (samples & laboratory)",
+      grossProfit: "GROSS PROFIT",
+      opex: "Total operating expenses",
+      ebitda: "OPERATING PROFIT (EBITDA)",
+      profitTax: "TI profit tax (filed returns)",
+      vatCost: "VAT paid twice — paper cash sale of 2,124 units (27.08.2025)",
+      netProfit: "NET PROFIT — TURBO IMPEX",
+      importVat: "Model: input VAT — import VAT at customs",
+      outputInvoices: "Model: output VAT — invoices to Fargo",
+      outputOther: rowStartingWith(wb, "P&L TI", "Model: output VAT — retail sales on TI's tax account"),
+      netModel: "Model: net VAT for the month (output − input)",
+      perAccount: "Per tax account (КЛС): charged − reduced for the month",
+      accountBalance: "Tax account at month-end: overpayment (+) / debt (−)",
+      priorOwnerPart: rowStartingWith(wb, "P&L TI", "of which previous owner's overpayment"),
     })),
-    prefix("fargo.", statementRows(grid(wb, "P&L Fargo"), {
-      bankRevenue: 5, cashRevenue: 6, revenue: 7, salesAtPrice: 8, cashDeclared: 9, units: 11, cogs: 12, stockLoss: 13,
-      writeOffsRecorded: 14, grossProfit: 15, opex: 27, incomeTax: 33, netProfit: 36,
-      vatInput: 40, vatOutputBank: 41, vatOutputCash: 42, vatNet: 43, vatPaid: 44, vatCredit: 45,
+    prefix("fargo.", statementRows(wb, "P&L Fargo", {
+      bankRevenue: "Bank sales (price ÷ 1.12)",
+      cashRevenue: "Cash sales (price − VAT on declared value)",
+      revenue: "Revenue",
+      salesAtPrice: "Memo: sales at customer prices (VAT-inclusive)",
+      cashDeclared: rowStartingWith(wb, "P&L Fargo", "Memo: cash sales declared"),
+      units: "Units sold",
+      cogs: "− COGS (units sold, FIFO by TI invoice, ex-VAT)",
+      stockLoss: rowStartingWith(wb, "P&L Fargo", "− Stock loss vs physical count"),
+      writeOffsRecorded: "of which write-offs recorded by Fargo (its expense data)",
+      grossProfit: "GROSS PROFIT",
+      opex: "Total operating expenses",
+      incomeTax: "Income tax (1.9% of turnover at customer prices)",
+      netProfit: "NET PROFIT — FARGO (Humana)",
+      vatInput: "Input VAT — TI invoices received (зачёт)",
+      vatOutputBank: "Output VAT — bank sales (12/112 of price)",
+      vatOutputCash: "Output VAT — cash sales (12% of declared cash sales)",
+      vatNet: "Net VAT for the month (output − input)",
+      vatPaid: rowStartingWith(wb, "P&L Fargo", "VAT paid to budget"),
+      vatCredit: "VAT credit carried forward at month-end",
     })),
-    prefix("group.", statementRows(pnl, {
-      revenue: 7, cogs: 9, giveaways: 10, stockLoss: 11, grossProfit: 12, opex: 36, ebitda: 38, taxes: 45, netProfit: 47, check: 57,
+    prefix("group.", statementRows(wb, "P&L Consolidated", {
+      revenue: "Revenue",
+      cogs: "− COGS (units sold, FIFO at TI landed cost)",
+      giveaways: "− Goods given away free (samples & laboratory)",
+      stockLoss: rowStartingWith(wb, "P&L Consolidated", "− Stock loss vs physical count"),
+      grossProfit: "GROSS PROFIT",
+      opex: "TOTAL OPEX",
+      ebitda: "EBITDA",
+      taxes: "TOTAL TAXES",
+      netProfit: "NET PROFIT — CONSOLIDATED",
+      check: "Check vs NET PROFIT above (must be 0)",
     })),
-    prefix("settlement.", statementRows(grid(wb, "Settlement detail"), {
-      actBalance: 7, notGoods: 14, partnership: 23, owesByAct: 26, byBank: 27, inCash: 28, owes: 41, check: 42,
+    prefix("settlement.", statementRows(wb, "Settlement detail", {
+      actBalance: "= Fargo owes TI according to the act",
+      notGoods: "= Not payments for goods",
+      partnership: "= Partnership part",
+      owesByAct: "FARGO STILL OWES TI (1 + 2 + 3)",
+      byBank: "of which payable by bank against invoices (up to the act balance)",
+      inCash: "of which payable in cash",
+      owes: "Fargo still owes TI — cash method",
+      check: "Check: result 4 − result 5 (must be 0)",
     })),
-    prefix("bsTi.", statementRows(grid(wb, "BS TI"), {
-      receivableFromFargo: 7, stock: 8, vatOverpaid: 10, assets: 11, liabilities: 21, equity: 27, unreconciled: 29,
-      unreconciledCash: 34, unreconciledVat: 35,
+    prefix("bsTi.", statementRows(wb, "BS TI", {
+      receivableFromFargo: "Receivable from Fargo (invoices incl. VAT − payments received)",
+      stock: "Stock held by TI (FIFO: truck batches not yet used up)",
+      vatOverpaid: "VAT overpaid to budget — tax account (КЛС)",
+      assets: "TOTAL ASSETS",
+      liabilities: "TOTAL LIABILITIES",
+      equity: "TOTAL EQUITY",
+      unreconciled: "UNRECONCILED (assets − liabilities − equity)",
+      unreconciledCash: rowStartingWith(wb, "BS TI", "Cash + prepayments TI holds"),
+      unreconciledVat: rowStartingWith(wb, "BS TI", "+ VAT: billed to Fargo on invoices"),
     })),
-    prefix("bsFargo.", statementRows(grid(wb, "BS Fargo"), {
-      stock: 5, vatCredit: 6, cashHeld: 8, assets: 9, equity: 17, check: 19,
+    prefix("bsFargo.", statementRows(wb, "BS Fargo", {
+      stock: "Stock at Fargo (at TI invoice price, ex-VAT)",
+      vatCredit: "VAT credit carried forward — Fargo VAT ledger",
+      cashHeld: rowStartingWith(wb, "BS Fargo", "Humana cash held by Fargo"),
+      assets: "TOTAL ASSETS",
+      equity: "TOTAL EQUITY",
+      check: "Check: assets − liabilities − equity (must be 0)",
     })),
-    prefix("bsGroup.", statementRows(grid(wb, "BS Consolidated"), {
-      stock: 5, assets: 13, liabilities: 23, equity: 29, unreconciled: 31,
+    prefix("bsGroup.", statementRows(wb, "BS Consolidated", {
+      stock: "Stock — at the physical count (FIFO, at TI landed cost)",
+      assets: "TOTAL ASSETS",
+      liabilities: "TOTAL LIABILITIES",
+      equity: "TOTAL EQUITY",
+      unreconciled: "UNRECONCILED (assets − liabilities − equity)",
     })),
   ]);
 

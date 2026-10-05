@@ -100,6 +100,11 @@ npx tsx prisma/import-workbook.ts "<workbook.xlsx>" --commit   # write
 for the months the workbook covers (normally the 1C sync owns sales), and
 `--bootstrap` creates missing products and channels in an empty database.
 
+Re-importing a corrected workbook is safe once the app holds newer data: up to
+the workbook's report month the workbook replaces what the app has; after it,
+the app's own rows stay and the workbook's later rows are added only where the
+app has none yet.
+
 ## Design
 
 Text navigation without icons, one indigo accent, hairline borders, tabular

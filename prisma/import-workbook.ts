@@ -19,14 +19,15 @@ import "dotenv/config";
 //   --accept-differences   commit even when the figures from the database
 //                  differ from the workbook (e.g. 1C sales newer than it)
 //
-// What it replaces: TI invoices, TI write-offs, the TI VAT account and other
-// VAT charges, loans, the previous owner's money, other receipts, capital, tax
-// filings, truck lines and import expenses of arrived trucks; expenses and
-// receivables for every month up to the workbook's report month; and — for the
-// months and dates the workbook covers — payments from Fargo, stock counts and
-// month-end balances. Channel cash shares and the tax settings are updated.
-// Replaced rows are hidden (deletedAt), not erased. Nothing later than the
-// workbook's coverage is touched.
+// Up to its report month the workbook is the record: TI invoices and
+// write-offs, payments from Fargo, expenses, the TI VAT account and other VAT
+// charges, tax filings, loans, the previous owner's money, other receipts,
+// capital, receivables, stock counts, month-end balances, and the lines and
+// import expenses of arrived trucks are replaced. After the report month the
+// app is the record: whatever it already holds there — entered in the app or
+// brought in by an earlier import — stays, and the workbook's later rows are
+// added only where the app has none. Channel cash shares and the tax settings
+// are updated. Replaced rows are hidden (deletedAt), not erased.
 import { readFileSync } from "node:fs";
 import { newPrismaClient } from "../src/lib/prisma-factory";
 import { compute } from "../src/lib/engine/compute";
@@ -125,40 +126,105 @@ async function main() {
   console.log(
     `  truck lines (arrived trucks): ${dbLines.length} → ${sum(ds.shipments.filter((s) => arrivedIds.has(s.id)), (s) => s.lines.length)}; purchase ${money(sum(dbLines, (l) => l.qty * l.priceEur * l.rate))} → ${money(sum(ds.shipments.filter((s) => arrivedIds.has(s.id)).flatMap((s) => s.lines), (l) => l.qty * l.priceEur * l.rate))} UZS`
   );
+  // up to the report month the workbook replaces what the app has; after it,
+  // the app's own rows stay and the workbook's later rows go in only where
+  // the app has none yet
+  const [reportYear, reportMonth] = wb.reportTo.split("-").map(Number);
+  const reportEnd = new Date(Date.UTC(reportYear, reportMonth, 0, 23, 59, 59, 999));
+  const upToMonth = { lte: wb.reportTo };
+  const upToDate = { lte: reportEnd };
+  const laterMonth = { gt: wb.reportTo };
+  const laterDate = { gt: reportEnd };
+  const laterCounts = {
+    "TI invoices": prisma.tiInvoiceLine.count({ where: { deletedAt: null, date: laterDate } }),
+    "TI write-offs": prisma.tiWriteOff.count({ where: { deletedAt: null, date: laterDate } }),
+    "payments from Fargo": prisma.fargoTransfer.count({ where: { deletedAt: null, date: laterDate } }),
+    "TI expenses": prisma.opexTiEntry.count({ where: { deletedAt: null, monthId: laterMonth } }),
+    "Fargo expenses": prisma.opexFargoEntry.count({ where: { deletedAt: null, monthId: laterMonth } }),
+    "import expenses": prisma.importExpense.count({ where: { deletedAt: null, monthId: laterMonth } }),
+    "tax filings": prisma.tiTaxFiling.count({ where: { deletedAt: null, bookedMonthId: laterMonth } }),
+    "TI VAT account": prisma.tiVatAccountEntry.count({ where: { deletedAt: null, period: laterMonth } }),
+    "other VAT charges": prisma.tiVatCharge.count({ where: { deletedAt: null, monthId: laterMonth } }),
+    "Fargo VAT returns": prisma.fargoVatReturn.count({ where: { monthId: laterMonth } }),
+    loans: prisma.loanMovement.count({ where: { deletedAt: null, monthId: laterMonth } }),
+    "previous owner": prisma.priorOwnerEntry.count({ where: { deletedAt: null, date: laterDate } }),
+    "other receipts": prisma.otherReceipt.count({ where: { deletedAt: null, date: laterDate } }),
+    capital: prisma.capitalContribution.count({ where: { deletedAt: null, date: laterDate } }),
+    receivables: prisma.arEntry.count({ where: { deletedAt: null, monthId: laterMonth } }),
+    "stock counts": prisma.stockCount.count({ where: { monthId: laterMonth, qty: { not: 0 } } }),
+    "month-end balances": prisma.monthBalance.count({ where: { monthId: laterMonth } }),
+  };
+  type Kind = keyof typeof laterCounts;
+  const appLater = Object.fromEntries(
+    await Promise.all(Object.entries(laterCounts).map(async ([kind, n]) => [kind, await n] as const))
+  ) as Record<Kind, number>;
+  const leftOut: string[] = [];
+  /** The workbook's rows of one kind that get written. */
+  const rowsFor = <T>(kind: Kind, rows: T[], monthOf: (r: T) => string) => {
+    if (appLater[kind] === 0) return rows;
+    const upTo = rows.filter((r) => monthOf(r) <= wb.reportTo);
+    if (upTo.length < rows.length) leftOut.push(`${kind} ${rows.length - upTo.length}`);
+    return upTo;
+  };
+  const monthOfDate = (r: { date: string }) => r.date.slice(0, 7);
+
   // an expense of a truck the workbook does not list counts nowhere in the workbook either
   const knownTrucks = new Set(wb.shipmentHeaders.map((h) => h.id));
-  const importExpenses = ds.importExpenses.filter((e) => knownTrucks.has(e.shipmentId));
+  const truckExpenses = ds.importExpenses.filter((e) => knownTrucks.has(e.shipmentId));
   const orphanExpenses = ds.importExpenses.filter((e) => !knownTrucks.has(e.shipmentId));
+  const expenseShipments = [...new Set(truckExpenses.map((e) => e.shipmentId))];
+  const importExpenses = rowsFor("import expenses", truckExpenses, (e) => e.monthId);
+  const invoices = rowsFor("TI invoices", ds.invoices, monthOfDate);
+  const writeOffs = rowsFor("TI write-offs", ds.writeOffs, monthOfDate);
+  const transfers = rowsFor("payments from Fargo", ds.transfers, monthOfDate);
+  const opexTi = rowsFor("TI expenses", ds.opexTi, (e) => e.monthId);
+  const opexFargo = rowsFor("Fargo expenses", ds.opexFargo, (e) => e.monthId);
+  const taxFilings = rowsFor("tax filings", ds.taxFilings, (f) => f.bookedMonthId);
+  const vatAccount = rowsFor("TI VAT account", ds.vatAccount, (e) => e.period);
+  const vatCharges = rowsFor("other VAT charges", ds.vatCharges, (c) => c.monthId);
+  const fargoVatReturns = rowsFor("Fargo VAT returns", ds.fargoVatReturns, (r) => r.monthId);
+  const loans = rowsFor("loans", ds.loans, (l) => l.monthId);
+  const priorOwner = rowsFor("previous owner", ds.priorOwner, monthOfDate);
+  const otherReceipts = rowsFor("other receipts", ds.otherReceipts, monthOfDate);
+  const contributions = rowsFor("capital", ds.contributions, monthOfDate);
+  const arEntries = rowsFor("receivables", ds.arEntries, (a) => a.monthId);
+  // a month whose counts are all zero is a placeholder, not a count: it is left
+  // alone, so a real count entered in the app for that month survives
+  const countMonths = rowsFor(
+    "stock counts",
+    [...new Set(ds.stockCounts.filter((c) => c.qty !== 0).map((c) => c.monthId))].sort(),
+    (id) => id
+  );
+  const monthBalances = rowsFor("month-end balances", ds.monthBalances, (b) => b.monthId);
+
   console.log(
     `  import expenses: ${importExpenses.length} rows, ${money(sum(importExpenses, (e) => e.amount))} UZS${orphanExpenses.length > 0 ? `; ${orphanExpenses.length} row(s) of a truck the workbook does not list skipped (${money(sum(orphanExpenses, (e) => e.amount))} UZS)` : ""}`
   );
-  console.log(`  TI invoice lines: ${ds.invoices.length}, ${money(sum(ds.invoices, (l) => l.amount))} UZS ex-VAT`);
-  console.log(`  TI write-offs: ${ds.writeOffs.length}; TI VAT account: ${ds.vatAccount.length} operations; other VAT charges: ${ds.vatCharges.length}`);
-  console.log(`  loans: ${ds.loans.length}; previous owner: ${ds.priorOwner.length}; other receipts: ${ds.otherReceipts.length}; capital: ${ds.contributions.length}; tax filings: ${ds.taxFilings.length}`);
-  const lastTransfer = ds.transfers.map((t) => t.date).sort().at(-1) ?? "";
+  console.log(`  TI invoice lines: ${invoices.length}, ${money(sum(invoices, (l) => l.amount))} UZS ex-VAT`);
+  console.log(`  TI write-offs: ${writeOffs.length}; TI VAT account: ${vatAccount.length} operations; other VAT charges: ${vatCharges.length}`);
+  console.log(`  loans: ${loans.length}; previous owner: ${priorOwner.length}; other receipts: ${otherReceipts.length}; capital: ${contributions.length}; tax filings: ${taxFilings.length}`);
   console.log(
-    `  payments from Fargo up to ${lastTransfer}: ${ds.transfers.length} (cash ${money(sum(ds.transfers, (t) => t.cashAmount))}, bank ${money(sum(ds.transfers, (t) => t.bankAmount))}); ${wb.skippedTransfers.length / 2} previous-owner pairs kept under «Previous owner»`
+    `  payments from Fargo up to ${transfers.map((t) => t.date.slice(0, 10)).sort().at(-1) ?? "—"}: ${transfers.length} (cash ${money(sum(transfers, (t) => t.cashAmount))}, bank ${money(sum(transfers, (t) => t.bankAmount))}); ${wb.skippedTransfers.length / 2} previous-owner pairs kept under «Previous owner»`
   );
-  // the workbook is the full record up to its report month: expenses and
-  // receivables are replaced for every month up to it (and any later month it fills)
-  const covered = (filled: string[]) => ({ OR: [{ monthId: { lte: wb.reportTo } }, { monthId: { in: filled } }] });
-  const opexTiMonths = [...new Set(ds.opexTi.map((e) => e.monthId))].sort();
-  const opexFargoMonths = [...new Set(ds.opexFargo.map((e) => e.monthId))].sort();
   const [opexTiNow, opexFargoNow, arNow] = await Promise.all([
-    prisma.opexTiEntry.findMany({ where: { deletedAt: null, ...covered(opexTiMonths) }, select: { bankAmount: true, cashAmount: true } }),
-    prisma.opexFargoEntry.findMany({ where: { deletedAt: null, ...covered(opexFargoMonths) }, select: { amount: true } }),
-    prisma.arEntry.findMany({ where: { deletedAt: null }, select: { monthId: true } }),
+    prisma.opexTiEntry.findMany({ where: { deletedAt: null, monthId: upToMonth }, select: { bankAmount: true, cashAmount: true } }),
+    prisma.opexFargoEntry.findMany({ where: { deletedAt: null, monthId: upToMonth }, select: { amount: true } }),
+    prisma.arEntry.findMany({ where: { deletedAt: null, monthId: upToMonth }, select: { monthId: true } }),
   ]);
+  const upToReport = <T extends { monthId: string }>(rows: T[]) => rows.filter((r) => r.monthId <= wb.reportTo);
   console.log(
-    `  expenses up to ${wb.reportTo} replaced — TI ${money(sum(opexTiNow, (e) => e.bankAmount + e.cashAmount))} → ${money(sum(ds.opexTi, (e) => e.bankAmount + e.cashAmount))}; Fargo ${money(sum(opexFargoNow, (e) => e.amount))} → ${money(sum(ds.opexFargo, (e) => e.amount))}`
+    `  expenses up to ${wb.reportTo} replaced — TI ${money(sum(opexTiNow, (e) => e.bankAmount + e.cashAmount))} → ${money(sum(upToReport(opexTi), (e) => e.bankAmount + e.cashAmount))}; Fargo ${money(sum(opexFargoNow, (e) => e.amount))} → ${money(sum(upToReport(opexFargo), (e) => e.amount))}`
   );
-  const arMonths = [...new Set(ds.arEntries.map((a) => a.monthId))].sort();
-  const arOutside = [...new Set(arNow.map((a) => a.monthId))].filter((m) => m <= wb.reportTo && !arMonths.includes(m)).sort();
+  const arMonths = [...new Set(arEntries.map((a) => a.monthId))].sort();
+  const arOutside = [...new Set(arNow.map((a) => a.monthId))].filter((m) => !arMonths.includes(m)).sort();
   if (arOutside.length > 0) console.log(`  receivables the workbook does not have, hidden: ${arOutside.join(", ")}`);
-  // a month whose counts are all zero is a placeholder, not a count: it is left
-  // alone, so a real count entered in the app for that month survives
-  const countMonths = [...new Set(ds.stockCounts.filter((c) => c.qty !== 0).map((c) => c.monthId))].sort();
-  console.log(`  receivables for ${arMonths.join(", ")}; stock counts for ${countMonths.join(", ")}; month-end balances for ${ds.monthBalances.map((b) => b.monthId).join(", ")}`);
+  console.log(`  receivables for ${arMonths.join(", ")}; stock counts for ${countMonths.join(", ")}; month-end balances for ${monthBalances.map((b) => b.monthId).join(", ")}`);
+  const keptLater = (Object.entries(appLater) as Array<[Kind, number]>).filter(([, n]) => n > 0);
+  console.log(
+    keptLater.length === 0
+      ? `  after ${wb.reportTo}: the app has nothing yet, so the workbook's later rows are added`
+      : `  after ${wb.reportTo} the app's own rows stay — ${keptLater.map(([k, n]) => `${k} ${n}`).join("; ")}${leftOut.length > 0 ? `; the workbook's later rows left out — ${leftOut.join("; ")}` : ""}`
+  );
 
   // sales are compared, not replaced, unless asked
   const dbSales = await prisma.sale.findMany({ select: { monthId: true, productId: true, qty: true, amount: true } });
@@ -255,8 +321,10 @@ async function main() {
             }))
           ),
       });
-      const expenseShipments = [...new Set(importExpenses.map((e) => e.shipmentId))];
-      await tx.importExpense.updateMany({ where: { deletedAt: null, shipmentId: { in: expenseShipments } }, data: { deletedAt: now } });
+      await tx.importExpense.updateMany({
+        where: { deletedAt: null, shipmentId: { in: expenseShipments }, monthId: upToMonth },
+        data: { deletedAt: now },
+      });
       await tx.importExpense.createMany({
         data: importExpenses.map((e) => ({
           monthId: e.monthId,
@@ -269,9 +337,9 @@ async function main() {
       });
 
       // TI ↔ Fargo
-      await tx.tiInvoiceLine.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.tiInvoiceLine.updateMany({ where: { deletedAt: null, date: upToDate }, data: { deletedAt: now } });
       await tx.tiInvoiceLine.createMany({
-        data: ds.invoices.map((l) => ({
+        data: invoices.map((l) => ({
           date: day(l.date),
           number: l.number,
           productId: l.productId,
@@ -283,37 +351,34 @@ async function main() {
           sortOrder: l.sortOrder,
         })),
       });
-      await tx.tiWriteOff.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.tiWriteOff.updateMany({ where: { deletedAt: null, date: upToDate }, data: { deletedAt: now } });
       await tx.tiWriteOff.createMany({
-        data: ds.writeOffs.map((w) => ({ date: day(w.date), productId: w.productId, qty: w.qty, reason: w.reason ?? null })),
+        data: writeOffs.map((w) => ({ date: day(w.date), productId: w.productId, qty: w.qty, reason: w.reason ?? null })),
       });
-      await tx.fargoTransfer.updateMany({
-        where: { deletedAt: null, date: { lte: new Date(`${lastTransfer.slice(0, 10)}T23:59:59.999Z`) } },
-        data: { deletedAt: now },
-      });
+      await tx.fargoTransfer.updateMany({ where: { deletedAt: null, date: upToDate }, data: { deletedAt: now } });
       await tx.fargoTransfer.createMany({
-        data: ds.transfers.map((t) => ({ date: day(t.date), cashAmount: t.cashAmount, bankAmount: t.bankAmount, notes: t.notes ?? null })),
+        data: transfers.map((t) => ({ date: day(t.date), cashAmount: t.cashAmount, bankAmount: t.bankAmount, notes: t.notes ?? null })),
       });
 
-      // expenses for the months the workbook covers
-      await tx.opexTiEntry.updateMany({ where: { deletedAt: null, ...covered(opexTiMonths) }, data: { deletedAt: now } });
+      // expenses
+      await tx.opexTiEntry.updateMany({ where: { deletedAt: null, monthId: upToMonth }, data: { deletedAt: now } });
       await tx.opexTiEntry.createMany({
-        data: ds.opexTi.map((e) => ({
+        data: opexTi.map((e) => ({
           monthId: e.monthId,
           categoryId: opexId.get(`TI|${e.categoryName}`)!,
           bankAmount: e.bankAmount,
           cashAmount: e.cashAmount,
         })),
       });
-      await tx.opexFargoEntry.updateMany({ where: { deletedAt: null, ...covered(opexFargoMonths) }, data: { deletedAt: now } });
+      await tx.opexFargoEntry.updateMany({ where: { deletedAt: null, monthId: upToMonth }, data: { deletedAt: now } });
       await tx.opexFargoEntry.createMany({
-        data: ds.opexFargo.map((e) => ({ monthId: e.monthId, categoryId: opexId.get(`FARGO|${e.categoryName}`)!, amount: e.amount })),
+        data: opexFargo.map((e) => ({ monthId: e.monthId, categoryId: opexId.get(`FARGO|${e.categoryName}`)!, amount: e.amount })),
       });
 
       // taxes
-      await tx.tiTaxFiling.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.tiTaxFiling.updateMany({ where: { deletedAt: null, bookedMonthId: upToMonth }, data: { deletedAt: now } });
       await tx.tiTaxFiling.createMany({
-        data: ds.taxFilings.map((f) => ({
+        data: taxFilings.map((f) => ({
           quarterLabel: f.quarterLabel,
           taxAmount: f.taxAmount,
           bookedMonthId: f.bookedMonthId,
@@ -321,9 +386,9 @@ async function main() {
           declaredExpenses: f.declaredExpenses,
         })),
       });
-      await tx.tiVatAccountEntry.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.tiVatAccountEntry.updateMany({ where: { deletedAt: null, period: upToMonth }, data: { deletedAt: now } });
       await tx.tiVatAccountEntry.createMany({
-        data: ds.vatAccount.map((e) => ({
+        data: vatAccount.map((e) => ({
           period: e.period,
           date: e.date ? day(e.date) : null,
           description: e.description,
@@ -335,22 +400,22 @@ async function main() {
           sortOrder: e.sortOrder,
         })),
       });
-      await tx.tiVatCharge.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.tiVatCharge.updateMany({ where: { deletedAt: null, monthId: upToMonth }, data: { deletedAt: now } });
       await tx.tiVatCharge.createMany({
-        data: ds.vatCharges.map((c) => ({ monthId: c.monthId, description: c.description, amount: c.amount, bearer: c.bearer })),
+        data: vatCharges.map((c) => ({ monthId: c.monthId, description: c.description, amount: c.amount, bearer: c.bearer })),
       });
-      for (const r of ds.fargoVatReturns) {
+      for (const r of fargoVatReturns) {
         await tx.fargoVatReturn.upsert({ where: { monthId: r.monthId }, create: r, update: r });
       }
 
       // funding
-      await tx.loanMovement.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.loanMovement.updateMany({ where: { deletedAt: null, monthId: upToMonth }, data: { deletedAt: now } });
       await tx.loanMovement.createMany({
-        data: ds.loans.map((l) => ({ monthId: l.monthId, lender: l.lender, received: l.received, repaid: l.repaid, notes: l.notes ?? null })),
+        data: loans.map((l) => ({ monthId: l.monthId, lender: l.lender, received: l.received, repaid: l.repaid, notes: l.notes ?? null })),
       });
-      await tx.priorOwnerEntry.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.priorOwnerEntry.updateMany({ where: { deletedAt: null, date: upToDate }, data: { deletedAt: now } });
       await tx.priorOwnerEntry.createMany({
-        data: ds.priorOwner.map((p) => ({
+        data: priorOwner.map((p) => ({
           date: day(p.date),
           description: p.description,
           received: p.received,
@@ -359,13 +424,13 @@ async function main() {
           notes: p.notes ?? null,
         })),
       });
-      await tx.otherReceipt.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.otherReceipt.updateMany({ where: { deletedAt: null, date: upToDate }, data: { deletedAt: now } });
       await tx.otherReceipt.createMany({
-        data: ds.otherReceipts.map((o) => ({ date: day(o.date), payer: o.payer, amount: o.amount, notes: o.notes ?? null })),
+        data: otherReceipts.map((o) => ({ date: day(o.date), payer: o.payer, amount: o.amount, notes: o.notes ?? null })),
       });
-      await tx.capitalContribution.updateMany({ where: { deletedAt: null }, data: { deletedAt: now } });
+      await tx.capitalContribution.updateMany({ where: { deletedAt: null, date: upToDate }, data: { deletedAt: now } });
       await tx.capitalContribution.createMany({
-        data: ds.contributions.map((c) => ({
+        data: contributions.map((c) => ({
           date: day(c.date),
           tiAmount: c.tiAmount,
           fargoAmount: c.fargoAmount,
@@ -375,9 +440,9 @@ async function main() {
       });
 
       // month-end inputs
-      await tx.arEntry.updateMany({ where: { deletedAt: null, ...covered(arMonths) }, data: { deletedAt: now } });
+      await tx.arEntry.updateMany({ where: { deletedAt: null, monthId: upToMonth }, data: { deletedAt: now } });
       await tx.arEntry.createMany({
-        data: ds.arEntries.map((a) => ({ monthId: a.monthId, customerName: a.customerName, amount: a.amount })),
+        data: arEntries.map((a) => ({ monthId: a.monthId, customerName: a.customerName, amount: a.amount })),
       });
       await tx.stockCount.deleteMany({ where: { monthId: { in: countMonths } } });
       await tx.stockCount.createMany({
@@ -388,7 +453,7 @@ async function main() {
           qty: c.qty,
         })),
       });
-      for (const b of ds.monthBalances) {
+      for (const b of monthBalances) {
         await tx.monthBalance.upsert({
           where: { monthId: b.monthId },
           create: { monthId: b.monthId, tiBank: b.tiBank, tiCash: b.tiCash, goodsInTransit: b.goodsInTransit },
@@ -427,8 +492,9 @@ async function main() {
           action: "IMPORT",
           data: JSON.stringify({
             reportTo: wb.reportTo,
-            invoices: ds.invoices.length,
-            transfers: ds.transfers.length,
+            invoices: invoices.length,
+            transfers: transfers.length,
+            keptLater: Object.fromEntries(keptLater),
             withSales: WITH_SALES,
           }),
           username: "import-workbook",
