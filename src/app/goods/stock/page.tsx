@@ -4,12 +4,14 @@ import { Figure, SectionTitle } from "@/components/statement";
 import EntryGrid from "@/components/EntryGrid";
 import StockCountGrid from "@/components/StockCountGrid";
 import StockTable from "@/components/StockTable";
+import WriteOffTiStock from "@/components/WriteOffTiStock";
 
 export default async function StockPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
   const ctx = await pageContext(sp.month);
   const { dataset, computed, monthId } = ctx;
   const stock = computed.stock.find((s) => s.monthId === monthId);
+  const month = dataset.months.find((m) => m.id === monthId);
   const regular = dataset.products.filter((p) => !p.isPromo);
   const name = (id: string) => dataset.products.find((p) => p.id === id)?.nameRu ?? id;
   const rows = (stock?.products ?? [])
@@ -27,6 +29,7 @@ export default async function StockPage({ searchParams }: { searchParams: Search
         lossMonth: f?.groupLoss ?? 0,
         fargoUnits: f?.fargoStockUnits ?? 0,
         valueTi: (f?.fargoStockTi ?? 0) + (f?.tiStock ?? 0),
+        tiValue: f?.tiStock ?? 0,
       };
     });
   const sum = (pick: (r: (typeof rows)[number]) => number) => rows.reduce((s, r) => s + pick(r), 0);
@@ -58,7 +61,19 @@ export default async function StockPage({ searchParams }: { searchParams: Search
         <Figure label={ctx.l({ ru: "Потери с начала", en: "Loss to date" })} value={fmtN(lossToDate)} />
       </div>
 
-      <SectionTitle>{ctx.l({ ru: "Остатки по товарам на конец месяца", en: "Stock by product at month-end" })}</SectionTitle>
+      <SectionTitle
+        right={
+          ctx.canEdit && (
+            <WriteOffTiStock
+              monthId={monthId}
+              monthName={ctx.l({ ru: month?.nameRu ?? monthId, en: month?.nameEn ?? monthId })}
+              rows={rows.map((r) => ({ productId: r.productId, name: r.name, units: r.tiUnits, value: r.tiValue }))}
+            />
+          )
+        }
+      >
+        {ctx.l({ ru: "Остатки по товарам на конец месяца", en: "Stock by product at month-end" })}
+      </SectionTitle>
       <StockTable rows={rows} isCountMonth={!!stock?.isCountMonth} />
 
       <SectionTitle>{ctx.l({ ru: "Пересчёт на складах", en: "Warehouse count" })}</SectionTitle>
