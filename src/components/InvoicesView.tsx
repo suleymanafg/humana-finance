@@ -343,19 +343,19 @@ function InvoiceModal({
                 </Select>
               </td>
               <td>
-                <Input value={x.qty} onChange={(e) => set(i, { qty: e.target.value })} className="w-20 text-right" />
+                <Input numeric value={x.qty} onChange={(e) => set(i, { qty: e.target.value })} className="w-20 text-right" />
               </td>
               <td>
-                <Input value={x.price} onChange={(e) => set(i, { price: e.target.value })} className="w-28 text-right" />
+                <Input numeric value={x.price} onChange={(e) => set(i, { price: e.target.value })} className="w-28 text-right" />
               </td>
               <td>
-                <Input value={x.amount} onChange={(e) => set(i, { amount: e.target.value })} className="w-36 text-right" />
+                <Input numeric value={x.amount} onChange={(e) => set(i, { amount: e.target.value })} className="w-36 text-right" />
               </td>
               <td>
-                <Input value={x.vat} onChange={(e) => set(i, { vat: e.target.value })} className="w-32 text-right" />
+                <Input numeric value={x.vat} onChange={(e) => set(i, { vat: e.target.value })} className="w-32 text-right" />
               </td>
               <td>
-                <Input value={x.ownUnitCost} onChange={(e) => set(i, { ownUnitCost: e.target.value })} placeholder="—" className="w-24 text-right" />
+                <Input numeric value={x.ownUnitCost} onChange={(e) => set(i, { ownUnitCost: e.target.value })} placeholder="—" className="w-24 text-right" />
               </td>
               {!row && (
                 <td>

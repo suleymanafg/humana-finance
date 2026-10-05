@@ -18,6 +18,7 @@ import {
   type PlanningSkuIn,
   type SkuSituation,
 } from "@/lib/planning/compute";
+import { NumberInput } from "./ui";
 
 const MIN_FILL = 0.98;
 const HORIZON = 14;
@@ -272,8 +273,7 @@ export default function OrderBuilderView({
                       </td>
                       <td className="pnum text-[13px] text-muted">{rec > 0 ? pn(rec) : "—"}</td>
                       <td className="col-act" style={{ padding: "5px 10px" }}>
-                        <input
-                          type="number"
+                        <NumberInput
                           step={s.pcsPerCarton > 0 ? s.pcsPerCarton : 1}
                           min={0}
                           value={q === 0 ? "" : q}

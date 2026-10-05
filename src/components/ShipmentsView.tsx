@@ -4,7 +4,7 @@
 // import expenses, arrival status. Click a truck to edit its lines and costs.
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Input, Modal, Num, Select } from "./ui";
+import { Badge, Button, Input, Modal, Num, NumberInput, Select } from "./ui";
 import { IconChevronDown, IconChevronRight, IconTrash } from "./icons";
 import { MetricStrip, fmtN, fmtPct, type Metric } from "./analysis";
 import { useT } from "@/lib/locale-context";
@@ -76,7 +76,8 @@ function NumEditCell({
   }
   if (readOnly) return <span className="num">{value == null ? "—" : fmtN(value, decimals)}</span>;
   return (
-    <input
+    <NumberInput
+      fraction={decimals > 0}
       value={text}
       placeholder={nullable ? "—" : undefined}
       onChange={(e) => setText(e.target.value)}
@@ -171,11 +172,12 @@ function ShipmentRateEdit({
         {ru ? "Курс EUR→UZS" : "EUR→UZS rate"}
         {!uniform && ` (${ru ? "разные по строкам" : "varies by line"})`}
       </span>
-      <input
+      <NumberInput
+        fraction
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={(e) => setText(num(e.target.value) === 0 ? "" : fmtN(num(e.target.value)))}
-        placeholder="14 500"
+        placeholder="14,500"
         className="num w-24 rounded-md border border-border bg-surface px-2 py-1 text-right text-[12px] outline-none focus:border-accent"
       />
       <Button variant="secondary" onClick={apply} disabled={busy || num(text) <= 0}>
@@ -234,9 +236,9 @@ function AddLineRow({
           </option>
         ))}
       </Select>
-      <Input value={qty} onChange={(e) => setQty(e.target.value)} placeholder={t("qty")} className="w-20 text-right" />
-      <Input value={priceEur} onChange={(e) => setPriceEur(e.target.value)} placeholder="EUR" className="w-24 text-right" />
-      <Input value={rate} onChange={(e) => setRate(e.target.value)} placeholder={t("rate")} className="w-28 text-right" />
+      <Input numeric value={qty} onChange={(e) => setQty(e.target.value)} placeholder={t("qty")} className="w-20 text-right" />
+      <Input fraction value={priceEur} onChange={(e) => setPriceEur(e.target.value)} placeholder="EUR" className="w-24 text-right" />
+      <Input fraction value={rate} onChange={(e) => setRate(e.target.value)} placeholder={t("rate")} className="w-28 text-right" />
       <Button variant="secondary" onClick={save} disabled={!valid || busy}>
         {t("add")}
       </Button>
@@ -284,7 +286,7 @@ function AddExpenseRow({
           </option>
         ))}
       </Select>
-      <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={t("amount")} className="w-36 text-right" />
+      <Input numeric value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={t("amount")} className="w-36 text-right" />
       <Button variant="secondary" onClick={save} disabled={!valid || busy}>
         {t("add")}
       </Button>
@@ -760,9 +762,10 @@ function NewShipmentModal({
             <label className="block">
               <span className="label-caps mb-1 block">{ru ? "Курс EUR→UZS" : "EUR→UZS rate"}</span>
               <Input
+                fraction
                 value={rate}
                 onChange={(e) => setRate(e.target.value)}
-                placeholder="14 500"
+                placeholder="14,500"
                 className="w-32 text-right"
               />
             </label>
@@ -845,12 +848,14 @@ function NewShipmentModal({
                       ))}
                     </Select>
                     <Input
+                      numeric
                       value={l.qty}
                       onChange={(e) => setLine(i, { qty: e.target.value })}
                       placeholder={t("qty")}
                       className="w-20 text-right"
                     />
                     <Input
+                      fraction
                       value={l.priceEur}
                       onChange={(e) => setLine(i, { priceEur: e.target.value })}
                       placeholder="€"
@@ -902,6 +907,7 @@ function NewShipmentModal({
                     ))}
                   </Select>
                   <Input
+                    numeric
                     value={x.amount}
                     onChange={(e) => setExp(i, { amount: e.target.value })}
                     placeholder={`${t("amount")} UZS`}

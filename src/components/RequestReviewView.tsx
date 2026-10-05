@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardHeader, Num, PageTitle } from "./ui";
+import { Badge, Button, Card, CardHeader, Num, NumberInput, PageTitle } from "./ui";
 import { IconCheck, IconX } from "./icons";
 import { fmtN, toNum } from "@/lib/format";
 import { useT } from "@/lib/locale-context";
@@ -210,7 +210,7 @@ export default function RequestReviewView({
                           {ru ? "не заполнено" : "not filled"}
                         </span>
                       ) : edits[r.id] !== undefined ? (
-                        <input
+                        <NumberInput
                           autoFocus
                           value={edits[r.id]}
                           onChange={(e) => setEdits((s) => ({ ...s, [r.id]: e.target.value }))}

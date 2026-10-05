@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Papa from "papaparse";
-import { Badge, Button, Modal } from "./ui";
+import { Badge, Button, Modal, NumberInput } from "./ui";
 import { Delta, MetricStrip, Section, ShareBar, Spark, Th, useSort, type Metric } from "./analysis";
 import { ButtonLink } from "./statement";
 import MonthBars from "./MonthBars";
@@ -922,7 +922,7 @@ function SaleCell({
   }
   return (
     <td className="p-0">
-      <input
+      <NumberInput
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={() => {

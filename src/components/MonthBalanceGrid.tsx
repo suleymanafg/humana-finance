@@ -6,6 +6,7 @@ import { useT } from "@/lib/locale-context";
 import { crud } from "@/lib/crud-client";
 import { fmtN, parseNum } from "@/lib/format";
 import type { MonthLite } from "./statement";
+import { NumberInput } from "./ui";
 
 type Field = "tiBank" | "tiCash" | "goodsInTransit";
 const FIELDS: Array<{ field: Field; label: { ru: string; en: string } }> = [
@@ -68,7 +69,7 @@ export default function MonthBalanceGrid({
                 {FIELDS.map((f) => (
                   <td key={f.field}>
                     {editable ? (
-                      <input
+                      <NumberInput
                         key={`${m.id}-${f.field}-${b?.[f.field] ?? ""}`}
                         defaultValue={b ? fmtN(b[f.field]) : ""}
                         placeholder="—"

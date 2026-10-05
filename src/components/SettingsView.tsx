@@ -346,6 +346,7 @@ function TaxesCard({ taxes, readOnly }: { taxes: TaxSettings; readOnly: boolean 
           <div key={field}>
             <label className="mb-1 block text-[12px] text-muted">{t(key)}</label>
             <Input
+              fraction
               value={draft[field]}
               disabled={readOnly}
               onChange={(e) => setDraft({ ...draft, [field]: e.target.value })}

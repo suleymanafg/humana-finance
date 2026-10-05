@@ -2,7 +2,7 @@
 
 // Hand-rolled UI kit (no component library dependency).
 import { useEffect } from "react";
-import { fmtN, fmtPct } from "@/lib/format";
+import { fmtN, fmtPct, groupTyped, numberInputText, parseNum } from "@/lib/format";
 import { IconX } from "./icons";
 
 export function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -112,13 +112,100 @@ export function IconButton({
   );
 }
 
-export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+type InputProps = React.InputHTMLAttributes<HTMLInputElement>;
+
+/** A text box; `numeric` or `fraction` makes it a NumberInput. */
+export function Input({ numeric, fraction, ...props }: InputProps & { numeric?: boolean; fraction?: boolean }) {
+  const className = `h-8 rounded-lg border border-border bg-surface px-2.5 text-[13px] shadow-[0_1px_2px_rgba(16,24,40,0.04)] outline-none transition-shadow placeholder:text-muted/60 focus:border-accent focus:ring-[3px] focus:ring-accent-soft disabled:bg-background disabled:text-muted ${props.className ?? ""}`;
+  return numeric || fraction ? (
+    <NumberInput {...props} fraction={fraction} className={className} />
+  ) : (
+    <input {...props} className={className} />
+  );
+}
+
+/**
+ * A box for amounts: digits are grouped with commas as they are typed
+ * ("10000000" shows as "10,000,000") and "." is the decimal mark. It replaces
+ * <input> as is: value, defaultValue and the handlers get the grouped text,
+ * which parseNum reads. In a `fraction` box (rates, EUR prices) a typed comma
+ * is the decimal mark, as on a Russian keyboard; elsewhere commas only group.
+ * With `step`, the arrow keys add or take away a step.
+ */
+export function NumberInput({ fraction = false, value, defaultValue, onChange, onKeyDown, onPaste, ...props }: InputProps & { fraction?: boolean }) {
+  const shown = (v: InputProps["value"]) =>
+    v === undefined ? undefined : typeof v === "number" ? numberInputText(v) : groupTyped(String(v ?? ""));
   return (
     <input
       {...props}
-      className={`h-8 rounded-lg border border-border bg-surface px-2.5 text-[13px] shadow-[0_1px_2px_rgba(16,24,40,0.04)] outline-none transition-shadow placeholder:text-muted/60 focus:border-accent focus:ring-[3px] focus:ring-accent-soft disabled:bg-background disabled:text-muted ${props.className ?? ""}`}
+      type="text"
+      inputMode="decimal"
+      autoComplete="off"
+      value={shown(value)}
+      defaultValue={shown(defaultValue)}
+      onChange={(e) => {
+        regroup(e.currentTarget, fraction ? (e.nativeEvent as InputEvent).data : null);
+        onChange?.(e);
+      }}
+      onKeyDown={(e) => {
+        stepOrSkipComma(e, props.step, props.min);
+        onKeyDown?.(e);
+      }}
+      onPaste={(e) => {
+        pasteNumber(e);
+        onPaste?.(e);
+      }}
     />
   );
+}
+
+/** Groups the box's text again after a keystroke, keeping the caret after the same digit. */
+function regroup(el: HTMLInputElement, typed: string | null | undefined) {
+  let raw = el.value;
+  const caret = el.selectionStart ?? raw.length;
+  if (typed === "," && raw[caret - 1] === "," && !raw.includes(".")) raw = `${raw.slice(0, caret - 1)}.${raw.slice(caret)}`;
+  const text = groupTyped(raw);
+  if (text === el.value) return;
+  let pos = text.length;
+  for (let after = raw.slice(caret).replace(/[^\d.]/g, "").length; after > 0 && pos > 0; ) {
+    if (/[\d.]/.test(text[--pos])) after--;
+  }
+  while (pos > 0 && text[pos - 1] === ",") pos--;
+  el.value = text;
+  el.setSelectionRange(pos, pos);
+}
+
+function stepOrSkipComma(e: React.KeyboardEvent<HTMLInputElement>, step: InputProps["step"], min: InputProps["min"]) {
+  const el = e.currentTarget;
+  if (el.readOnly || el.disabled) return;
+  if (step && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    e.preventDefault();
+    const next = (parseNum(el.value) ?? 0) + (e.key === "ArrowUp" ? 1 : -1) * Number(step);
+    setTyped(el, numberInputText(min === undefined || min === "" ? next : Math.max(Number(min), next)));
+    return;
+  }
+  const at = el.selectionStart;
+  if (at === null || at !== el.selectionEnd) return;
+  // deleting next to a comma deletes the digit beyond it
+  if (e.key === "Backspace" && el.value[at - 1] === ",") el.setSelectionRange(at - 1, at - 1);
+  if (e.key === "Delete" && el.value[at] === ",") el.setSelectionRange(at + 1, at + 1);
+}
+
+/** A pasted "1 482 000", "1,482,000" or "1,5" goes in as the number it is. */
+function pasteNumber(e: React.ClipboardEvent<HTMLInputElement>) {
+  const el = e.currentTarget;
+  const n = parseNum(e.clipboardData.getData("text"));
+  if (n === null || el.readOnly || el.disabled) return;
+  e.preventDefault();
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? start;
+  setTyped(el, `${el.value.slice(0, start)}${numberInputText(n)}${el.value.slice(end)}`);
+}
+
+/** Puts text in the box the way typing does, so onChange handlers see it. */
+function setTyped(el: HTMLInputElement, text: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(el, text);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {

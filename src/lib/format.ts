@@ -31,7 +31,8 @@ export function fmtEur(value: number | null | undefined): string {
  * ("1 482 000", or "1,5" meaning 1.5 in the Russian convention).
  */
 export function parseNum(input: string): number | null {
-  let s = input.trim().replace(/[\s  ]/g, "");
+  // a decimal point left at the end while typing ("1,234.") reads as no decimals
+  let s = input.trim().replace(/[\s  ]/g, "").replace(/\.$/, "");
   if (s === "" || s === "-") return null;
   // accounting negatives: (1,234) => -1234
   let sign = 1;
@@ -50,4 +51,31 @@ export function parseNum(input: string): number | null {
 /** parseNum with a 0 fallback, for amount inputs that must always yield a number. */
 export function toNum(input: string): number {
   return parseNum(input) ?? 0;
+}
+
+/**
+ * What a number box shows while it is typed in: the whole part grouped with
+ * commas, "." as the decimal mark ("10000000" → "10,000,000", "(1234.5)" →
+ * "-1,234.5"). Commas and spaces typed by hand are dropped, as the grouping is
+ * automatic. Dots in the "10.000.000" style group digits too; any other
+ * extra dot is dropped.
+ */
+export function groupTyped(input: string): string {
+  let s = input.replace(/[\s\u00a0\u202f,]/g, "");
+  const negative = /^[-−(]/.test(s);
+  s = s.replace(/[^\d.]/g, "");
+  const parts = s.split(".");
+  if (parts.length > 2) {
+    const grouping = parts.slice(1, -1).every((p) => p.length === 3) && parts[parts.length - 1].length <= 3;
+    s = grouping ? parts.join("") : `${parts[0]}.${parts.slice(1).join("")}`;
+  }
+  const dot = s.indexOf(".");
+  const whole = (dot < 0 ? s : s.slice(0, dot)).replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${negative ? "-" : ""}${whole}${dot < 0 ? "" : s.slice(dot)}`;
+}
+
+/** A stored number as a number box shows it: grouped, with all its decimals. */
+export function numberInputText(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  return groupTyped(value.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 10 }));
 }

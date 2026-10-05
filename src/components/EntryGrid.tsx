@@ -131,12 +131,23 @@ export default function EntryGrid({
         </Select>
       );
     }
+    if (c.type === "number") {
+      return (
+        <Input
+          numeric
+          fraction={(c.decimals ?? 0) > 0}
+          value={typeof v === "number" ? v : String(v ?? "")}
+          onChange={(e) => setDraft({ ...draft, [c.field]: e.target.value })}
+          className="w-full text-right"
+        />
+      );
+    }
     return (
       <Input
         type={c.type === "date" ? "date" : "text"}
         value={String(v ?? "")}
         onChange={(e) => setDraft({ ...draft, [c.field]: e.target.value })}
-        className={`w-full ${c.type === "number" ? "text-right" : ""}`}
+        className="w-full"
       />
     );
   }

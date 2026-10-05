@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import { crud } from "@/lib/crud-client";
 import { fmtN, parseNum } from "@/lib/format";
+import { NumberInput } from "./ui";
 
 /** Month-end physical count: products × warehouses, saved as you leave a cell. */
 export default function StockCountGrid({
@@ -57,7 +58,7 @@ export default function StockCountGrid({
                     {readOnly ? (
                       v == null ? "—" : fmtN(v)
                     ) : (
-                      <input
+                      <NumberInput
                         defaultValue={v == null ? "" : fmtN(v)}
                         key={`${key}-${v ?? ""}`}
                         onBlur={(e) => save(p.id, w.id, e.target.value, v)}

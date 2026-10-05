@@ -9,6 +9,7 @@
 // carry over; «Сохранить черновик» lets a long list be finished later.
 import { useMemo, useState } from "react";
 import { fmtN, toNum } from "@/lib/format";
+import { NumberInput } from "./ui";
 
 export interface FillItem {
   id?: string;
@@ -195,8 +196,7 @@ export default function FillForm({
     const r = draft[idx];
     return (
       <td className="px-3 py-2 text-right">
-        <input
-          inputMode="decimal"
+        <NumberInput
           value={r.value}
           onChange={(e) => set(idx, { value: e.target.value })}
           onBlur={(e) => set(idx, { value: pretty(e.target.value) })}

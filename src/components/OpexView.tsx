@@ -13,7 +13,7 @@
 // month, adjust, save. TI splits Банк/Наличные; Fargo has a single amount.
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Input, Select } from "./ui";
+import { Badge, Button, Input, NumberInput, Select } from "./ui";
 import { IconPencil, IconTrash, IconX } from "./icons";
 import { Collapsible, Delta, MetricStrip, fmtN, fmtPct, type Metric } from "./analysis";
 import { useT } from "@/lib/locale-context";
@@ -119,7 +119,7 @@ function AmountCell({
   };
   return (
     <div className="flex items-center justify-end gap-1">
-      <input
+      <NumberInput
         autoFocus
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -847,7 +847,7 @@ function FillMonthPanel({
                       <span className="min-w-0 flex-1 truncate text-[13px]" title={c.name}>
                         {c.name}
                       </span>
-                      <input
+                      <NumberInput
                         value={f.bank}
                         onChange={(e) => setField(c.id, { bank: e.target.value })}
                         onBlur={(e) => setField(c.id, { bank: pretty(e.target.value) })}
@@ -855,7 +855,7 @@ function FillMonthPanel({
                         className={cls(f.bank)}
                       />
                       {split && (
-                        <input
+                        <NumberInput
                           value={f.cash}
                           onChange={(e) => setField(c.id, { cash: e.target.value })}
                           onBlur={(e) => setField(c.id, { cash: pretty(e.target.value) })}

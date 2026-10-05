@@ -19,6 +19,7 @@ import type {
   SkuSituation,
 } from "@/lib/planning/compute";
 import type { DemandModelResult } from "@/lib/planning/model";
+import { NumberInput } from "./ui";
 
 // edits are keyed "skuId|monthKey" and hold the raw input string
 type Edits = Record<string, string>;
@@ -433,9 +434,7 @@ export default function PlanningView({
                     </td>
                     <td className="pnum text-[13px] text-muted">{r.modelQty !== null ? pn(r.modelQty) : "—"}</td>
                     <td className="col-act" style={{ padding: "5px 9px" }}>
-                      <input
-                        type="number"
-                        min={0}
+                      <NumberInput
                         value={r.fRaw !== undefined ? r.fRaw : r.forecast === 0 ? "" : String(r.forecast)}
                         readOnly={!selEditable}
                         onChange={(e) =>
@@ -446,9 +445,7 @@ export default function PlanningView({
                       />
                     </td>
                     <td className="col-act" style={{ padding: "5px 9px" }}>
-                      <input
-                        type="number"
-                        min={0}
+                      <NumberInput
                         value={r.oRaw !== undefined ? r.oRaw : r.order === 0 ? "" : String(r.order)}
                         readOnly={!selEditable}
                         onChange={(e) =>
