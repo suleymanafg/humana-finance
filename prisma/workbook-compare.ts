@@ -37,7 +37,8 @@ export function engineFigures(c: Computed): Record<string, Record<string, number
     put("fargo.cashDeclared", m, f.cashDeclared);
     put("fargo.units", m, f.units);
     put("fargo.cogs", m, f.cogs);
-    put("fargo.stockLoss", m, f.stockLoss);
+    // the workbook has one stock-difference line: write-offs plus what the count finds
+    put("fargo.stockLoss", m, f.stockLoss + f.writeOffLoss);
     put("fargo.writeOffsRecorded", m, f.writeOffsRecorded);
     put("fargo.grossProfit", m, f.grossProfit);
     put("fargo.opex", m, f.opex);
@@ -55,7 +56,7 @@ export function engineFigures(c: Computed): Record<string, Record<string, number
     put("group.revenue", m, g.revenue);
     put("group.cogs", m, g.cogs);
     put("group.giveaways", m, g.giveaways);
-    put("group.stockLoss", m, g.stockLoss);
+    put("group.stockLoss", m, g.stockLoss + g.fargoWriteOffs);
     put("group.grossProfit", m, g.grossProfit);
     put("group.opex", m, g.opex);
     put("group.ebitda", m, g.ebitda);

@@ -93,6 +93,16 @@ export interface WriteOffIn {
   reason?: string | null;
 }
 
+/** Goods written off from Fargo's warehouse: expired, damaged, other. */
+export interface FargoWriteOffIn {
+  id: string;
+  date: string; // ISO
+  productId: string;
+  qty: number;
+  reason: string; // EXPIRED | DAMAGED | OTHER
+  notes?: string | null;
+}
+
 export interface OpexTiIn {
   id: string;
   monthId: string;
@@ -248,6 +258,7 @@ export interface Dataset {
   importExpenses: ImportExpenseIn[];
   invoices: InvoiceLineIn[];
   writeOffs: WriteOffIn[];
+  fargoWriteOffs: FargoWriteOffIn[];
   opexTi: OpexTiIn[];
   opexFargo: OpexFargoIn[];
   taxFilings: TaxFilingIn[];
@@ -308,15 +319,26 @@ export interface WriteOffCost extends WriteOffIn {
   value: number;
 }
 
+export interface FargoWriteOffCost extends FargoWriteOffIn {
+  monthId: string;
+  costProductId: string;
+  value: number; // at Fargo's cost (TI invoice prices), FIFO
+  groupValue: number; // the same units at TI landed cost
+}
+
 /** One product's FIFO position at a month-end. */
 export interface FifoMonth {
   unitsSold: number;
   cumSold: number;
+  /** units written off at Fargo this month */
+  unitsWrittenOff: number;
   /** cumulative units missing at the latest count (book − counted) */
   cumCountDiff: number;
   fargoCogs: number; // at TI invoice prices
+  fargoWriteOff: number;
   fargoLoss: number;
   groupCogs: number; // at TI landed cost
+  groupWriteOff: number;
   groupLoss: number;
   fargoUnitCost: number; // per unit sold this month
   groupUnitCost: number;
@@ -398,6 +420,8 @@ export interface FargoMonth {
   revenueByProduct: Record<string, number>;
   qtyByProduct: Record<string, number>;
   cogs: number;
+  /** goods written off by quantity (expired, damaged), at Fargo's cost */
+  writeOffLoss: number;
   stockLoss: number;
   writeOffsRecorded: number;
   grossProfit: number;
@@ -426,6 +450,8 @@ export interface GroupMonth {
   cogs: number;
   cogsByProduct: Record<string, number>;
   giveaways: number;
+  /** Fargo's write-offs at TI landed cost */
+  fargoWriteOffs: number;
   stockLoss: number;
   grossProfit: number;
   opexTi: number;
@@ -533,6 +559,7 @@ export interface BalanceFargo {
   stockOpening: number;
   stockBought: number;
   stockSold: number;
+  stockWrittenOff: number;
   stockLost: number;
   settlement: number;
   capital: number;
@@ -573,7 +600,10 @@ export interface StockProductMonth {
   invoiced: number;
   sold: number;
   writtenOff: number;
+  /** written off at Fargo (expired, damaged), cumulative */
+  fargoWrittenOff: number;
   tiUnits: number;
+  /** invoiced − sold − written off at Fargo */
   fargoBook: number;
   counted: number | null;
   difference: number | null; // book − counted, in count months
@@ -600,6 +630,7 @@ export interface Computed {
   shipments: ShipmentCost[];
   invoices: InvoiceLineCost[];
   writeOffs: WriteOffCost[];
+  fargoWriteOffs: FargoWriteOffCost[];
   fifo: Record<string, ProductFifo>;
   ti: TiMonth[];
   fargo: FargoMonth[];

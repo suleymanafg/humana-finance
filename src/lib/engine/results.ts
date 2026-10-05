@@ -49,6 +49,7 @@ export function computeFargoMonths(
         revenueByProduct: {},
         qtyByProduct: {},
         cogs: 0,
+        writeOffLoss: 0,
         stockLoss: 0,
         writeOffsRecorded: 0,
         grossProfit: 0,
@@ -113,8 +114,11 @@ export function computeFargoMonths(
     fm.cashRevenue = fm.cashSales - fm.vat.outputCash;
     fm.revenue = fm.bankRevenue + fm.cashRevenue;
     fm.declaredTotal = fm.bankRevenue + fm.cashDeclared;
-    for (const p of Object.values(fifo)) fm.stockLoss += p.months[m]?.fargoLoss ?? 0;
-    fm.grossProfit = fm.revenue - fm.cogs - fm.stockLoss;
+    for (const p of Object.values(fifo)) {
+      fm.writeOffLoss += p.months[m]?.fargoWriteOff ?? 0;
+      fm.stockLoss += p.months[m]?.fargoLoss ?? 0;
+    }
+    fm.grossProfit = fm.revenue - fm.cogs - fm.writeOffLoss - fm.stockLoss;
     fm.ebitda = fm.grossProfit - fm.opex;
     fm.netProfit = fm.ebitda - fm.incomeTax;
     fm.vat.net = fm.vat.outputBank + fm.vat.outputCash - fm.vat.input;
@@ -225,19 +229,21 @@ export function computeGroupMonths(
     const cogsByProduct = cogs.get(m) ?? {};
     const groupCogs = Object.values(cogsByProduct).reduce((s, v) => s + v, 0);
     let stockLoss = 0;
+    let fargoWriteOffs = 0;
     let fargoLossTotal = 0;
     for (const p of Object.values(fifo)) {
       stockLoss += p.months[m]?.groupLoss ?? 0;
-      fargoLossTotal += p.months[m]?.fargoLoss ?? 0;
+      fargoWriteOffs += p.months[m]?.groupWriteOff ?? 0;
+      fargoLossTotal += (p.months[m]?.fargoLoss ?? 0) + (p.months[m]?.fargoWriteOff ?? 0);
     }
-    const grossProfit = f.revenue - groupCogs - t.giveaways - stockLoss;
+    const grossProfit = f.revenue - groupCogs - t.giveaways - fargoWriteOffs - stockLoss;
     const opex = t.opex + f.opex;
     const ebitda = grossProfit - opex;
     const taxes = f.incomeTax + t.profitTax + t.vatCost;
     const netProfit = ebitda - taxes;
     const marginInvoiced = -(t.revenue - t.cogs);
     const marginSold = f.cogs - groupCogs;
-    const marginInLoss = fargoLossTotal - stockLoss;
+    const marginInLoss = fargoLossTotal - stockLoss - fargoWriteOffs;
     const total = t.netProfit + f.netProfit + marginInvoiced + marginSold + marginInLoss;
     return {
       monthId: m,
@@ -248,6 +254,7 @@ export function computeGroupMonths(
       cogs: groupCogs,
       cogsByProduct,
       giveaways: t.giveaways,
+      fargoWriteOffs,
       stockLoss,
       grossProfit,
       opexTi: t.opex,

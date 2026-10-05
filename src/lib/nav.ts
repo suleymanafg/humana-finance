@@ -65,6 +65,7 @@ export const SECTIONS: NavSection[] = [
       { href: "/goods/invoices", label: { ru: "Счета-фактуры TI", en: "TI invoices" } },
       { href: "/goods/stock", label: { ru: "Остатки", en: "Stock" } },
       { href: "/goods/fifo", label: { ru: "Себестоимость FIFO", en: "FIFO cost" } },
+      { href: "/goods/write-offs", label: { ru: "Списания", en: "Write-offs" } },
     ],
   },
   {

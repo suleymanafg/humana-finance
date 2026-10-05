@@ -1,17 +1,15 @@
+import Link from "next/link";
 import { pageContext, type SearchParams } from "@/lib/page-context";
 import { fmtN } from "@/lib/format";
 import { Figure, SectionTitle } from "@/components/statement";
-import EntryGrid from "@/components/EntryGrid";
 import StockCountGrid from "@/components/StockCountGrid";
 import StockTable from "@/components/StockTable";
-import WriteOffTiStock from "@/components/WriteOffTiStock";
 
 export default async function StockPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
   const ctx = await pageContext(sp.month);
   const { dataset, computed, monthId } = ctx;
   const stock = computed.stock.find((s) => s.monthId === monthId);
-  const month = dataset.months.find((m) => m.id === monthId);
   const regular = dataset.products.filter((p) => !p.isPromo);
   const name = (id: string) => dataset.products.find((p) => p.id === id)?.nameRu ?? id;
   const rows = (stock?.products ?? [])
@@ -29,7 +27,6 @@ export default async function StockPage({ searchParams }: { searchParams: Search
         lossMonth: f?.groupLoss ?? 0,
         fargoUnits: f?.fargoStockUnits ?? 0,
         valueTi: (f?.fargoStockTi ?? 0) + (f?.tiStock ?? 0),
-        tiValue: f?.tiStock ?? 0,
       };
     });
   const sum = (pick: (r: (typeof rows)[number]) => number) => rows.reduce((s, r) => s + pick(r), 0);
@@ -39,9 +36,6 @@ export default async function StockPage({ searchParams }: { searchParams: Search
   const monthCounts = dataset.stockCounts.filter((c) => c.monthId === monthId);
   const counts: Record<string, number> = {};
   if (monthCounts.some((c) => c.qty !== 0)) for (const c of monthCounts) counts[`${c.productId}|${c.warehouseId}`] = c.qty;
-  const writeOffs = computed.writeOffs
-    .filter((w) => w.monthId <= monthId)
-    .map((w) => ({ id: w.id, date: w.date.slice(0, 10), productId: w.productId, qty: w.qty, reason: w.reason ?? "", value: w.value }));
   const countMonths = computed.stock.filter((s) => s.isCountMonth && s.monthId <= monthId);
 
   return (
@@ -57,19 +51,23 @@ export default async function StockPage({ searchParams }: { searchParams: Search
           value={stock?.isCountMonth ? fmtN(sum((r) => r.difference ?? 0)) : "—"}
           sub={stock?.isCountMonth ? ctx.l({ ru: "учётный остаток минус факт", en: "book less counted" }) : ctx.l({ ru: "пересчёта в этом месяце нет", en: "no count this month" })}
         />
-        <Figure label={ctx.l({ ru: "Потери за месяц", en: "Loss in the month" })} value={fmtN(group?.stockLoss ?? 0)} />
-        <Figure label={ctx.l({ ru: "Потери с начала", en: "Loss to date" })} value={fmtN(lossToDate)} />
+        <Figure
+          label={ctx.l({ ru: "Потери за месяц", en: "Loss in the month" })}
+          value={fmtN(group?.stockLoss ?? 0)}
+          sub={ctx.l({ ru: "по стоимости TI", en: "at TI landed cost" })}
+        />
+        <Figure
+          label={ctx.l({ ru: "Потери с начала", en: "Loss to date" })}
+          value={fmtN(lossToDate)}
+          sub={ctx.l({ ru: "по стоимости TI", en: "at TI landed cost" })}
+        />
       </div>
 
       <SectionTitle
         right={
-          ctx.canEdit && (
-            <WriteOffTiStock
-              monthId={monthId}
-              monthName={ctx.l({ ru: month?.nameRu ?? monthId, en: month?.nameEn ?? monthId })}
-              rows={rows.map((r) => ({ productId: r.productId, name: r.name, units: r.tiUnits, value: r.tiValue }))}
-            />
-          )
+          <Link href={`/goods/write-offs?month=${monthId}`} className="text-[12.5px] text-accent hover:underline">
+            {ctx.l({ ru: "Списания", en: "Write-offs" })}
+          </Link>
         }
       >
         {ctx.l({ ru: "Остатки по товарам на конец месяца", en: "Stock by product at month-end" })}
@@ -85,31 +83,13 @@ export default async function StockPage({ searchParams }: { searchParams: Search
         readOnly={!ctx.canEdit}
       />
 
-      <SectionTitle>{ctx.l({ ru: "Образцы и лаборатория (списания TI)", en: "Samples and laboratory (TI write-offs)" })}</SectionTitle>
-      <div className="overflow-hidden rounded-lg border border-border bg-surface">
-        <EntryGrid
-          entity="tiWriteOff"
-          rows={writeOffs}
-          readOnly={!ctx.canEdit}
-          defaults={{ date: `${monthId}-01` }}
-          sumFields={["qty", "value"]}
-          cols={[
-            { field: "date", label: ctx.l({ ru: "Дата", en: "Date" }), type: "date", width: "150px" },
-            {
-              field: "productId",
-              label: ctx.l({ ru: "Товар", en: "Product" }),
-              type: "select",
-              options: regular.map((p) => ({ value: p.id, label: p.nameRu })),
-            },
-            { field: "qty", label: ctx.l({ ru: "Кол-во", en: "Qty" }), type: "number", width: "110px" },
-            { field: "reason", label: ctx.l({ ru: "Причина", en: "Reason" }), type: "text" },
-            { field: "value", label: ctx.l({ ru: "Себестоимость, FIFO", en: "Cost, FIFO" }), type: "number", readOnly: true, width: "160px" },
-          ]}
-          emptyLabel={ctx.l({ ru: "Списаний нет", en: "No write-offs" })}
-        />
-      </div>
-
       <SectionTitle>{ctx.l({ ru: "История пересчётов", en: "Count history" })}</SectionTitle>
+      <p className="-mt-1 mb-2.5 text-[12.5px] text-muted">
+        {ctx.l({
+          ru: "Учётный остаток — счета TI минус продажи и списания Fargo. Расхождение копится с начала; потери месяца — только новое расхождение с прошлого пересчёта.",
+          en: "Book stock is TI's invoices less Fargo's sales and write-offs. The difference builds up from the start; a month's loss is only the new difference since the previous count.",
+        })}
+      </p>
       <div className="overflow-x-auto rounded-lg border border-border bg-surface">
         <table className="stmt is-compact">
           <thead>
@@ -117,21 +97,24 @@ export default async function StockPage({ searchParams }: { searchParams: Search
               <th>{ctx.l({ ru: "Месяц пересчёта", en: "Count month" })}</th>
               <th>{ctx.l({ ru: "Учётный остаток Fargo, шт", en: "Fargo book stock, units" })}</th>
               <th>{ctx.l({ ru: "Пересчитано, шт", en: "Counted, units" })}</th>
-              <th>{ctx.l({ ru: "Расхождение, шт", en: "Difference, units" })}</th>
-              <th>{ctx.l({ ru: "Потери за месяц", en: "Loss in the month" })}</th>
+              <th>{ctx.l({ ru: "Расхождение с начала, шт", en: "Difference to date, units" })}</th>
+              <th>{ctx.l({ ru: "Новое расхождение, шт", en: "New difference, units" })}</th>
+              <th>{ctx.l({ ru: "Потери за месяц, по стоимости TI", en: "Loss in the month, at TI cost" })}</th>
             </tr>
           </thead>
           <tbody>
             {countMonths.length === 0 && (
               <tr>
-                <td colSpan={5} className="!py-6 !text-center text-muted">
+                <td colSpan={6} className="!py-6 !text-center text-muted">
                   {ctx.l({ ru: "Пересчётов пока нет", en: "No counts yet" })}
                 </td>
               </tr>
             )}
-            {[...countMonths].reverse().map((s) => {
+            {[...countMonths].reverse().map((s, i, all) => {
               const book = s.products.reduce((t, p) => t + p.fargoBook, 0);
               const counted = s.products.reduce((t, p) => t + (p.counted ?? 0), 0);
+              // the count before this one is next in the newest-first list
+              const prev = all[i + 1]?.products.reduce((t, p) => t + (p.difference ?? 0), 0) ?? 0;
               const loss = computed.group.find((g) => g.monthId === s.monthId)?.stockLoss ?? 0;
               const m = dataset.months.find((x) => x.id === s.monthId);
               return (
@@ -139,7 +122,8 @@ export default async function StockPage({ searchParams }: { searchParams: Search
                   <td>{m ? ctx.l({ ru: m.nameRu, en: m.nameEn }) : s.monthId}</td>
                   <td>{fmtN(book)}</td>
                   <td>{fmtN(counted)}</td>
-                  <td className={book - counted > 0 ? "text-danger" : ""}>{fmtN(book - counted)}</td>
+                  <td>{fmtN(book - counted)}</td>
+                  <td className={book - counted - prev > 0 ? "text-danger" : ""}>{fmtN(book - counted - prev)}</td>
                   <td>{Math.abs(loss) < 0.5 ? "—" : fmtN(loss)}</td>
                 </tr>
               );

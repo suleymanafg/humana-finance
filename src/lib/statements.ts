@@ -94,7 +94,7 @@ export function pnlStatement(entity: Entity, c: Computed): Statement {
         line("revenue", { ru: "Продажи Fargo по счетам-фактурам, без НДС", en: "Sales to Fargo by invoice, ex-VAT" }, byMonth(t, (r) => r.revenue), { href: "/goods/invoices" }),
         memo("units", { ru: "Отгружено по счетам, шт", en: "Units invoiced" }, byMonth(t, (r) => r.units), { units: true }),
         line("cogs", { ru: "Себестоимость, FIFO по фурам", en: "Cost of goods, FIFO by truck" }, neg(byMonth(t, (r) => r.cogs)), { href: "/goods/fifo" }),
-        line("giveaways", { ru: "Образцы и лаборатория", en: "Samples and laboratory" }, neg(byMonth(t, (r) => r.giveaways)), { href: "/goods/stock" }),
+        line("giveaways", { ru: "Образцы и лаборатория", en: "Samples and laboratory" }, neg(byMonth(t, (r) => r.giveaways)), { href: "/goods/write-offs" }),
         subtotal("gp", { ru: "Валовая прибыль", en: "Gross profit" }, byMonth(t, (r) => r.grossProfit), { result: true }),
         ratio("gpm", { ru: "Валовая маржа", en: "Gross margin" }, "gp", "revenue"),
         header("opexH", { ru: "Операционные расходы", en: "Operating expenses" }),
@@ -123,6 +123,7 @@ export function pnlStatement(entity: Entity, c: Computed): Statement {
         memo("atPrice", { ru: "Продажи по ценам клиентов, с НДС", en: "Sales at customer prices, VAT included" }, byMonth(f, (r) => r.salesAtPrice)),
         memo("units", { ru: "Продано, шт", en: "Units sold" }, byMonth(f, (r) => r.units), { units: true }),
         line("cogs", { ru: "Себестоимость, FIFO по счетам TI", en: "Cost of goods, FIFO by TI invoice" }, neg(byMonth(f, (r) => r.cogs)), { href: "/goods/fifo" }),
+        line("writeOffs", { ru: "Списания: просрочка, брак", en: "Write-offs: expired, damaged" }, neg(byMonth(f, (r) => r.writeOffLoss)), { href: "/goods/write-offs" }),
         line("loss", { ru: "Потери по инвентаризации", en: "Stock loss at the count" }, neg(byMonth(f, (r) => r.stockLoss)), { href: "/goods/stock" }),
         memo("writeOffs", { ru: "в т. ч. списания, учтённые Fargo", en: "of which write-offs recorded by Fargo" }, byMonth(f, (r) => r.writeOffsRecorded), { href: "/expenses/fargo" }),
         subtotal("gp", { ru: "Валовая прибыль", en: "Gross profit" }, byMonth(f, (r) => r.grossProfit), { result: true }),
@@ -149,7 +150,8 @@ export function pnlStatement(entity: Entity, c: Computed): Statement {
       subtotal("revenue", { ru: "Выручка", en: "Revenue" }, byMonth(g, (r) => r.revenue)),
       memo("units", { ru: "Продано, шт", en: "Units sold" }, byMonth(g, (r) => r.units), { units: true }),
       line("cogs", { ru: "Себестоимость, FIFO по стоимости TI", en: "Cost of goods, FIFO at TI landed cost" }, neg(byMonth(g, (r) => r.cogs)), { href: "/goods/fifo" }),
-      line("giveaways", { ru: "Образцы и лаборатория", en: "Samples and laboratory" }, neg(byMonth(g, (r) => r.giveaways)), { href: "/goods/stock" }),
+      line("giveaways", { ru: "Образцы и лаборатория", en: "Samples and laboratory" }, neg(byMonth(g, (r) => r.giveaways)), { href: "/goods/write-offs" }),
+      line("writeOffs", { ru: "Списания Fargo: просрочка, брак", en: "Fargo write-offs: expired, damaged" }, neg(byMonth(g, (r) => r.fargoWriteOffs)), { href: "/goods/write-offs" }),
       line("loss", { ru: "Потери по инвентаризации", en: "Stock loss at the count" }, neg(byMonth(g, (r) => r.stockLoss)), { href: "/goods/stock" }),
       subtotal("gp", { ru: "Валовая прибыль", en: "Gross profit" }, byMonth(g, (r) => r.grossProfit), { result: true }),
       ratio("gpm", { ru: "Валовая маржа", en: "Gross margin" }, "gp", "revenue"),
@@ -256,6 +258,7 @@ export function balanceStatement(entity: Entity, c: Computed): Statement {
         pos("rollOpen", { ru: "На начало месяца", en: "Opening" }, (r) => r.fargo.stockOpening),
         flow("rollIn", { ru: "Куплено у TI, без НДС", en: "Bought from TI, ex-VAT" }, (r) => r.fargo.stockBought),
         flow("rollSold", { ru: "Себестоимость продаж", en: "Cost of goods sold" }, (r) => -r.fargo.stockSold),
+        flow("rollWo", { ru: "Списания: просрочка, брак", en: "Write-offs: expired, damaged" }, (r) => -r.fargo.stockWrittenOff),
         flow("rollLost", { ru: "Потери по инвентаризации", en: "Stock loss at the count" }, (r) => -r.fargo.stockLost),
         sub("rollClose", { ru: "На конец месяца", en: "Closing" }, (r) => r.fargo.stock),
         header("memoH", { ru: "Справочно", en: "Memo" }),
@@ -451,9 +454,10 @@ export function settlementSummary(
   const revenue = sum((r) => r.revenue);
   const cogs = sum((r) => r.cogs);
   const opex = sum((r) => r.opex);
+  const writtenOff = sum((r) => r.writeOffLoss);
   const loss = sum((r) => r.stockLoss);
   const tax = sum((r) => r.incomeTax);
-  const beforeTax = revenue - cogs - opex - loss;
+  const beforeTax = revenue - cogs - opex - writtenOff - loss;
   const net = beforeTax - tax;
   const stockWhenSold = s.fargoStock + s.unsoldStockVat;
   const forSold = s.invoicesInclVatCum - s.fargoStock;
@@ -466,6 +470,7 @@ export function settlementSummary(
         { label: { ru: "Себестоимость по ценам счетов TI, FIFO", en: "Cost of goods at TI invoice prices, FIFO" }, value: -cogs },
         { label: { ru: "Валовая прибыль", en: "Gross profit" }, value: revenue - cogs, kind: "subtotal" },
         { label: { ru: "Операционные расходы, включая ретро-бонусы", en: "Operating expenses, including retro bonuses" }, value: -opex, href: "/expenses/fargo" },
+        { label: { ru: "Списания: просрочка, брак", en: "Write-offs: expired, damaged" }, value: -writtenOff, href: "/goods/write-offs" },
         { label: { ru: "Потери по инвентаризации", en: "Stock loss at the count" }, value: -loss, href: "/goods/stock" },
         { label: { ru: "Прибыль до налога", en: "Profit before tax" }, value: beforeTax, kind: "subtotal" },
         { label: { ru: "Оборотный налог, 1,9%", en: "Turnover tax, 1.9%" }, value: -tax },

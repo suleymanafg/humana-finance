@@ -49,6 +49,13 @@ const registry: Record<string, EntityConfig> = {
     requiredFields: ["date", "productId"],
     softDelete: true,
   },
+  fargoWriteOff: {
+    delegate: () => prisma.fargoWriteOff,
+    fields: ["date", "productId", "qty", "reason", "notes"],
+    dateFields: ["date"],
+    requiredFields: ["date", "productId", "reason"],
+    softDelete: true,
+  },
   tiVatAccountEntry: {
     delegate: () => prisma.tiVatAccountEntry,
     fields: ["period", "date", "description", "charged", "reduced", "paid", "refunded", "balanceAfter", "sortOrder"],
@@ -217,6 +224,7 @@ const MONTH_FIELD: Record<string, string> = {
 const DATE_FIELD: Record<string, string> = {
   tiInvoiceLine: "date",
   tiWriteOff: "date",
+  fargoWriteOff: "date",
   priorOwnerEntry: "date",
   otherReceipt: "date",
   transfer: "date",

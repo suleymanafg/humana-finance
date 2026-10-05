@@ -1,12 +1,14 @@
 // Cost of goods, first in, first out, at two levels:
 //   TI     — trucks (landed cost) are used up by TI's invoices to Fargo and by
 //            TI's write-offs, in date order;
-//   Fargo  — TI's invoice lines are used up by Fargo's sales, and by the units
-//            missing at each stock count. Every invoice line also carries its
-//            TI cost, so the same draw gives the group's cost at TI landed cost.
+//   Fargo  — TI's invoice lines are used up by Fargo's sales, then by Fargo's
+//            write-offs, then by the units still missing at each stock count.
+//            Every invoice line also carries its TI cost, so the same draw
+//            gives the group's cost at TI landed cost.
 import { FifoCurve } from "./fifo";
 import type {
   Dataset,
+  FargoWriteOffCost,
   FifoMonth,
   InvoiceLineCost,
   ProductFifo,
@@ -191,6 +193,7 @@ export function computeTiCosting(
 export interface FargoCosting {
   fifo: Record<string, ProductFifo>;
   stock: StockMonth[];
+  writeOffs: FargoWriteOffCost[];
   /** products whose sales + count shortfall ran past the units TI invoiced */
   oversold: Array<{ productId: string; monthId: string; units: number }>;
 }
@@ -230,6 +233,11 @@ export function computeFargoCosting(
   for (const wo of ti.writeOffs) {
     bump(writtenUnits, wo.costProductId, wo.monthId, wo.qty);
     bump(writtenValue, wo.costProductId, wo.monthId, wo.value);
+  }
+  const fargoWritten = new Map<string, Map<string, number>>();
+  for (const wo of ds.fargoWriteOffs) {
+    if (!knownProducts.has(wo.productId)) continue;
+    bump(fargoWritten, costOf(wo.productId), monthOf(wo.date), wo.qty);
   }
   const arrivedUnits = new Map<string, Map<string, number>>();
   const arrivedValue = new Map<string, Map<string, number>>();
@@ -286,24 +294,36 @@ export function computeFargoCosting(
     const atTi = new FifoCurve(batches.map((b) => ({ qty: b.qty, unit: b.tiUnitCost })));
     const diffAt = (countMonth: string | null): number => {
       if (!countMonth) return 0;
-      const book = cumulative(invoicedUnits, pid, countMonth) - cumulative(sold, pid, countMonth);
+      const book =
+        cumulative(invoicedUnits, pid, countMonth) -
+        cumulative(sold, pid, countMonth) -
+        cumulative(fargoWritten, pid, countMonth);
       const count = counted.get(pid)?.get(countMonth) ?? 0;
       return book - count;
     };
     const months: Record<string, FifoMonth> = {};
     let prevCumSold = 0;
+    let prevCumWo = 0;
     let prevDiff = 0;
     let reported = false;
     for (const m of monthIds) {
       const cumSold = cumulative(sold, pid, m);
+      const cumWo = cumulative(fargoWritten, pid, m);
       const diff = diffAt(latestCountAtOrBefore(m));
-      const fargoCogs = atInvoice.between(prevCumSold + prevDiff, cumSold + prevDiff);
-      const fargoLoss = atInvoice.between(cumSold + prevDiff, cumSold + diff);
-      const groupCogs = atTi.between(prevCumSold + prevDiff, cumSold + prevDiff);
-      const groupLoss = atTi.between(cumSold + prevDiff, cumSold + diff);
+      // positions on the FIFO curve: where the month starts, after its sales,
+      // after its write-offs, and after what the latest count found missing
+      const start = prevCumSold + prevCumWo + prevDiff;
+      const afterSales = start + cumSold - prevCumSold;
+      const afterWo = afterSales + cumWo - prevCumWo;
+      const used = cumSold + cumWo + diff;
+      const fargoCogs = atInvoice.between(start, afterSales);
+      const fargoWriteOff = atInvoice.between(afterSales, afterWo);
+      const fargoLoss = atInvoice.between(afterWo, used);
+      const groupCogs = atTi.between(start, afterSales);
+      const groupWriteOff = atTi.between(afterSales, afterWo);
+      const groupLoss = atTi.between(afterWo, used);
       const unitsSold = cumSold - prevCumSold;
       const invoicedCum = cumulative(invoicedUnits, pid, m);
-      const used = cumSold + diff;
       if (!reported && used - invoicedCum > 1e-9 && (cumSold !== 0 || invoicedCum !== 0)) {
         oversold.push({ productId: pid, monthId: m, units: used - invoicedCum });
         reported = true;
@@ -313,10 +333,13 @@ export function computeFargoCosting(
       months[m] = {
         unitsSold,
         cumSold,
+        unitsWrittenOff: cumWo - prevCumWo,
         cumCountDiff: diff,
         fargoCogs,
+        fargoWriteOff,
         fargoLoss,
         groupCogs,
+        groupWriteOff,
         groupLoss,
         fargoUnitCost: unitsSold !== 0 ? fargoCogs / unitsSold : 0,
         groupUnitCost: unitsSold !== 0 ? groupCogs / unitsSold : 0,
@@ -330,6 +353,7 @@ export function computeFargoCosting(
         arrivedUnits: arrivedCum,
       };
       prevCumSold = cumSold;
+      prevCumWo = cumWo;
       prevDiff = diff;
     }
     fifo[pid] = { productId: pid, tiBatches: ti.tiBatches.get(pid) ?? [], fargoBatches: batches, months };
@@ -344,7 +368,8 @@ export function computeFargoCosting(
         const f = fifo[pid].months[m];
         const invoiced = cumulative(invoicedUnits, pid, m);
         const soldCum = cumulative(sold, pid, m);
-        const book = invoiced - soldCum;
+        const fargoWrittenOff = cumulative(fargoWritten, pid, m);
+        const book = invoiced - soldCum - fargoWrittenOff;
         const count = isCountMonth ? counted.get(pid)?.get(m) ?? 0 : null;
         return {
           productId: pid,
@@ -352,6 +377,7 @@ export function computeFargoCosting(
           invoiced,
           sold: soldCum,
           writtenOff: cumulative(writtenUnits, pid, m),
+          fargoWrittenOff,
           tiUnits: f.tiStockUnits,
           fargoBook: book,
           counted: count,
@@ -362,5 +388,16 @@ export function computeFargoCosting(
     };
   });
 
-  return { fifo, stock, oversold };
+  // each write-off row: its share of its product's write-off value that month
+  const writeOffs: FargoWriteOffCost[] = ds.fargoWriteOffs
+    .filter((wo) => knownProducts.has(wo.productId))
+    .map((wo) => {
+      const costProductId = costOf(wo.productId);
+      const monthId = monthOf(wo.date);
+      const f = fifo[costProductId]?.months[monthId];
+      const share = f && f.unitsWrittenOff !== 0 ? wo.qty / f.unitsWrittenOff : 0;
+      return { ...wo, monthId, costProductId, value: (f?.fargoWriteOff ?? 0) * share, groupValue: (f?.groupWriteOff ?? 0) * share };
+    });
+
+  return { fifo, stock, oversold, writeOffs };
 }

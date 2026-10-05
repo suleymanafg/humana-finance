@@ -2,6 +2,7 @@
 // Shared by the app (src/lib/data.ts) and the scripts in prisma/.
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { Dataset, TaxSettings } from "./engine/types";
+import { databaseProblem } from "./db-problem";
 
 export const DEFAULT_TAXES: TaxSettings = {
   vatRate: 0.12,
@@ -12,6 +13,10 @@ export const DEFAULT_TAXES: TaxSettings = {
 };
 
 const iso = (d: Date) => d.toISOString();
+
+/** A table this version added reads as empty until `prisma db push` creates it. */
+const untilCreated = <T>(rows: Promise<T[]>): Promise<T[]> =>
+  rows.catch((e) => (databaseProblem(e)?.kind === "schema" ? [] : Promise.reject(e)));
 
 export async function buildDataset(db: PrismaClient): Promise<Dataset> {
   const [
@@ -24,6 +29,7 @@ export async function buildDataset(db: PrismaClient): Promise<Dataset> {
     importExpenses,
     invoices,
     writeOffs,
+    fargoWriteOffs,
     opexTi,
     opexFargo,
     taxFilings,
@@ -54,6 +60,7 @@ export async function buildDataset(db: PrismaClient): Promise<Dataset> {
     db.importExpense.findMany({ where: { deletedAt: null }, include: { category: true } }),
     db.tiInvoiceLine.findMany({ where: { deletedAt: null }, orderBy: [{ date: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }] }),
     db.tiWriteOff.findMany({ where: { deletedAt: null }, orderBy: { date: "asc" } }),
+    untilCreated(db.fargoWriteOff.findMany({ where: { deletedAt: null }, orderBy: [{ date: "asc" }, { createdAt: "asc" }] })),
     db.opexTiEntry.findMany({ where: { deletedAt: null }, include: { category: true } }),
     db.opexFargoEntry.findMany({ where: { deletedAt: null }, include: { category: true } }),
     db.tiTaxFiling.findMany({ where: { deletedAt: null } }),
@@ -127,6 +134,14 @@ export async function buildDataset(db: PrismaClient): Promise<Dataset> {
       notes: l.notes,
     })),
     writeOffs: writeOffs.map((w) => ({ id: w.id, date: iso(w.date), productId: w.productId, qty: w.qty, reason: w.reason })),
+    fargoWriteOffs: fargoWriteOffs.map((w) => ({
+      id: w.id,
+      date: iso(w.date),
+      productId: w.productId,
+      qty: w.qty,
+      reason: w.reason,
+      notes: w.notes,
+    })),
     opexTi: opexTi.map((e) => ({
       id: e.id,
       monthId: e.monthId,

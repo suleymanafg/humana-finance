@@ -31,7 +31,7 @@ export function compute(ds: Dataset): Computed {
   const shipments = computeShipments(ds, costOf);
   const arrived = arrivedInOrder(shipments);
   const tiCosting = computeTiCosting(ds, arrived, costOf);
-  const { fifo, stock, oversold } = computeFargoCosting(ds, monthIds, arrived, tiCosting, costOf);
+  const { fifo, stock, oversold, writeOffs: fargoWriteOffs } = computeFargoCosting(ds, monthIds, arrived, tiCosting, costOf);
   const priorOwnerOpening = monthIds.length > 0 ? priorOwnerVatOpening(ds, monthIds[0]) : 0;
   const fargo = computeFargoMonths(ds, monthIds, tiCosting.invoices, fifo, costOf);
   const ti = computeTiMonths(ds, monthIds, tiCosting.invoices, tiCosting.writeOffs, priorOwnerOpening);
@@ -54,6 +54,7 @@ export function compute(ds: Dataset): Computed {
     shipments,
     invoices: tiCosting.invoices,
     writeOffs: tiCosting.writeOffs,
+    fargoWriteOffs,
     fifo,
     ti,
     fargo,

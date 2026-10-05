@@ -80,6 +80,7 @@ function fixture(): Dataset {
       { id: "I4", date: "2025-09-10", number: "2", productId: "B", qty: 50, price: 80_000, amount: 4_000_000, vat: 480_000, ownUnitCost: null, sortOrder: 3 },
     ],
     writeOffs: [{ id: "W1", date: "2025-10-31", productId: "A", qty: 5 }],
+    fargoWriteOffs: [],
     opexTi: [
       { id: "OT1", monthId: "2025-08", categoryName: "Зарплата", plGroup: "TI_SALARIES", bankAmount: 300_000, cashAmount: 100_000 },
     ],
@@ -206,6 +207,47 @@ describe("Fargo cost of goods, FIFO by TI invoice", () => {
     const z = compute(ds).fifo.A.months["2025-10"];
     expect(z.fargoLoss).toBeCloseTo(0, 6);
     expect(z.cumCountDiff).toBe(a("2025-09").cumCountDiff);
+  });
+});
+
+describe("Fargo write-offs", () => {
+  const ds = fixture();
+  ds.fargoWriteOffs = [
+    { id: "F1", date: "2025-09-25", productId: "A", qty: 2, reason: "EXPIRED" },
+    { id: "F2", date: "2025-10-15", productId: "A-promo", qty: 1, reason: "DAMAGED" },
+  ];
+  const c = compute(ds);
+  const base = compute(fixture());
+  const a = (m: string) => c.fifo.A.months[m];
+  const sep = (r: { fargo: Array<{ monthId: string }> }) => r.fargo.findIndex((f) => f.monthId === "2025-09");
+  it("come off Fargo's book stock, so the count shows only what they do not explain", () => {
+    const row = c.stock.find((s) => s.monthId === "2025-09")!.products.find((p) => p.productId === "A")!;
+    expect(row.fargoWrittenOff).toBe(2);
+    expect(row.fargoBook).toBe(58);
+    expect(row.difference).toBe(1);
+    expect(a("2025-09").fargoWriteOff).toBeCloseTo(2 * 72_000, 4);
+    expect(a("2025-09").fargoLoss).toBeCloseTo(1 * 72_000, 4);
+    expect(a("2025-09").groupWriteOff).toBeCloseTo(2 * 67_200, 4);
+    expect(a("2025-09").groupLoss).toBeCloseTo(1 * 67_200, 4);
+  });
+  it("leave a counted month's total loss and profit as they were", () => {
+    const f = c.fargo[sep(c)];
+    const f0 = base.fargo[sep(base)];
+    expect(f.writeOffLoss + f.stockLoss).toBeCloseTo(f0.stockLoss, 4);
+    expect(f.grossProfit).toBeCloseTo(f0.grossProfit, 4);
+    expect(c.group[sep(c)].netProfit).toBeCloseTo(base.group[sep(base)].netProfit, 4);
+  });
+  it("cost a write-off between counts in its own month", () => {
+    expect(a("2025-10").unitsWrittenOff).toBe(1);
+    expect(a("2025-10").fargoWriteOff).toBeCloseTo(72_000, 4);
+    expect(a("2025-10").fargoLoss).toBeCloseTo(0, 6);
+    expect(a("2025-10").fargoStockUnits).toBe(150 - 100 - 3 - 1);
+    expect(c.fargoWriteOffs.find((w) => w.id === "F2")!.value).toBeCloseTo(72_000, 4);
+  });
+  it("keep the group, the settlement and the balance sheets tied", () => {
+    for (const g of c.group) expect(Math.abs(g.recon.check)).toBeLessThan(1e-6);
+    for (const s of c.settlement) expect(Math.abs(s.check)).toBeLessThan(1e-6);
+    for (const b of c.balance) expect(Math.abs(b.fargo.check)).toBeLessThan(1e-6);
   });
 });
 

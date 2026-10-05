@@ -267,6 +267,7 @@ export function computeBalances(
         stockOpening: prevFargoStock,
         stockBought: t.revenue,
         stockSold: f.cogs,
+        stockWrittenOff: f.writeOffLoss,
         stockLost: f.stockLoss,
         settlement: st.owes,
         capital: fargoCapital,

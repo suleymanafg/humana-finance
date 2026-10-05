@@ -29,13 +29,14 @@ model Product {
   sortOrder        Int       @default(0)
   active           Boolean   @default(true)
 
-  sales         Sale[]
-  shipmentLines ShipmentLine[]
-  stockCounts   StockCount[]
-  clientSales   ClientSale[]
-  planningSku   PlanningSku?
-  tiInvoices    TiInvoiceLine[]
-  tiWriteOffs   TiWriteOff[]
+  sales          Sale[]
+  shipmentLines  ShipmentLine[]
+  stockCounts    StockCount[]
+  clientSales    ClientSale[]
+  planningSku    PlanningSku?
+  tiInvoices     TiInvoiceLine[]
+  tiWriteOffs    TiWriteOff[]
+  fargoWriteOffs FargoWriteOff[]
 }
 
 // ───────────────── Supply planning (Планирование закупок) ─────────────────
@@ -432,6 +433,21 @@ model TiWriteOff {
   product   Product   @relation(fields: [productId], references: [id])
   qty       Float
   reason    String?
+  deletedAt DateTime?
+}
+
+// Goods written off from Fargo's warehouse by quantity: expired, damaged or
+// other. They leave Fargo's book stock and are costed by FIFO, so a stock
+// count shows only what the write-offs do not explain.
+model FargoWriteOff {
+  id        String    @id @default(cuid())
+  date      DateTime
+  productId String
+  product   Product   @relation(fields: [productId], references: [id])
+  qty       Float
+  reason    String // EXPIRED | DAMAGED | OTHER
+  notes     String?
+  createdAt DateTime  @default(now())
   deletedAt DateTime?
 }
 

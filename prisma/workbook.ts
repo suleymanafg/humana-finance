@@ -476,6 +476,8 @@ export function readWorkbook(path: string): WorkbookData {
     importExpenses,
     invoices,
     writeOffs,
+    // the workbook records Fargo's write-offs in money (expenses), not by quantity
+    fargoWriteOffs: [],
     opexTi,
     opexFargo,
     taxFilings,
