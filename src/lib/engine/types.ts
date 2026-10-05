@@ -482,6 +482,11 @@ export interface SettlementMonth {
   check: number;
   byBank: number;
   inCash: number;
+  // VAT on unsold stock due when the goods are sold, not at the month-end
+  unsoldStockVat: number;
+  owesWhenSold: number;
+  byBankWhenSold: number;
+  inCashWhenSold: number;
   change: number;
 }
 

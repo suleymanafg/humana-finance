@@ -107,15 +107,20 @@ function grid(wb: XLSX.WorkBook, name: string): Row[] {
 function rowLabels(wb: XLSX.WorkBook, name: string): string[] {
   const ws = wb.Sheets[name];
   if (!ws) throw new Error(`The workbook has no tab «${name}»`);
-  const translations = grid(wb, "Translations");
   const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
-  const out: string[] = [];
-  for (let r = 0; r <= range.e.r; r++) {
-    const cell = ws[XLSX.utils.encode_cell({ r, c: 0 })] as XLSX.CellObject | undefined;
+  const text = cellText(wb, name);
+  return Array.from({ length: range.e.r + 1 }, (_, r) => text(r, 0));
+}
+
+/** The English text of a cell: the Translations entry its formula points to, else what it shows. */
+function cellText(wb: XLSX.WorkBook, name: string) {
+  const ws = wb.Sheets[name];
+  const translations = grid(wb, "Translations");
+  return (r: number, c: number) => {
+    const cell = ws?.[XLSX.utils.encode_cell({ r, c })] as XLSX.CellObject | undefined;
     const ref = cell?.f?.match(/Translations!\$B\$(\d+)/);
-    out.push(String(ref ? (translations[Number(ref[1]) - 1]?.[1] ?? "") : (cell?.v ?? "")).trim());
-  }
-  return out;
+    return String(ref ? (translations[Number(ref[1]) - 1]?.[1] ?? "") : (cell?.v ?? "")).trim();
+  };
 }
 
 /** The full label of the first line that starts with `start` (long labels end in detail that may change). */
@@ -147,6 +152,46 @@ function statementRows(wb: XLSX.WorkBook, name: string, wanted: Record<string, s
     out.rows[key] = Object.fromEntries(months.map((m, j) => [m, num(r[cols[j]])]));
   }
   return out;
+}
+
+/**
+ * The settlement at the report month with the VAT on unsold stock due only
+ * when the goods are sold: the second figures column of «Settlement (Fargo)»,
+ * in workbooks that have one.
+ */
+function settlementWhenSold(wb: XLSX.WorkBook, reportTo: string): Expected {
+  const name = "Settlement (Fargo)";
+  const none: Expected = { months: [], rows: {} };
+  const ws = wb.Sheets[name];
+  if (!ws) return none;
+  const text = cellText(wb, name);
+  const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
+  let header = -1;
+  let col = -1;
+  for (let r = 0; r <= Math.min(range.e.r, 9) && col < 0; r++) {
+    for (let c = 1; c <= range.e.c && col < 0; c++) {
+      if (text(r, c) === "VAT on unsold stock due when sold") [header, col] = [r, c];
+    }
+  }
+  if (col < 0) return none;
+  const now = col - 1;
+  if (text(header, now) !== "VAT on unsold stock due now") throw new Error(`The tab «${name}» has no «due now» column next to «due when sold»`);
+  const rows = grid(wb, name);
+  const labels = rowLabels(wb, name);
+  const at = (label: string, c: number) => {
+    const r = labels.indexOf(label);
+    if (r < 0) throw new Error(`The tab «${name}» has no line «${label}»`);
+    return { [reportTo]: num(rows[r]?.[c]) };
+  };
+  return {
+    months: [reportTo],
+    rows: {
+      owesWhenSold: at("FARGO STILL OWES TI", col),
+      byBankWhenSold: at("of which by bank (balance of the reconciliation act)", col),
+      inCashWhenSold: at("of which in cash", col),
+      unsoldStockVat: at(rowStartingWith(wb, name, "Difference between the two versions"), now),
+    },
+  };
 }
 
 export function readWorkbook(path: string): WorkbookData {
@@ -511,6 +556,7 @@ export function readWorkbook(path: string): WorkbookData {
       owes: "Fargo still owes TI — cash method",
       check: "Check: result 4 − result 5 (must be 0)",
     })),
+    prefix("settlement.", settlementWhenSold(wb, reportTo)),
     prefix("bsTi.", statementRows(wb, "BS TI", {
       receivableFromFargo: "Receivable from Fargo (invoices incl. VAT − payments received)",
       stock: "Stock held by TI (FIFO: truck batches not yet used up)",

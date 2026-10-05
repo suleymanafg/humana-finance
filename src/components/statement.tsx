@@ -252,24 +252,38 @@ export function SectionTitle({ children, right }: { children: React.ReactNode; r
 /** A short document-style statement: titled sections of label · amount lines. */
 export function DocTable({
   sections,
+  columns,
 }: {
   sections: Array<{
     title: Bi;
-    lines: Array<{ label: Bi; value: number | null; kind?: "line" | "subtotal" | "total" | "memo"; href?: string }>;
+    lines: Array<{ label: Bi; value: number | null; alt?: number | null; kind?: "line" | "subtotal" | "total" | "memo"; href?: string }>;
   }>;
+  /** Two figure columns: `value` under the first, `alt` (or the same `value`) under the second. */
+  columns?: [Bi, Bi];
 }) {
   const { l } = useT();
+  const fmt = (v: number | null) => (v == null || Math.abs(v) < 0.5 ? "—" : fmtN(v));
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-surface">
       <table className="stmt">
+        {columns && (
+          <thead>
+            <tr>
+              <th />
+              <th className="w-44">{l(columns[0])}</th>
+              <th className="w-44">{l(columns[1])}</th>
+            </tr>
+          </thead>
+        )}
         <tbody>
           {sections.map((sec, si) => (
             <Fragment key={si}>
               <tr className="is-header">
-                <td colSpan={2}>{l(sec.title)}</td>
+                <td colSpan={columns ? 3 : 2}>{l(sec.title)}</td>
               </tr>
               {sec.lines.map((ln, li) => {
                 const kind = ln.kind ?? "line";
+                const differs = ln.alt !== undefined && Math.round(ln.alt ?? 0) !== Math.round(ln.value ?? 0);
                 return (
                   <tr key={li} className={`is-${kind === "line" ? "line" : kind}`}>
                     <td>
@@ -283,7 +297,8 @@ export function DocTable({
                         )}
                       </span>
                     </td>
-                    <td className="w-48">{ln.value == null ? "—" : Math.abs(ln.value) < 0.5 ? "—" : fmtN(ln.value)}</td>
+                    <td className={columns ? "w-44" : "w-48"}>{fmt(ln.value)}</td>
+                    {columns && <td className={`w-44 ${differs ? "" : "text-muted"}`}>{fmt(differs ? ln.alt! : ln.value)}</td>}
                   </tr>
                 );
               })}

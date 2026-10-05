@@ -337,6 +337,11 @@ export function settlementStatement(c: Computed): Statement {
       header("payH", { ru: "Как погашается", en: "How it is paid" }),
       pos("byBank", { ru: "Через банк, по счетам (до остатка по акту)", en: "By bank against invoices (up to the act balance)" }, (r) => r.byBank),
       pos("inCash", { ru: "Наличными", en: "In cash" }, (r) => r.inCash),
+      header("soldH", { ru: "Вариант «НДС при продаже»", en: "Version «VAT due when sold»" }),
+      pos("unsoldVat", { ru: "НДС по товару на складе Fargo", en: "VAT on the goods in Fargo's warehouse" }, (r) => -r.unsoldStockVat),
+      total("owesSold", { ru: "Fargo должен TI", en: "Fargo owes TI" }, byMonth(s, (r) => r.owesWhenSold), { agg: "last" }),
+      pos("byBankSold", { ru: "Через банк, по счетам (до остатка по акту)", en: "By bank against invoices (up to the act balance)" }, (r) => r.byBankWhenSold),
+      pos("inCashSold", { ru: "Наличными", en: "In cash" }, (r) => r.inCashWhenSold),
     ],
   };
 }
@@ -418,6 +423,8 @@ export function valueOver(lineDef: StatementLine, months: string[], all: Stateme
 export interface DocLine {
   label: Bi;
   value: number | null;
+  /** The figure in the document's second version, where it differs from `value`. */
+  alt?: number | null;
   kind?: "line" | "subtotal" | "total" | "memo";
   href?: string;
 }
@@ -426,7 +433,16 @@ export interface DocSection {
   lines: DocLine[];
 }
 
-export function settlementSummary(c: Computed, monthId: string): { sections: DocSection[]; check: number } | null {
+/** The two versions of the settlement: when Fargo pays the VAT on goods it has not sold yet. */
+export const SETTLEMENT_VERSIONS: [Bi, Bi] = [
+  { ru: "НДС сейчас", en: "VAT due now" },
+  { ru: "НДС при продаже", en: "VAT due when sold" },
+];
+
+export function settlementSummary(
+  c: Computed,
+  monthId: string
+): { sections: DocSection[]; check: number; unsoldStockVat: number } | null {
   const i = c.monthIds.indexOf(monthId);
   if (i < 0) return null;
   const s = c.settlement[i];
@@ -439,8 +455,9 @@ export function settlementSummary(c: Computed, monthId: string): { sections: Doc
   const tax = sum((r) => r.incomeTax);
   const beforeTax = revenue - cogs - opex - loss;
   const net = beforeTax - tax;
-  const ifSold = s.invoicesInclVatCum + s.fargoNetCum;
-  const due = ifSold - s.fargoStock - s.receivables - s.vatCredit - s.writeOffsDeductedCum;
+  const stockWhenSold = s.fargoStock + s.unsoldStockVat;
+  const forSold = s.invoicesInclVatCum - s.fargoStock;
+  const due = forSold + s.fargoNetCum - s.receivables - s.vatCredit - s.writeOffsDeductedCum;
   const sections: DocSection[] = [
     {
       title: { ru: "Прибыль Fargo от Humana", en: "Fargo's profit from Humana" },
@@ -456,18 +473,18 @@ export function settlementSummary(c: Computed, monthId: string): { sections: Doc
       ],
     },
     {
-      title: { ru: "Что Fargo должен передать TI", en: "What Fargo has to pay TI" },
+      title: { ru: "Что Fargo должен оплатить TI", en: "What Fargo has to pay TI" },
       lines: [
-        { label: { ru: "Счета-фактуры TI с НДС — через банк", en: "TI invoices incl. VAT — by bank" }, value: s.invoicesInclVatCum, href: "/goods/invoices" },
-        { label: { ru: "Чистая прибыль Fargo — наличными", en: "Fargo's net profit — in cash" }, value: s.fargoNetCum },
-        { label: { ru: "Итого, когда товар продан и деньги собраны", en: "Total once all goods are sold and paid for" }, value: ifSold, kind: "subtotal" },
-        { label: { ru: "Товар на складе Fargo", en: "Goods still in Fargo's warehouse" }, value: -s.fargoStock, href: "/goods/stock" },
-        { label: { ru: "Долги покупателей", en: "Customers still owe Fargo" }, value: -s.receivables, href: "/settlement/receivables" },
+        { label: { ru: "Счета-фактуры TI с НДС, весь поставленный товар", en: "TI invoices incl. VAT, all goods delivered" }, value: s.invoicesInclVatCum, href: "/goods/invoices" },
+        { label: { ru: "Товар на складе Fargo, ещё не продан", en: "Goods in Fargo's warehouse, not sold yet" }, value: -s.fargoStock, alt: -stockWhenSold, href: "/goods/stock" },
+        { label: { ru: "Причитается за проданный товар", en: "Due for the goods sold" }, value: forSold, alt: forSold - s.unsoldStockVat, kind: "subtotal" },
+        { label: { ru: "Чистая прибыль Fargo", en: "Fargo's net profit" }, value: s.fargoNetCum },
+        { label: { ru: "Долги покупателей Fargo", en: "Customers still owe Fargo" }, value: -s.receivables, href: "/settlement/receivables" },
         { label: { ru: "НДС к зачёту у Fargo", en: "Fargo VAT credit not yet recovered" }, value: -s.vatCredit, href: "/taxes/fargo-vat" },
         ...(s.writeOffsDeductedCum !== 0
           ? [{ label: { ru: "Списания, вычитаемые Fargo", en: "Write-offs deducted by Fargo" }, value: -s.writeOffsDeductedCum }]
           : []),
-        { label: { ru: "Причитается TI на конец месяца", en: "Due to TI at month-end" }, value: due, kind: "total" },
+        { label: { ru: "Причитается TI на конец месяца", en: "Due to TI at month-end" }, value: due, alt: due - s.unsoldStockVat, kind: "total" },
       ],
     },
     {
@@ -481,9 +498,9 @@ export function settlementSummary(c: Computed, monthId: string): { sections: Doc
     {
       title: { ru: "Итог", en: "Result" },
       lines: [
-        { label: { ru: "Fargo должен TI", en: "Fargo still owes TI" }, value: s.owes, kind: "total" },
-        { label: { ru: "через банк, по счетам (остаток по акту сверки)", en: "by bank against invoices (the act balance)" }, value: s.byBank, kind: "memo" },
-        { label: { ru: "наличными", en: "in cash" }, value: s.inCash, kind: "memo" },
+        { label: { ru: "Fargo должен TI", en: "Fargo still owes TI" }, value: s.owes, alt: s.owesWhenSold, kind: "total" },
+        { label: { ru: "через банк, по счетам (остаток по акту сверки)", en: "by bank against invoices (the act balance)" }, value: s.byBank, alt: s.byBankWhenSold, kind: "memo" },
+        { label: { ru: "наличными", en: "in cash" }, value: s.inCash, alt: s.inCashWhenSold, kind: "memo" },
       ],
     },
     {
@@ -500,5 +517,5 @@ export function settlementSummary(c: Computed, monthId: string): { sections: Doc
       ],
     },
   ];
-  return { sections, check: s.check };
+  return { sections, check: s.check, unsoldStockVat: s.unsoldStockVat };
 }

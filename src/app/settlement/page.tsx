@@ -1,5 +1,5 @@
 import { pageContext, type SearchParams } from "@/lib/page-context";
-import { settlementSummary } from "@/lib/statements";
+import { SETTLEMENT_VERSIONS, settlementSummary } from "@/lib/statements";
 import { fmtN } from "@/lib/format";
 import { ButtonLink, DocTable, Figure, Toolbar } from "@/components/statement";
 
@@ -29,7 +29,7 @@ export default async function SettlementPage({ searchParams }: { searchParams: S
       </Toolbar>
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Figure
-          label={ctx.l({ ru: "Fargo должен TI", en: "Fargo owes TI" })}
+          label={ctx.l({ ru: "Fargo должен TI · НДС сейчас", en: "Fargo owes TI · VAT due now" })}
           value={fmtN(s.owes)}
           sub={
             prev
@@ -37,16 +37,37 @@ export default async function SettlementPage({ searchParams }: { searchParams: S
               : undefined
           }
         />
-        <Figure label={ctx.l({ ru: "из них через банк", en: "of which by bank" })} value={fmtN(s.byBank)} />
-        <Figure label={ctx.l({ ru: "из них наличными", en: "of which in cash" })} value={fmtN(s.inCash)} />
         <Figure
-          label={ctx.l({ ru: "Получено за месяц", en: "Received in the month" })}
-          value={fmtN(s.transfersCash + s.transfersBank)}
-          sub={`${ctx.l({ ru: "наличные", en: "cash" })} ${fmtN(s.transfersCash)} · ${ctx.l({ ru: "банк", en: "bank" })} ${fmtN(s.transfersBank)}`}
+          label={ctx.l({ ru: "Fargo должен TI · НДС при продаже", en: "Fargo owes TI · VAT due when sold" })}
+          value={fmtN(s.owesWhenSold)}
+          sub={ctx.l({
+            ru: `меньше на ${fmtN(s.unsoldStockVat)} — НДС по непроданному товару`,
+            en: `${fmtN(s.unsoldStockVat)} less — the VAT on unsold stock`,
+          })}
+        />
+        <Figure
+          label={ctx.l({ ru: "из них через банк", en: "of which by bank" })}
+          value={fmtN(s.byBank)}
+          sub={
+            Math.round(s.byBankWhenSold) !== Math.round(s.byBank)
+              ? `${ctx.l({ ru: "при продаже", en: "when sold" })} ${fmtN(s.byBankWhenSold)}`
+              : ctx.l({ ru: "остаток по акту сверки", en: "the act balance" })
+          }
+        />
+        <Figure
+          label={ctx.l({ ru: "из них наличными", en: "of which in cash" })}
+          value={fmtN(s.inCash)}
+          sub={`${ctx.l({ ru: "при продаже", en: "when sold" })} ${fmtN(s.inCashWhenSold)}`}
         />
       </div>
-      <div className="max-w-3xl">
-        <DocTable sections={summary.sections} />
+      <div className="max-w-4xl">
+        <p className="mb-3 text-[12.5px] text-muted">
+          {ctx.l({
+            ru: "Два варианта — когда Fargo платит НДС по ещё не проданному товару. Сейчас: товар на складе без НДС, этот НДС Fargo уже зачёл. При продаже: товар на складе с НДС.",
+            en: "Two versions — when Fargo pays the VAT on goods it has not sold yet. Now: the stock ex-VAT, as Fargo has already offset that VAT. When sold: the stock incl. VAT.",
+          })}
+        </p>
+        <DocTable sections={summary.sections} columns={SETTLEMENT_VERSIONS} />
         <p className={`mt-3 text-[12.5px] ${Math.abs(summary.check) >= 1 ? "text-danger" : "text-muted"}`}>
           {Math.abs(summary.check) >= 1
             ? ctx.l({

@@ -55,28 +55,35 @@ export function statementSheet(opts: {
   };
 }
 
-/** A one-month document (sections of labelled figures) as a two-column sheet. */
+/** A one-month document (sections of labelled figures) as a sheet: labels and one or two figure columns. */
 export function documentSheet(opts: {
   name: string;
   title: string;
   subtitle: string;
   valueHeader: string;
+  /** Header of the second figure column, for a document with two versions. */
+  altHeader?: string;
   sections: DocSection[];
   locale: Locale;
 }): SheetSpec {
+  const two = opts.altHeader != null;
   const rows: CellValue[][] = [];
   const boldRows: number[] = [];
   const sectionRows: number[] = [];
   const indentRows: number[] = [];
+  const blank = (): CellValue[] => (two ? [null, null, null] : [null, null]);
+  const figure = (v: number | null | undefined) => (v == null ? null : Math.round(v));
   opts.sections.forEach((section, k) => {
-    if (k > 0) rows.push([null, null]);
+    if (k > 0) rows.push(blank());
     sectionRows.push(rows.length);
-    rows.push([section.title[opts.locale], null]);
+    rows.push([section.title[opts.locale], ...blank().slice(1)]);
     for (const line of section.lines) {
       const kind = line.kind ?? "line";
       if (kind === "subtotal" || kind === "total") boldRows.push(rows.length);
       else indentRows.push(rows.length);
-      rows.push([line.label[opts.locale], line.value == null ? null : Math.round(line.value)]);
+      const row: CellValue[] = [line.label[opts.locale], figure(line.value)];
+      if (two) row.push(figure(line.alt !== undefined ? line.alt : line.value));
+      rows.push(row);
     }
   });
   return {
@@ -86,6 +93,7 @@ export function documentSheet(opts: {
     columns: [
       { header: "", width: 58 },
       { header: opts.valueHeader, numFmt: MONEY, width: 20 },
+      ...(two ? [{ header: opts.altHeader!, numFmt: MONEY, width: 20 }] : []),
     ],
     rows,
     boldRows,

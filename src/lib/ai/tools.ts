@@ -231,7 +231,13 @@ export async function runAiTool(
         opexFargoByGroup: Object.fromEntries(Object.entries(f.opexByGroup).map(([k, v]) => [k, r(v)])),
         tiInvoicesToFargo: { revenueExVat: r(t.revenue), units: r(t.units), cogsAtTiCost: r(t.cogs) },
         fargoVat: Object.fromEntries(Object.entries(f.vat).map(([k, v]) => [k, r(v)])),
-        settlement: { fargoOwesTi: r(s.owes), byBank: r(s.byBank), inCash: r(s.inCash), receivedInMonth: r(s.transfersCash + s.transfersBank) },
+        settlement: {
+          fargoOwesTi: r(s.owes),
+          byBank: r(s.byBank),
+          inCash: r(s.inCash),
+          fargoOwesTiIfVatDueWhenSold: r(s.owesWhenSold),
+          receivedInMonth: r(s.transfersCash + s.transfersBank),
+        },
       };
     }
 
@@ -316,10 +322,16 @@ export async function runAiTool(
       return {
         month,
         preliminary: preliminary([month]).length > 0,
+        versions: "value: VAT on unsold stock due now (the main figure); valueIfVatDueWhenSold: the VAT on goods Fargo has not sold yet is paid only when they are sold",
         summary: summary?.sections.map((s) => ({
           section: s.title.ru,
-          lines: s.lines.map((l) => ({ line: l.label.ru, value: l.value == null ? null : r(l.value) })),
+          lines: s.lines.map((l) => ({
+            line: l.label.ru,
+            value: l.value == null ? null : r(l.value),
+            ...(l.alt !== undefined ? { valueIfVatDueWhenSold: l.alt == null ? null : r(l.alt) } : {}),
+          })),
         })),
+        unsoldStockVat: summary ? r(summary.unsoldStockVat) : null,
         methodsDifference: summary ? r(summary.check) : null,
         byMonth: statementRows(settlementStatement(computed), until(month)),
         capital: {

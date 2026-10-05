@@ -73,6 +73,10 @@ export function engineFigures(c: Computed): Record<string, Record<string, number
     put("settlement.inCash", m, s.inCash);
     put("settlement.owes", m, s.owes);
     put("settlement.check", m, s.check);
+    put("settlement.unsoldStockVat", m, s.unsoldStockVat);
+    put("settlement.owesWhenSold", m, s.owesWhenSold);
+    put("settlement.byBankWhenSold", m, s.byBankWhenSold);
+    put("settlement.inCashWhenSold", m, s.inCashWhenSold);
   });
   c.balance.forEach((b) => {
     const m = b.monthId;

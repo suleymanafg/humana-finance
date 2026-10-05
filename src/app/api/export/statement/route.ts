@@ -10,6 +10,7 @@ import {
   balanceStatement,
   fargoVatStatement,
   pnlStatement,
+  SETTLEMENT_VERSIONS,
   settlementStatement,
   settlementSummary,
   tiVatStatement,
@@ -95,8 +96,14 @@ export async function GET(request: NextRequest) {
         documentSheet({
           name: ru ? "Итог" : "Summary",
           title: `${ru ? "Расчёты с Fargo на конец месяца" : "Settlement with Fargo at month-end"} — ${monthName(monthId)}`,
-          subtitle: generated,
-          valueHeader: ru ? "сум" : "UZS",
+          subtitle: [
+            ru
+              ? "Два варианта — когда Fargo платит НДС по ещё не проданному товару: сейчас (товар на складе без НДС) или при продаже (с НДС)"
+              : "Two versions — when Fargo pays the VAT on goods it has not sold yet: now (the stock ex-VAT) or when sold (incl. VAT)",
+            generated,
+          ].join(" · "),
+          valueHeader: `${SETTLEMENT_VERSIONS[0][locale]}, ${ru ? "сум" : "UZS"}`,
+          altHeader: `${SETTLEMENT_VERSIONS[1][locale]}, ${ru ? "сум" : "UZS"}`,
           sections: summary.sections,
           locale,
         })

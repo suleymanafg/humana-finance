@@ -286,6 +286,12 @@ describe("settlement with Fargo", () => {
     const due = c.settlement.filter((s) => s.monthId <= "2025-09").reduce((t, s) => t + s.accrued, 0);
     expect(sep.owes).toBeCloseTo(due - 1_500_000 - 5_000_000 - 600_000, 6);
   });
+  it("owes less by the VAT on unsold stock when that VAT is due only when sold", () => {
+    expect(sep.fargoStock).toBeGreaterThan(0);
+    expect(sep.unsoldStockVat).toBeCloseTo(sep.fargoStock * 0.12, 6);
+    expect(sep.owesWhenSold).toBeCloseTo(sep.owes - sep.unsoldStockVat, 6);
+    expect(sep.byBankWhenSold + sep.inCashWhenSold).toBeCloseTo(sep.owesWhenSold, 6);
+  });
 });
 
 describe("balance sheet inputs", () => {

@@ -69,6 +69,11 @@ export function computeSettlement(
     const partnership = fargoNetCum - fargoStock - receivables - writeOffsDeductedCum - vatCredit - cashCum;
     const owesByAct = actBalance + notGoods + partnership;
     const byBank = Math.min(Math.max(owes, 0), Math.max(actBalance, 0));
+    // the other version: Fargo pays the VAT on goods it has not sold yet only
+    // when it sells them, so that VAT is not due at the month-end
+    const unsoldStockVat = fargoStock * ds.taxes.vatRate;
+    const owesWhenSold = owes - unsoldStockVat;
+    const byBankWhenSold = Math.min(Math.max(owesWhenSold, 0), Math.max(actBalance, 0));
 
     rows.push({
       monthId: m,
@@ -101,6 +106,10 @@ export function computeSettlement(
       check: owes - owesByAct,
       byBank,
       inCash: owes - byBank,
+      unsoldStockVat,
+      owesWhenSold,
+      byBankWhenSold,
+      inCashWhenSold: owesWhenSold - byBankWhenSold,
       change: accrued - transfersCash - transfersBank - (receivables - prevReceivables),
     });
     prevReceivables = receivables;
