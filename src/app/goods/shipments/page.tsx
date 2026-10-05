@@ -20,8 +20,6 @@ export default async function ShipmentsPage({ searchParams }: { searchParams: Se
       select: { id: true, status: true, etaDate: true, dispatchDate: true },
     }),
   ]);
-  const now = new Date();
-  const currentMonthId = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
   return (
@@ -58,9 +56,6 @@ export default async function ShipmentsPage({ searchParams }: { searchParams: Se
       statusById={Object.fromEntries(
         meta.map((s) => [s.id, { status: s.status, etaDate: day(s.etaDate), dispatchDate: day(s.dispatchDate) }])
       )}
-      currentMonthId={
-        dataset.months.some((m) => m.id === currentMonthId) ? currentMonthId : dataset.months.at(-1)?.id ?? currentMonthId
-      }
       readOnly={!ctx.canEditAny}
     />
   );

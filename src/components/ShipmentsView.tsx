@@ -294,22 +294,69 @@ function AddExpenseRow({
   );
 }
 
+/** Today in the user's own time zone, as YYYY-MM-DD. */
+const today = () => new Date().toLocaleDateString("en-CA");
+
+/**
+ * The day a truck's goods are in TI's warehouse. Its month is the month the
+ * truck enters TI's stock and FIFO cost; the goods move to Fargo with TI's
+ * invoices. Shows that month, and refuses a future day or a month the app
+ * does not have.
+ */
+function ArrivalDate({
+  months,
+  value,
+  onChange,
+  ru,
+}: {
+  months: MonthIn[];
+  value: string;
+  onChange: (v: string) => void;
+  ru: boolean;
+}) {
+  const month = months.find((m) => m.id === value.slice(0, 7));
+  const problem =
+    value === ""
+      ? null
+      : value > today()
+        ? ru ? "дата ещё не наступила" : "a future date"
+        : !month
+          ? ru ? "этого месяца нет в справочнике" : "this month is not in the reference data"
+          : null;
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-[11.5px] text-muted">{ru ? "на складе TI с" : "in TI's warehouse on"}</span>
+      <Input type="date" value={value} max={today()} onChange={(e) => onChange(e.target.value)} className="w-36" />
+      {value !== "" && (
+        <span className={`text-[11.5px] ${problem ? "font-medium text-warn" : "text-muted"}`}>
+          {problem ?? `${ru ? "месяц" : "month"}: ${ru ? month!.nameRu : month!.nameEn}`}
+        </span>
+      )}
+    </span>
+  );
+}
+
+const arrivalValid = (months: MonthIn[], date: string) =>
+  date !== "" && date <= today() && months.some((m) => m.id === date.slice(0, 7));
+
 /** One truck in the «В пути» strip: editable ETA + the arrived action. */
 function TransitRow({
   shipment,
+  months,
   readOnly,
   ru,
-  currentMonthId,
   onSaved,
 }: {
   shipment: { id: string; code: string; etaDate: string | null; totalUnits: number };
+  months: MonthIn[];
   readOnly: boolean;
   ru: boolean;
-  currentMonthId: string;
   onSaved: () => void;
 }) {
   const [eta, setEta] = useState(shipment.etaDate ?? "");
   const [busy, setBusy] = useState(false);
+  // marking arrival asks for the day the goods were in the warehouse
+  const [arrival, setArrival] = useState<string | null>(null);
 
   return (
     <div className="flex flex-wrap items-center gap-4 bg-surface/60 px-4 py-2.5">
@@ -346,30 +393,37 @@ function TransitRow({
           </>
         )}
       </span>
-      {!readOnly && (
+      {!readOnly && arrival === null && (
         <span className="ml-auto">
           <Button
             variant="secondary"
             disabled={busy}
+            onClick={() => setArrival(shipment.etaDate && shipment.etaDate <= today() ? shipment.etaDate : today())}
+          >
+            {ru ? "Отметить прибытие" : "Mark arrived"}
+          </Button>
+        </span>
+      )}
+      {!readOnly && arrival !== null && (
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          <ArrivalDate months={months} value={arrival} onChange={setArrival} ru={ru} />
+          <Button
+            disabled={busy || !arrivalValid(months, arrival)}
             onClick={async () => {
-              if (
-                !confirm(
-                  ru
-                    ? `Отметить «${shipment.code}» как прибывшую? Поставка попадёт в себестоимость текущего месяца.`
-                    : `Mark "${shipment.code}" as arrived? It will enter this month's COGS.`
-                )
-              )
-                return;
               setBusy(true);
               await crud("shipment", "update", {
                 id: shipment.id,
-                data: { status: "ARRIVED", monthId: currentMonthId, etaDate: null },
+                data: { status: "ARRIVED", monthId: arrival.slice(0, 7), etaDate: arrival },
               });
               setBusy(false);
+              setArrival(null);
               onSaved();
             }}
           >
-            {ru ? "Отметить прибытие" : "Mark arrived"}
+            {busy ? "…" : ru ? "Прибыла" : "Arrived"}
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => setArrival(null)}>
+            {ru ? "Отмена" : "Cancel"}
           </Button>
         </span>
       )}
@@ -385,20 +439,26 @@ function ShipmentStatusEdit({
   status,
   etaDate,
   dispatchDate,
+  monthId,
+  months,
   readOnly,
   ru,
   onSaved,
 }: {
   shipmentId: string;
   status: string;
+  /** expected arrival while in transit; the actual day once arrived */
   etaDate: string | null;
   dispatchDate: string | null;
+  monthId: string;
+  months: MonthIn[];
   readOnly: boolean;
   ru: boolean;
   onSaved: () => void;
 }) {
   const transit = status === "TRANSIT";
   const [eta, setEta] = useState(etaDate ?? "");
+  const [arrived, setArrived] = useState(transit ? "" : etaDate ?? "");
   const [disp, setDisp] = useState(dispatchDate ?? "");
   const [busy, setBusy] = useState(false);
   // switching to TRANSIT is two-step: pick the ETA first, then confirm
@@ -440,6 +500,25 @@ function ShipmentStatusEdit({
     if (busy) return;
     setBusy(true);
     await crud("shipment", "update", { id: shipmentId, data: { etaDate: eta || null } });
+    setBusy(false);
+    onSaved();
+  }
+
+  // the arrival day decides the truck's month
+  async function saveArrival() {
+    if (busy || !arrivalValid(months, arrived)) return;
+    const moves = arrived.slice(0, 7) !== monthId;
+    if (
+      moves &&
+      !confirm(
+        ru
+          ? "Поставка перейдёт в другой месяц, вместе с её себестоимостью. Продолжить?"
+          : "The shipment moves to another month, with its cost. Continue?"
+      )
+    )
+      return;
+    setBusy(true);
+    await crud("shipment", "update", { id: shipmentId, data: { etaDate: arrived, monthId: arrived.slice(0, 7) } });
     setBusy(false);
     onSaved();
   }
@@ -496,6 +575,16 @@ function ShipmentStatusEdit({
               ? "поставка будет исключена из себестоимости и остатков до прибытия"
               : "will be excluded from COGS and stock until arrival"}
           </span>
+        </>
+      )}
+      {!transit && !pendingTransit && (
+        <>
+          <ArrivalDate months={months} value={arrived} onChange={setArrived} ru={ru} />
+          {arrived !== (etaDate ?? "") && arrivalValid(months, arrived) && (
+            <Button variant="secondary" disabled={busy} onClick={() => void saveArrival()}>
+              {busy ? "…" : ru ? "Сохранить" : "Save"}
+            </Button>
+          )}
         </>
       )}
       {transit && !pendingTransit && (
@@ -569,6 +658,7 @@ function NewShipmentModal({
   const [rate, setRate] = useState("");
   const [inTransit, setInTransit] = useState(false);
   const [eta, setEta] = useState("");
+  const [arrived, setArrived] = useState("");
   const [dispatch, setDispatch] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([{ productId: "", qty: "", priceEur: "" }]);
   const [exps, setExps] = useState<DraftExpense[]>([{ categoryId: "", amount: "" }]);
@@ -646,7 +736,10 @@ function NewShipmentModal({
   const purchaseUzs = purchaseEur * rateN;
   const expensesSum = validExps.reduce((a, x) => a + num(x.amount), 0);
   const coeff = purchaseUzs > 0 ? 1 + expensesSum / purchaseUzs : 1;
-  const canSave = code.trim() !== "" && rateN > 0 && validLines.length > 0 && dispatch !== "";
+  const canSave =
+    code.trim() !== "" && rateN > 0 && validLines.length > 0 && dispatch !== "" && (inTransit || arrivalValid(months, arrived));
+  // an arrived truck belongs to the month it reached TI's warehouse
+  const shipMonth = inTransit ? monthId : arrived.slice(0, 7);
 
   const productName = (id: string) => productOptions.find((o) => o.value === id)?.label ?? id;
 
@@ -657,9 +750,9 @@ function NewShipmentModal({
     const created = await crud("shipment", "create", {
       data: {
         code: code.trim(),
-        monthId,
+        monthId: shipMonth,
         status: inTransit ? "TRANSIT" : "ARRIVED",
-        etaDate: inTransit && eta ? eta : null,
+        etaDate: inTransit ? eta || null : arrived,
         dispatchDate: dispatch || null,
       },
     });
@@ -686,7 +779,7 @@ function NewShipmentModal({
     }
     for (const x of validExps) {
       const res = await crud("importExpense", "create", {
-        data: { monthId, shipmentId: created.id, categoryId: x.categoryId, amount: num(x.amount) },
+        data: { monthId: shipMonth, shipmentId: created.id, categoryId: x.categoryId, amount: num(x.amount) },
       });
       if (res.error) {
         setError(res.error);
@@ -749,16 +842,18 @@ function NewShipmentModal({
                 className="w-36"
               />
             </label>
-            <label className="block">
-              <span className="label-caps mb-1 block">{t("month")}</span>
-              <Select value={monthId} onChange={(e) => setMonthId(e.target.value)}>
-                {months.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {ru ? m.nameRu : m.nameEn}
-                  </option>
-                ))}
-              </Select>
-            </label>
+            {inTransit && (
+              <label className="block">
+                <span className="label-caps mb-1 block">{t("month")}</span>
+                <Select value={monthId} onChange={(e) => setMonthId(e.target.value)}>
+                  {months.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {ru ? m.nameRu : m.nameEn}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+            )}
             <label className="block">
               <span className="label-caps mb-1 block">{ru ? "Курс EUR→UZS" : "EUR→UZS rate"}</span>
               <Input
@@ -792,11 +887,13 @@ function NewShipmentModal({
                     {ru ? "В пути" : "In transit"}
                   </button>
                 </div>
-                {inTransit && (
+                {inTransit ? (
                   <label className="flex items-center gap-1.5">
                     <span className="text-[11.5px] text-muted">{ru ? "приход ~" : "ETA ~"}</span>
                     <Input type="date" value={eta} onChange={(e) => setEta(e.target.value)} className="w-36" />
                   </label>
+                ) : (
+                  <ArrivalDate months={months} value={arrived} onChange={setArrived} ru={ru} />
                 )}
                 <label
                   className="flex items-center gap-1.5"
@@ -1010,7 +1107,6 @@ export default function ShipmentsView({
   importCategories,
   transit,
   statusById,
-  currentMonthId,
   readOnly,
 }: {
   months: MonthIn[];
@@ -1023,7 +1119,6 @@ export default function ShipmentsView({
   transit: Array<{ id: string; code: string; etaDate: string | null; totalUnits: number }>;
   /** shipmentId -> live status/eta for every non-deleted shipment */
   statusById: Record<string, { status: string; etaDate: string | null; dispatchDate: string | null }>;
-  currentMonthId: string;
   readOnly: boolean;
 }) {
   const { t, locale } = useT();
@@ -1155,9 +1250,9 @@ export default function ShipmentsView({
               <TransitRow
                 key={s.id}
                 shipment={s}
+                months={months}
                 readOnly={readOnly}
                 ru={ru}
-                currentMonthId={currentMonthId}
                 onSaved={() => router.refresh()}
               />
             ))}
@@ -1247,6 +1342,8 @@ export default function ShipmentsView({
                             status={statusById[s.shipmentId]?.status ?? "ARRIVED"}
                             etaDate={statusById[s.shipmentId]?.etaDate ?? null}
                             dispatchDate={statusById[s.shipmentId]?.dispatchDate ?? null}
+                            monthId={s.monthId}
+                            months={months}
                             readOnly={readOnly}
                             ru={ru}
                             onSaved={() => router.refresh()}
