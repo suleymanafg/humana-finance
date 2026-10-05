@@ -274,7 +274,8 @@ export function Modal({
   title: React.ReactNode;
   onClose: () => void;
   children: React.ReactNode;
-  wide?: boolean;
+  /** true: forms with a table; "xl": wide tables of figures */
+  wide?: boolean | "xl";
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -287,7 +288,7 @@ export function Modal({
       onClick={onClose}
     >
       <div
-        className={`max-h-[85vh] w-full ${wide ? "max-w-4xl" : "max-w-lg"} overflow-auto rounded-2xl border border-border bg-surface shadow-[0_20px_50px_-12px_rgba(16,24,40,0.35)]`}
+        className={`max-h-[85vh] w-full ${wide === "xl" ? "max-w-6xl" : wide ? "max-w-4xl" : "max-w-lg"} overflow-auto rounded-2xl border border-border bg-surface shadow-[0_20px_50px_-12px_rgba(16,24,40,0.35)]`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-surface px-5 py-3.5">

@@ -40,6 +40,12 @@ const nextConfig: NextConfig = {
       "./node_modules/tesseract.js/**",
       "./node_modules/tesseract.js-core/**",
     ],
+    "/api/import/ti-invoice": [
+      "./node_modules/pdf-parse/dist/**",
+      "./node_modules/pdfjs-dist/**",
+      "./node_modules/@napi-rs/canvas/**",
+      "./node_modules/@napi-rs/canvas-linux-x64-gnu/**",
+    ],
   },
 };
 

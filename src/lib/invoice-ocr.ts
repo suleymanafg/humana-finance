@@ -66,6 +66,18 @@ function toIso(d: string): string {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : d;
 }
 
+/** The PDF's own text layer: what a digitally issued document (Didox) holds;
+ *  empty for a scan. */
+export async function pdfTextLayer(pdf: Buffer): Promise<string> {
+  const PDFParse = await getPDFParse();
+  const parser = new PDFParse({ data: new Uint8Array(pdf) });
+  try {
+    return (await parser.getText()).text ?? "";
+  } finally {
+    await parser.destroy();
+  }
+}
+
 /** Digital PDFs read straight from the text layer; scans fall back to OCR of
  *  the embedded page images. The line items ("EUR/100") are the signal that
  *  the text layer is real and complete. */

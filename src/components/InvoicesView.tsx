@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Fragment, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import { crud } from "@/lib/crud-client";
 import { fmtN, fmtPct, parseNum } from "@/lib/format";
@@ -33,6 +33,30 @@ interface Draft {
   amount: string;
   vat: string;
   ownUnitCost: string;
+  /** the product's name on an uploaded invoice */
+  source?: string;
+}
+
+/** An invoice read from a Didox PDF, ready to check and save. */
+interface Prefill {
+  date: string;
+  number: string;
+  lines: Draft[];
+  notices: Array<{ warn: boolean; text: string }>;
+}
+
+interface DidoxRead {
+  number: string | null;
+  date: string | null;
+  seller: string | null;
+  buyer: string | null;
+  fromTiToFargo: boolean;
+  lines: Array<{ name: string; productId: string | null; qty: number; price: number; amount: number; vat: number }>;
+  total: number;
+  addsUp: boolean;
+  alreadyEntered: number;
+  monthExists: boolean;
+  monthClosed: boolean;
 }
 
 const emptyLine = (): Draft => ({ productId: "", qty: "", price: "", amount: "", vat: "", ownUnitCost: "" });
@@ -59,8 +83,17 @@ export default function InvoicesView({
 }) {
   const { locale, l } = useT();
   const router = useRouter();
+  const pathname = usePathname();
   const [editing, setEditing] = useState<InvoiceRow | "new" | null>(null);
+  const [prefill, setPrefill] = useState<Prefill | null>(null);
+  const [reading, setReading] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const productName = (id: string) => products.find((p) => p.id === id)?.name ?? id;
+  const monthName = (id: string) => {
+    const m = months.find((x) => x.id === id);
+    return m ? l({ ru: m.nameRu, en: m.nameEn }) : id;
+  };
 
   const invoices = useMemo(() => {
     const groups = new Map<string, InvoiceRow[]>();
@@ -76,6 +109,93 @@ export default function InvoicesView({
   const vat = sum((r) => r.vat);
   const cost = sum((r) => r.tiCost);
   const fmtDate = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}`;
+
+  async function readDidox(file: File) {
+    setReading(true);
+    setReadError(null);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch("/api/import/ti-invoice", { method: "POST", body });
+      const data = (await res.json()) as DidoxRead & { error?: string };
+      if (!res.ok || data.error) {
+        const reasons: Record<string, { ru: string; en: string }> = {
+          "no-text": {
+            ru: "В этом PDF нет текста. Нужна счёт-фактура, скачанная из Didox, а не скан.",
+            en: "This PDF has no text. Use the invoice downloaded from Didox, not a scan.",
+          },
+          "no-lines": {
+            ru: "Строки счёт-фактуры не найдены. Внесите её вручную.",
+            en: "No invoice lines were found. Enter the invoice by hand.",
+          },
+          unreadable: { ru: "Не удалось открыть PDF.", en: "The PDF could not be opened." },
+          "too-large": { ru: "Файл больше 15 МБ.", en: "The file is over 15 MB." },
+          forbidden: { ru: "Нет прав на внесение данных.", en: "You cannot enter data." },
+        };
+        setReadError(l(reasons[data.error ?? ""] ?? { ru: `Ошибка: ${data.error ?? res.status}`, en: `Error: ${data.error ?? res.status}` }));
+        return;
+      }
+      setPrefill(prefillFrom(data));
+      setEditing("new");
+    } catch {
+      setReadError(l({ ru: "Нет связи с сервером.", en: "The server could not be reached." }));
+    } finally {
+      setReading(false);
+    }
+  }
+
+  function prefillFrom(d: DidoxRead): Prefill {
+    const ru = locale === "ru";
+    const date = d.date ?? `${monthId}-01`;
+    const notices: Prefill["notices"] = [
+      {
+        warn: false,
+        text: ru
+          ? `Из Didox: счёт-фактура № ${d.number ?? "—"} от ${d.date ? fmtDate(d.date) : "—"}, строк: ${d.lines.length}, ${fmtN(d.total)} сум с НДС. Проверьте и сохраните.`
+          : `From Didox: invoice № ${d.number ?? "—"} of ${d.date ? fmtDate(d.date) : "—"}, ${d.lines.length} lines, ${fmtN(d.total)} UZS incl. VAT. Check it and save.`,
+      },
+    ];
+    const add = (warn: boolean, text: { ru: string; en: string }) => notices.push({ warn, text: l(text) });
+    if (!d.date || !d.number) add(true, { ru: "Номер или дата не прочитаны — укажите их.", en: "The number or date was not read — fill it in." });
+    if (d.date && d.date.slice(0, 7) !== monthId)
+      add(false, { ru: `Месяц по дате счёт-фактуры: ${monthName(d.date.slice(0, 7))}.`, en: `Month by the invoice date: ${monthName(d.date.slice(0, 7))}.` });
+    if (!d.fromTiToFargo)
+      add(true, {
+        ru: `Это не счёт-фактура Turbo Impex для Fargo: ${d.seller ?? "—"} → ${d.buyer ?? "—"}.`,
+        en: `This is not an invoice from Turbo Impex to Fargo: ${d.seller ?? "—"} → ${d.buyer ?? "—"}.`,
+      });
+    const unknown = d.lines.filter((x) => !x.productId).map((x) => `«${x.name}»`);
+    if (unknown.length > 0)
+      add(true, { ru: `Товар не узнан: ${unknown.join(", ")}. Выберите его в строке.`, en: `Product not recognised: ${unknown.join(", ")}. Choose it in the line.` });
+    if (!d.addsUp)
+      add(true, { ru: "Строки не сходятся с итогом счёт-фактуры — сверьте с PDF.", en: "The lines do not add up to the invoice total — check against the PDF." });
+    if (d.alreadyEntered > 0)
+      add(true, {
+        ru: `Эта счёт-фактура уже внесена (строк: ${d.alreadyEntered}). Сохранение добавит её второй раз.`,
+        en: `This invoice is already entered (${d.alreadyEntered} lines). Saving adds it a second time.`,
+      });
+    if (!d.monthExists)
+      add(true, {
+        ru: `Месяца ${date.slice(0, 7)} нет в справочнике — добавьте его в настройках, иначе счёт-фактура не будет видна.`,
+        en: `Month ${date.slice(0, 7)} is not in the reference data — add it in Settings, or the invoice will not show.`,
+      });
+    else if (d.monthClosed)
+      add(true, { ru: `${monthName(date.slice(0, 7))} закрыт — сохранить может только администратор.`, en: `${monthName(date.slice(0, 7))} is closed — only an administrator can save.` });
+    return {
+      date,
+      number: d.number ?? "",
+      lines: d.lines.map((x) => ({
+        productId: x.productId ?? "",
+        qty: String(x.qty),
+        price: String(x.price),
+        amount: String(x.amount),
+        vat: String(x.vat),
+        ownUnitCost: "",
+        source: x.name,
+      })),
+      notices,
+    };
+  }
 
   async function remove(id: string) {
     if (!confirm(l({ ru: "Удалить строку счёта-фактуры?", en: "Delete this invoice line?" }))) return;
@@ -98,10 +218,38 @@ export default function InvoicesView({
       </div>
 
       <SectionTitle
-        right={!readOnly && <Button onClick={() => setEditing("new")}>{l({ ru: "Добавить счёт-фактуру", en: "Add invoice" })}</Button>}
+        right={
+          !readOnly && (
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="application/pdf"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void readDidox(file);
+                  e.target.value = "";
+                }}
+              />
+              <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={reading}>
+                {reading ? l({ ru: "Читаю PDF…", en: "Reading the PDF…" }) : l({ ru: "Загрузить из Didox", en: "Upload from Didox" })}
+              </Button>
+              <Button
+                onClick={() => {
+                  setPrefill(null);
+                  setEditing("new");
+                }}
+              >
+                {l({ ru: "Добавить счёт-фактуру", en: "Add invoice" })}
+              </Button>
+            </div>
+          )
+        }
       >
         {l({ ru: "Счета-фактуры за месяц", en: "Invoices in the month" })}
       </SectionTitle>
+      {readError && <p className="-mt-1 mb-3 text-[12.5px] text-danger">{readError}</p>}
       <div className="overflow-x-auto rounded-lg border border-border bg-surface">
         <table className="stmt">
           <thead>
@@ -205,12 +353,20 @@ export default function InvoicesView({
           products={products}
           vatRate={vatRate}
           row={editing === "new" ? null : editing}
+          prefill={editing === "new" ? prefill : null}
           nextSortOrder={nextSortOrder}
           locale={locale}
-          onClose={() => setEditing(null)}
-          onSaved={() => {
+          onClose={() => {
             setEditing(null);
-            router.refresh();
+            setPrefill(null);
+          }}
+          onSaved={(date) => {
+            setEditing(null);
+            setPrefill(null);
+            // an invoice dated in another month is shown there
+            const m = date.slice(0, 7);
+            if (m !== monthId && months.some((x) => x.id === m)) router.push(`${pathname}?month=${m}`);
+            else router.refresh();
           }}
         />
       )}
@@ -223,6 +379,7 @@ function InvoiceModal({
   products,
   vatRate,
   row,
+  prefill,
   nextSortOrder,
   locale,
   onClose,
@@ -232,14 +389,15 @@ function InvoiceModal({
   products: Array<{ id: string; name: string }>;
   vatRate: number;
   row: InvoiceRow | null;
+  prefill: Prefill | null;
   nextSortOrder: number;
   locale: "ru" | "en";
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (date: string) => void;
 }) {
   const ru = locale === "ru";
-  const [date, setDate] = useState(row?.date ?? `${monthId}-01`);
-  const [number, setNumber] = useState(row?.number ?? "");
+  const [date, setDate] = useState(row?.date ?? prefill?.date ?? `${monthId}-01`);
+  const [number, setNumber] = useState(row?.number ?? prefill?.number ?? "");
   const [lines, setLines] = useState<Draft[]>(
     row
       ? [
@@ -252,7 +410,7 @@ function InvoiceModal({
             ownUnitCost: row.ownUnitCost == null ? "" : String(row.ownUnitCost),
           },
         ]
-      : [emptyLine()]
+      : prefill?.lines ?? [emptyLine()]
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -300,11 +458,23 @@ function InvoiceModal({
         return;
       }
     }
-    onSaved();
+    onSaved(date);
   }
 
   return (
-    <Modal title={row ? (ru ? "Строка счёта-фактуры" : "Invoice line") : ru ? "Новая счёт-фактура" : "New invoice"} onClose={onClose} wide>
+    <Modal title={row ? (ru ? "Строка счёта-фактуры" : "Invoice line") : ru ? "Новая счёт-фактура" : "New invoice"} onClose={onClose} wide="xl">
+      {prefill && (
+        <div className="mb-4 space-y-1.5">
+          {prefill.notices.map((n, i) => (
+            <div
+              key={i}
+              className={`rounded-md border p-2.5 text-[12.5px] ${n.warn ? "border-warn/40 bg-warn-soft text-warn" : "border-border bg-surface-low text-muted"}`}
+            >
+              {n.text}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="mb-4 flex flex-wrap gap-3">
         <label className="block">
           <span className="mb-1 block text-[12px] text-muted">{ru ? "Номер" : "Number"}</span>
@@ -315,7 +485,7 @@ function InvoiceModal({
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-40" />
         </label>
       </div>
-      <table className="stmt">
+      <table className="stmt is-compact">
         <thead>
           <tr>
             <th>{ru ? "Товар" : "Product"}</th>
@@ -333,7 +503,11 @@ function InvoiceModal({
           {lines.map((x, i) => (
             <tr key={i}>
               <td>
-                <Select value={x.productId} onChange={(e) => set(i, { productId: e.target.value })} className="w-full min-w-56">
+                <Select
+                  value={x.productId}
+                  onChange={(e) => set(i, { productId: e.target.value })}
+                  className={`w-full min-w-56 ${x.source && !x.productId ? "!border-warn" : ""}`}
+                >
                   <option value="">{ru ? "Выберите товар" : "Choose a product"}</option>
                   {products.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -341,6 +515,11 @@ function InvoiceModal({
                     </option>
                   ))}
                 </Select>
+                {x.source && (
+                  <div className="mt-1 text-[11.5px] text-muted">
+                    {ru ? "в счёт-фактуре" : "on the invoice"}: {x.source}
+                  </div>
+                )}
               </td>
               <td>
                 <Input numeric value={x.qty} onChange={(e) => set(i, { qty: e.target.value })} className="w-20 text-right" />
