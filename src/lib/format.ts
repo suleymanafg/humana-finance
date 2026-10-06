@@ -79,3 +79,38 @@ export function numberInputText(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "";
   return groupTyped(value.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 10 }));
 }
+
+const COMPACT = {
+  ru: [
+    [1e9, "млрд"],
+    [1e6, "млн"],
+    [1e3, "тыс"],
+  ],
+  en: [
+    [1e9, "bn"],
+    [1e6, "m"],
+    [1e3, "k"],
+  ],
+} as const;
+
+/**
+ * A large amount at a glance: "3.16 млрд", "512 млн", "48.2 тыс" (three
+ * significant digits, trailing zeros dropped). Below 10,000 the exact number.
+ */
+export function fmtCompact(value: number | null | undefined, locale: "ru" | "en" = "ru"): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  const abs = Math.abs(value);
+  if (abs < 10_000) return fmtN(value);
+  for (const [unit, name] of COMPACT[locale]) {
+    if (abs < unit) continue;
+    const x = abs / unit;
+    const digits = x >= 100 ? 0 : x >= 10 ? 1 : 2;
+    let s = x.toFixed(digits);
+    if (digits > 0) s = s.replace(/0+$/, "").replace(/\.$/, "");
+    // rounding can carry into the next unit: 999.6 млн → 1 млрд
+    if (Number(s) >= 1000 && unit < 1e9) return fmtCompact(Math.sign(value) * 1000 * unit, locale);
+    s = Number(s).toLocaleString("en-US", { maximumFractionDigits: digits });
+    return `${value < 0 ? "−" : ""}${s} ${name}`;
+  }
+  return fmtN(value);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupTyped, numberInputText, parseNum } from "../format";
+import { fmtCompact, groupTyped, numberInputText, parseNum } from "../format";
 
 describe("number boxes", () => {
   it("group the whole part with commas while typing", () => {
@@ -45,5 +45,24 @@ describe("number boxes", () => {
     expect(parseNum("1,234.")).toBe(1234);
     expect(parseNum(".")).toBeNull();
     expect(parseNum(numberInputText(-1234567.89))).toBe(-1234567.89);
+  });
+});
+
+describe("compact amounts", () => {
+  it("keeps three significant digits", () => {
+    expect(fmtCompact(3_156_400_000)).toBe("3.16 млрд");
+    expect(fmtCompact(512_000_000)).toBe("512 млн");
+    expect(fmtCompact(500_000_000)).toBe("500 млн");
+    expect(fmtCompact(48_250)).toBe("48.3 тыс");
+    expect(fmtCompact(2_000_000_000, "en")).toBe("2 bn");
+  });
+  it("carries a rounded value into the next unit", () => {
+    expect(fmtCompact(999_700_000)).toBe("1 млрд");
+    expect(fmtCompact(999_990)).toBe("1 млн");
+  });
+  it("shows small and missing amounts as they are", () => {
+    expect(fmtCompact(9_870)).toBe("9,870");
+    expect(fmtCompact(-1_500_000)).toBe("−1.5 млн");
+    expect(fmtCompact(null)).toBe("—");
   });
 });

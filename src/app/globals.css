@@ -26,6 +26,15 @@
   --sidebar-fg: #adaae3;
   --sidebar-fg-strong: #ffffff;
   --sidebar-accent: #a9a7ff;
+  /* chart series, in fixed order (validated for colour-blind separation);
+     the folded remainder «Прочие» is neutral; trend lines sit back in grey */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-other: #b8bfcc;
+  --trend: #a3adbf;
 }
 
 @theme inline {
@@ -491,4 +500,37 @@ h3,
     radial-gradient(600px 300px at 15% 0%, rgba(31, 16, 142, 0.08), transparent 60%),
     radial-gradient(700px 350px at 90% 100%, rgba(55, 48, 163, 0.06), transparent 60%),
     var(--background);
+}
+
+/* ── overview: the pulse steers the chart ── */
+.ov ::selection {
+  background: var(--accent-soft);
+  color: var(--foreground);
+}
+.ov :where(a, button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ov .ov-tile:focus-visible {
+  outline-offset: -3px;
+}
+.ov-tile.is-active {
+  background: color-mix(in srgb, var(--accent-soft-bg) 75%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* the one authored motion: when the measure or the split changes, the columns
+   settle up from the baseline; the resting state is the drawn chart */
+.ov-grow {
+  transform-box: view-box;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ov-grow {
+    animation: ov-grow 0.46s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+@keyframes ov-grow {
+  from {
+    transform: scaleY(0.84);
+    opacity: 0.4;
+  }
 }
