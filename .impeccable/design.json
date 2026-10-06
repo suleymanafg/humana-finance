@@ -1,0 +1,805 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-06T09:13:47.314Z",
+  "title": "Design System: Humana Finance",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Deep Ledger Indigo",
+        "canonical": "#1f108e",
+        "oklch": "oklch(31.8% 0.186 273.1)",
+        "tonalRamp": [
+          "#050033",
+          "#15036f",
+          "#2a2aa3",
+          "#4551cb",
+          "#6477f4",
+          "#90a4fc",
+          "#becbfe",
+          "#e9eefe"
+        ]
+      },
+      "accent-hover": {
+        "role": "primary",
+        "displayName": "Indigo Hover",
+        "canonical": "#3730a3",
+        "oklch": "oklch(39.8% 0.177 277.4)",
+        "tonalRamp": [
+          "#070030",
+          "#1b056b",
+          "#332a9d",
+          "#4f50c5",
+          "#6f76ee",
+          "#97a2fd",
+          "#c1caff",
+          "#eaedff"
+        ]
+      },
+      "accent-soft": {
+        "role": "primary",
+        "displayName": "Indigo Mist",
+        "canonical": "#e2dfff",
+        "oklch": "oklch(91.6% 0.043 289.8)",
+        "tonalRamp": [
+          "#0b071c",
+          "#242038",
+          "#423f58",
+          "#625f7b",
+          "#85829f",
+          "#aaa7c5",
+          "#cdcae9",
+          "#eeecfe"
+        ]
+      },
+      "accent-soft-bg": {
+        "role": "primary",
+        "displayName": "Indigo Wash",
+        "canonical": "#eef0fd",
+        "oklch": "oklch(95.7% 0.018 279.1)",
+        "tonalRamp": [
+          "#090a13",
+          "#22232d",
+          "#40424c",
+          "#61626d",
+          "#848591",
+          "#a8aab6",
+          "#cbcdd9",
+          "#eceefb"
+        ]
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Cool Paper",
+        "canonical": "#f8f9ff",
+        "oklch": "oklch(98.3% 0.008 278.6)",
+        "tonalRamp": [
+          "#0a0b0f",
+          "#232428",
+          "#414247",
+          "#626368",
+          "#85868b",
+          "#a9aab0",
+          "#cccdd3",
+          "#edeef4"
+        ]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Ink Navy",
+        "canonical": "#0b1c30",
+        "oklch": "oklch(22.3% 0.045 253.8)",
+        "tonalRamp": [
+          "#000b1e",
+          "#14253a",
+          "#31445a",
+          "#51657d",
+          "#7388a2",
+          "#97adc8",
+          "#bad0ec",
+          "#e4f0ff"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "White Sheet",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#424242",
+          "#636363",
+          "#868686",
+          "#ababab",
+          "#cecece",
+          "#eeeeee"
+        ]
+      },
+      "surface-low": {
+        "role": "neutral",
+        "displayName": "Faint Ledger Blue",
+        "canonical": "#eff4ff",
+        "oklch": "oklch(96.7% 0.016 266.3)",
+        "tonalRamp": [
+          "#080b12",
+          "#20242c",
+          "#3e424b",
+          "#5f636d",
+          "#828690",
+          "#a6abb5",
+          "#c9ced8",
+          "#eaeef9"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e2e8f0",
+        "oklch": "oklch(92.9% 0.013 255.5)",
+        "tonalRamp": [
+          "#080b10",
+          "#20242a",
+          "#3e4349",
+          "#5f646b",
+          "#81878e",
+          "#a6abb3",
+          "#c8ced6",
+          "#e9eff7"
+        ]
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "Strong Hairline",
+        "canonical": "#c8c4d5",
+        "oklch": "oklch(82.9% 0.024 296.6)",
+        "tonalRamp": [
+          "#0c0914",
+          "#25222e",
+          "#43404e",
+          "#646170",
+          "#878393",
+          "#aca8b9",
+          "#cfcbdc",
+          "#f0ecfd"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Slate Muted",
+        "canonical": "#64748b",
+        "oklch": "oklch(55.4% 0.041 257.4)",
+        "tonalRamp": [
+          "#020b1c",
+          "#172438",
+          "#354358",
+          "#55647b",
+          "#77879f",
+          "#9bacc5",
+          "#bdcfe9",
+          "#e5effe"
+        ]
+      },
+      "danger": {
+        "role": "semantic",
+        "displayName": "Ledger Red",
+        "canonical": "#ba1a1a",
+        "oklch": "oklch(50.6% 0.193 27.7)",
+        "tonalRamp": [
+          "#200000",
+          "#4c0001",
+          "#810006",
+          "#b81718",
+          "#e3483f",
+          "#fd8073",
+          "#febab1",
+          "#fee9e6"
+        ]
+      },
+      "danger-soft": {
+        "role": "semantic",
+        "displayName": "Ledger Red Tint",
+        "canonical": "#ffdad6",
+        "oklch": "oklch(91.8% 0.042 25.2)",
+        "tonalRamp": [
+          "#190404",
+          "#361c1a",
+          "#573a37",
+          "#7a5a57",
+          "#9e7d79",
+          "#c4a19e",
+          "#e8c4c0",
+          "#fee9e7"
+        ]
+      },
+      "ok": {
+        "role": "semantic",
+        "displayName": "Ledger Green",
+        "canonical": "#067647",
+        "oklch": "oklch(49.9% 0.117 157.1)",
+        "tonalRamp": [
+          "#001005",
+          "#012c18",
+          "#06502f",
+          "#077647",
+          "#3d9b69",
+          "#65c18d",
+          "#89e5af",
+          "#c5ffdb"
+        ]
+      },
+      "ok-soft": {
+        "role": "semantic",
+        "displayName": "Ledger Green Tint",
+        "canonical": "#ecfdf3",
+        "oklch": "oklch(97.9% 0.022 160.2)",
+        "tonalRamp": [
+          "#040e08",
+          "#1b2720",
+          "#38463e",
+          "#59675f",
+          "#7b8b82",
+          "#9fafa6",
+          "#c2d2c9",
+          "#e2f3e9"
+        ]
+      },
+      "warn": {
+        "role": "semantic",
+        "displayName": "Amber",
+        "canonical": "#b54708",
+        "oklch": "oklch(53.9% 0.156 43.0)",
+        "tonalRamp": [
+          "#1c0300",
+          "#401401",
+          "#6f2904",
+          "#a43f05",
+          "#d1602c",
+          "#fa8654",
+          "#fcbda4",
+          "#fee9e1"
+        ]
+      },
+      "warn-soft": {
+        "role": "semantic",
+        "displayName": "Amber Tint",
+        "canonical": "#fffaeb",
+        "oklch": "oklch(98.5% 0.020 91.6)",
+        "tonalRamp": [
+          "#0e0b03",
+          "#282419",
+          "#464236",
+          "#676356",
+          "#8a8679",
+          "#afab9d",
+          "#d2cebf",
+          "#f3eedf"
+        ]
+      },
+      "sidebar": {
+        "role": "neutral",
+        "displayName": "Midnight Navy",
+        "canonical": "#1e1b4b",
+        "oklch": "oklch(25.7% 0.086 281.3)",
+        "tonalRamp": [
+          "#09012d",
+          "#1f1c4c",
+          "#3b3b6f",
+          "#5b5d93",
+          "#7d80b9",
+          "#a1a5e0",
+          "#c5c9fe",
+          "#ebedfe"
+        ]
+      },
+      "sidebar-fg": {
+        "role": "neutral",
+        "displayName": "Lavender Text",
+        "canonical": "#adaae3",
+        "oklch": "oklch(76.1% 0.081 286.7)",
+        "tonalRamp": [
+          "#0c012a",
+          "#231b49",
+          "#403b6b",
+          "#605c8f",
+          "#827fb5",
+          "#a7a3dc",
+          "#c9c7fe",
+          "#edecfe"
+        ]
+      },
+      "sidebar-fg-strong": {
+        "role": "neutral",
+        "displayName": "Sidebar White",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#424242",
+          "#636363",
+          "#868686",
+          "#ababab",
+          "#cecece",
+          "#eeeeee"
+        ]
+      },
+      "sidebar-accent": {
+        "role": "primary",
+        "displayName": "Lavender Accent",
+        "canonical": "#a9a7ff",
+        "oklch": "oklch(76.4% 0.125 284.1)",
+        "tonalRamp": [
+          "#0b0030",
+          "#22105c",
+          "#3d3481",
+          "#5c57a7",
+          "#7e7ace",
+          "#a29ff7",
+          "#c7c8fe",
+          "#ecedfe"
+        ]
+      },
+      "series-1": {
+        "role": "chart",
+        "displayName": "Series Blue",
+        "canonical": "#2a78d6",
+        "oklch": "oklch(57.5% 0.163 255.5)",
+        "tonalRamp": [
+          "#000a23",
+          "#01234c",
+          "#064181",
+          "#0961bd",
+          "#3986e5",
+          "#71adfc",
+          "#aed1fe",
+          "#e5f0fe"
+        ]
+      },
+      "series-2": {
+        "role": "chart",
+        "displayName": "Series Orange",
+        "canonical": "#eb6834",
+        "oklch": "oklch(67.1% 0.175 40.6)",
+        "tonalRamp": [
+          "#1d0200",
+          "#421201",
+          "#712705",
+          "#a63b06",
+          "#d95821",
+          "#fe8354",
+          "#ffbca4",
+          "#fee9e2"
+        ]
+      },
+      "series-3": {
+        "role": "chart",
+        "displayName": "Series Green",
+        "canonical": "#1baf7a",
+        "oklch": "oklch(66.9% 0.141 162.1)",
+        "tonalRamp": [
+          "#001007",
+          "#022c1c",
+          "#094f35",
+          "#0e7550",
+          "#169e6e",
+          "#40c68f",
+          "#6aeab2",
+          "#c3ffe0"
+        ]
+      },
+      "series-4": {
+        "role": "chart",
+        "displayName": "Series Gold",
+        "canonical": "#eda100",
+        "oklch": "oklch(76.4% 0.161 75.1)",
+        "tonalRamp": [
+          "#140800",
+          "#332000",
+          "#5a3b03",
+          "#855903",
+          "#b37905",
+          "#e19b1c",
+          "#fcc26f",
+          "#ffebd1"
+        ]
+      },
+      "series-5": {
+        "role": "chart",
+        "displayName": "Series Pink",
+        "canonical": "#e87ba4",
+        "oklch": "oklch(71.6% 0.141 357.4)",
+        "tonalRamp": [
+          "#1f000b",
+          "#470024",
+          "#771043",
+          "#9f3964",
+          "#c75d87",
+          "#f082ab",
+          "#fcb7ce",
+          "#ffe8ee"
+        ]
+      },
+      "series-other": {
+        "role": "chart",
+        "displayName": "Neutral Fog («Прочие»)",
+        "canonical": "#b8bfcc",
+        "oklch": "oklch(80.3% 0.020 263.0)",
+        "tonalRamp": [
+          "#070b14",
+          "#1f242e",
+          "#3d434d",
+          "#5d636f",
+          "#808693",
+          "#a4abb8",
+          "#c7cedb",
+          "#e7effc"
+        ]
+      },
+      "trend": {
+        "role": "chart",
+        "displayName": "Trend Grey",
+        "canonical": "#a3adbf",
+        "oklch": "oklch(74.6% 0.028 262.3)",
+        "tonalRamp": [
+          "#050b17",
+          "#1d2432",
+          "#3a4352",
+          "#5b6474",
+          "#7d8798",
+          "#a1abbd",
+          "#c4cee1",
+          "#e6effe"
+        ]
+      },
+      "plan-accent": {
+        "role": "scoped-planning",
+        "displayName": "Canvas Cobalt",
+        "canonical": "#0039a6",
+        "oklch": "oklch(39.6% 0.183 262.0)",
+        "tonalRamp": [
+          "#000038",
+          "#001b60",
+          "#03379a",
+          "#225ac9",
+          "#4580f2",
+          "#7eaafb",
+          "#b5cffd",
+          "#e6effe"
+        ]
+      },
+      "plan-background": {
+        "role": "scoped-planning",
+        "displayName": "Canvas Plane",
+        "canonical": "#f4f6f9",
+        "oklch": "oklch(97.2% 0.005 258.3)",
+        "tonalRamp": [
+          "#0a0b0d",
+          "#232426",
+          "#414245",
+          "#626366",
+          "#848689",
+          "#a9abae",
+          "#ccced1",
+          "#edeff1"
+        ]
+      },
+      "plan-foreground": {
+        "role": "scoped-planning",
+        "displayName": "Canvas Ink",
+        "canonical": "#0b1b33",
+        "oklch": "oklch(22.3% 0.052 258.3)",
+        "tonalRamp": [
+          "#010a20",
+          "#14243d",
+          "#31435e",
+          "#516481",
+          "#7387a6",
+          "#97accc",
+          "#b9cff0",
+          "#e5efff"
+        ]
+      },
+      "plan-border": {
+        "role": "scoped-planning",
+        "displayName": "Canvas Hairline",
+        "canonical": "#dce3ec",
+        "oklch": "oklch(91.3% 0.014 254.6)",
+        "tonalRamp": [
+          "#070b11",
+          "#1f242b",
+          "#3d434a",
+          "#5e646c",
+          "#80878f",
+          "#a5abb4",
+          "#c8ced7",
+          "#e8eff8"
+        ]
+      },
+      "plan-muted": {
+        "role": "scoped-planning",
+        "displayName": "Canvas Muted",
+        "canonical": "#5c6b82",
+        "oklch": "oklch(52.4% 0.041 258.8)",
+        "tonalRamp": [
+          "#020b1c",
+          "#182438",
+          "#354358",
+          "#55647b",
+          "#78879f",
+          "#9cacc5",
+          "#becfe9",
+          "#e5effe"
+        ]
+      },
+      "plan-sky": {
+        "role": "scoped-planning",
+        "displayName": "Canvas Sky",
+        "canonical": "#3aa6da",
+        "oklch": "oklch(68.7% 0.122 233.8)",
+        "tonalRamp": [
+          "#000d18",
+          "#00283a",
+          "#004866",
+          "#126c92",
+          "#1c91c4",
+          "#4eb7ec",
+          "#95d8fd",
+          "#def2fe"
+        ]
+      },
+      "sidebar-line": {
+        "role": "neutral",
+        "displayName": "Sidebar Rule",
+        "canonical": "rgba(255, 255, 255, 0.08)"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page title (PageTitle), Manrope."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section heading in the shell above the section tabs."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Overview card titles; 14px SectionTitle, 13px CardHeader."
+      },
+      "figure-lg": {
+        "displayName": "Pulse figure",
+        "purpose": "Pulse tile values; 18px when longer than 13 characters."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Table cells and rows; subtitles 12.5px muted."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": ".num: tabular, right-aligned figures; 680 when strong."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field and group labels (.label-caps), muted."
+      },
+      "table-head": {
+        "displayName": "Table head",
+        "purpose": "Sticky statement/table headers, muted, sentence case."
+      },
+      "plan-ui": {
+        "displayName": "Planning UI",
+        "purpose": "/planning only."
+      },
+      "plan-figure": {
+        "displayName": "Planning figure",
+        "purpose": "/planning only: every figure in JetBrains Mono."
+      }
+    },
+    "shadows": [
+      {
+        "name": "tooltip",
+        "value": "0 6px 20px -6px rgba(11,28,48,0.18)",
+        "purpose": "Chart tooltip."
+      },
+      {
+        "name": "modal",
+        "value": "0 20px 50px -12px rgba(16,24,40,0.35)",
+        "purpose": "Dialogs, over a slate scrim at 40% with 2px blur."
+      },
+      {
+        "name": "popover",
+        "value": "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
+        "purpose": "Month picker popover (Tailwind shadow-xl)."
+      },
+      {
+        "name": "field-lift",
+        "value": "0 1px 2px rgba(16,24,40,0.04)",
+        "purpose": "Inputs and selects at rest."
+      },
+      {
+        "name": "active-tile-outline",
+        "value": "inset 0 0 0 1px var(--accent)",
+        "purpose": "Outline of the active pulse tile (a border, not elevation)."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ov-grow",
+        "value": "0.46s cubic-bezier(0.16, 1, 0.3, 1); from scaleY(0.84) opacity 0.4",
+        "purpose": "Chart columns settle up from the baseline when measure or split changes; never on load; only under prefers-reduced-motion: no-preference."
+      },
+      {
+        "name": "state-transition",
+        "value": "0.15s-0.2s ease (colors, border-color, opacity)",
+        "purpose": "Hover and pending states on rows, tiles, cards and buttons."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      },
+      {
+        "name": "content-max",
+        "value": "1440px"
+      },
+      {
+        "name": "sidebar",
+        "value": "240px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main action: indigo, 4px corners, 36px.",
+      "html": "<button class=\"ds-btn-primary\">Сохранить</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:none;border-radius:4px;background:var(--accent,#1f108e);color:#fff;font:500 13px Inter,system-ui,sans-serif;transition:background-color .15s}.ds-btn-primary:hover{background:var(--accent-hover,#3730a3)}.ds-btn-primary:focus-visible{outline:2px solid var(--accent,#1f108e);outline-offset:2px}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Secondary action: white with hairline.",
+      "html": "<button class=\"ds-btn-secondary\">Отмена</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--border,#e2e8f0);border-radius:4px;background:var(--surface,#fff);color:var(--foreground,#0b1c30);font:500 13px Inter,system-ui,sans-serif;transition:background-color .15s}.ds-btn-secondary:hover{background:var(--surface-low,#eff4ff)}.ds-btn-secondary:focus-visible{outline:2px solid var(--accent,#1f108e);outline-offset:2px}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Tertiary action: muted text, tint on hover.",
+      "html": "<button class=\"ds-btn-ghost\">Подробнее</button>",
+      "css": ".ds-btn-ghost{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:none;border-radius:4px;background:transparent;color:var(--muted,#64748b);font:500 13px Inter,system-ui,sans-serif;transition:background-color .15s,color .15s}.ds-btn-ghost:hover{background:var(--surface-low,#eff4ff);color:var(--foreground,#0b1c30)}.ds-btn-ghost:focus-visible{outline:2px solid var(--accent,#1f108e);outline-offset:2px}"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "32px field, 8px corners, indigo border + mist ring on focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"1,000,000\" />",
+      "css": ".ds-input{height:32px;padding:0 10px;border:1px solid var(--border,#e2e8f0);border-radius:8px;background:var(--surface,#fff);color:var(--foreground,#0b1c30);font:13px Inter,system-ui,sans-serif;box-shadow:0 1px 2px rgba(16,24,40,.04);outline:none;transition:box-shadow .15s}.ds-input:focus{border-color:var(--accent,#1f108e);box-shadow:0 0 0 3px var(--accent-soft,#e2dfff)}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "chip",
+      "refersTo": "segmented-active",
+      "description": "View, measure and split choices; active option filled indigo.",
+      "html": "<div class=\"ds-seg\"><button class=\"is-on\">Продажи</button><button>Штуки</button><button>Запас</button></div>",
+      "css": ".ds-seg{display:inline-flex;padding:2px;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--surface,#fff)}.ds-seg button{border:none;background:transparent;border-radius:4px;padding:4px 12px;font:12.5px Inter,system-ui,sans-serif;color:var(--muted,#64748b);cursor:pointer;transition:color .15s}.ds-seg button:hover{color:var(--foreground,#0b1c30)}.ds-seg button.is-on{background:var(--accent,#1f108e);color:#fff}.ds-seg button:focus-visible{outline:2px solid var(--accent,#1f108e);outline-offset:2px}"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge-warn",
+      "description": "Status pill; tones neutral, ok, warn, accent, danger.",
+      "html": "<span class=\"ds-badge ds-badge-ok\">Закрыт</span> <span class=\"ds-badge ds-badge-warn\">Частично</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font:500 11px/20px Inter,system-ui,sans-serif}.ds-badge-ok{background:var(--ok-soft,#ecfdf3);color:var(--ok,#067647);border:1px solid rgba(6,118,71,.15)}.ds-badge-warn{background:var(--warn-soft,#fffaeb);color:var(--warn,#b54708);border:1px solid rgba(181,71,8,.15)}"
+    },
+    {
+      "name": "Quiet Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "White, 1px hairline, 8px, no shadow; border tints indigo on hover.",
+      "html": "<div class=\"ds-card\"><h3>Запас и поставки</h3><p>Машины в пути и товары ниже нормы</p></div>",
+      "css": ".ds-card{background:var(--surface,#fff);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:16px 20px;transition:border-color .2s}.ds-card:hover{border-color:color-mix(in srgb,var(--accent,#1f108e) 35%,var(--border,#e2e8f0))}.ds-card h3{margin:0;font:600 15px Manrope,Inter,sans-serif;letter-spacing:-.01em;color:var(--foreground,#0b1c30)}.ds-card p{margin:2px 0 0;font:12.5px Inter,sans-serif;color:var(--muted,#64748b)}"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Navy sidebar; active section has a lavender left bar.",
+      "html": "<nav class=\"ds-nav\"><a class=\"is-on\" href=\"#\">Обзор</a><a href=\"#\">Прибыль</a><a href=\"#\">Товары</a></nav>",
+      "css": ".ds-nav{display:flex;flex-direction:column;gap:1px;width:240px;padding:8px 0;background:var(--sidebar,#1e1b4b)}.ds-nav a{display:block;padding:8px 20px;border-left:2px solid transparent;color:var(--sidebar-fg,#adaae3);font:13.5px Inter,sans-serif;text-decoration:none;transition:background-color .15s,color .15s}.ds-nav a:hover{background:rgba(255,255,255,.04);color:#fff}.ds-nav a.is-on{border-left-color:var(--sidebar-accent,#a9a7ff);background:rgba(255,255,255,.07);color:#fff;font-weight:500}.ds-nav a:focus-visible{outline:2px solid var(--sidebar-accent,#a9a7ff);outline-offset:-2px}"
+    },
+    {
+      "name": "Pulse Tile",
+      "kind": "custom",
+      "refersTo": "pulse-tile-active",
+      "description": "Overview figure that switches the focus chart; active = indigo wash + inset outline.",
+      "html": "<div class=\"ds-pulse\"><button class=\"ds-tile is-on\"><span class=\"l\">Продажи с НДС</span><span class=\"v\">1.2 млрд</span><span class=\"c\"><b>+4%</b> к августу</span></button><button class=\"ds-tile\"><span class=\"l\">Запас</span><span class=\"v w\">3.1 мес</span><span class=\"c w\">ниже нормы 4 мес</span></button></div>",
+      "css": ".ds-pulse{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border,#e2e8f0);border:1px solid var(--border,#e2e8f0);border-radius:8px;overflow:hidden}.ds-tile{display:flex;flex-direction:column;align-items:flex-start;padding:14px 16px;border:none;background:var(--surface,#fff);text-align:left;cursor:pointer;transition:background-color .15s;font-family:Inter,sans-serif}.ds-tile:hover{background:var(--background,#f8f9ff)}.ds-tile.is-on{background:color-mix(in srgb,var(--accent-soft-bg,#eef0fd) 75%,#fff);box-shadow:inset 0 0 0 1px var(--accent,#1f108e)}.ds-tile:focus-visible{outline:2px solid var(--accent,#1f108e);outline-offset:-3px}.ds-tile .l{font-size:12px;color:var(--muted,#64748b)}.ds-tile .v{margin-top:4px;font-size:22px;line-height:28px;font-weight:600;letter-spacing:-.02em;color:var(--foreground,#0b1c30);font-variant-numeric:tabular-nums}.ds-tile .c{margin-top:2px;font-size:12px;color:var(--muted,#64748b)}.ds-tile .c b{color:var(--ok,#067647)}.ds-tile .w{color:var(--warn,#b54708)}"
+    },
+    {
+      "name": "Focus Chart Columns",
+      "kind": "custom",
+      "refersTo": "chart-column",
+      "description": "Columns ≤24px, 4px data-end radius, square baseline, 2px gaps in stacks, open month banded.",
+      "html": "<svg class=\"ds-chart\" viewBox=\"0 0 200 120\" width=\"200\" height=\"120\"><rect x=\"138\" y=\"4\" width=\"34\" height=\"112\" rx=\"6\" fill=\"#eef0fd\"/><line x1=\"0\" x2=\"200\" y1=\"40.5\" y2=\"40.5\" stroke=\"#e2e8f0\"/><line x1=\"0\" x2=\"200\" y1=\"100.5\" y2=\"100.5\" stroke=\"#c8c4d5\"/><path d=\"M24,100V64A4,4 0 0 1 28,60H44A4,4 0 0 1 48,64V100Z\" fill=\"#1f108e\"/><path d=\"M88,100V50A4,4 0 0 1 92,46H108A4,4 0 0 1 112,50V100Z\" fill=\"#1f108e\"/><rect x=\"143\" y=\"76\" width=\"24\" height=\"24\" fill=\"#2a78d6\"/><path d=\"M143,74V40A4,4 0 0 1 147,36H163A4,4 0 0 1 167,40V74Z\" fill=\"#eb6834\"/></svg>",
+      "css": ".ds-chart{display:block;background:var(--surface,#fff)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Quiet Authority",
+    "overview": "Humana Finance reads like a well-kept set of books rather than a dashboard. White cards with hairline borders sit on a cool off-white plane, and figures are set in tabular digits and right-aligned. Hierarchy comes from weight, hairlines and spacing. Colour is held back for meaning. A single deep indigo carries selection and the single-series marks. Green and red are reserved for direction and sign, and amber means one thing: something is below the line it should be above. A navy sidebar frames the work, and the sticky month switcher is the one control that is always present, because the month is the unit of work.\n\nDensity is that of a working ledger: 13px body, 11.5px table heads, and tight row padding on long statements. The overview is the exception. It is composed so it can be shown to partners on a screen as it stands: five pulse tiles steer one large chart, and every tile is the switch for its own view in that chart. The app's own copy is Russian first and English second, and every string is bilingual.\n\nThe supply-planning section (`/planning`) runs a scoped sub-system that came from the owner's design canvas. It has its own palette, Nunito Sans for UI, JetBrains Mono figures and 14px cards. It is documented below as a scoped world. Nothing outside `/planning` should borrow from it.",
+    "keyCharacteristics": [
+      "Flat white cards with 1px hairlines on an off-white plane. Cards carry no shadow.",
+      "One indigo accent for selection, the active state and single-series data.",
+      "Tabular, right-aligned figures everywhere. Negatives are red, in statements and in the `Num` primitive.",
+      "Structure is shown through weight and rules (hairline, strong rule, foreground rule), not through fills.",
+      "Amber is a warning colour only.",
+      "Manrope sets headings, Inter sets body and figures, and icons are hand-drawn strokes."
+    ],
+    "rules": [
+      {
+        "name": "The One Accent Rule",
+        "body": "Indigo is the only accent colour. It marks what is selected or what is the single measure on screen. Never use it for decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Amber Means Below Rule",
+        "body": "Amber appears only where something falls short: cover below the rule, a needed recount, or an incomplete month. A cover column at or above the rule stays indigo.",
+        "section": "colors"
+      },
+      {
+        "name": "The Fixed Series Rule",
+        "body": "Split series take series-1 to series-5 in order, and «Прочие» is always series-other. A series never changes colour between views.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Every figure that can be compared is set in tabular digits (`tnum`) and right-aligned in its column. Axis ticks in charts follow the same rule.",
+        "section": "typography"
+      },
+      {
+        "name": "The Sentence-Case Rule",
+        "body": "Headings, labels and table heads are in sentence case. The only uppercase is the statement section row inside a table.",
+        "section": "typography"
+      },
+      {
+        "name": "The Hairline Rule",
+        "body": "A resting surface is separated by a 1px border, never by a shadow. On hover, a quiet card's border tints towards indigo (35% mix).",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** use the tokens and shared classes (`.quiet-card`, `.stmt`, `.tbl`, `.num`, `.figure-num`) and the primitives in `ui.tsx` and `statement.tsx`, rather than one-off hex values.",
+      "**Do** set every comparable figure in tabular digits, right-aligned. Show negatives in red, and show «—» for empty values.",
+      "**Do** reserve indigo for the selected, active or single measure, and the indigo wash for the open or focus month.",
+      "**Do** use amber only for shortfalls: cover below the rule, a needed recount, partial data.",
+      "**Do** give split charts the fixed series order, with «Прочие» in series-other. Show a legend only when there are two or more series, and always offer a table view.",
+      "**Do** keep copy bilingual, Russian first, and say when a figure is scoped to today or to a month in progress.",
+      "**Do** gate motion behind `prefers-reduced-motion` and play it only in response to a change the user made."
+    ],
+    "donts": [
+      "**Don't** put shadows on cards, tiles or tables. Shadows belong only to tooltips, popovers, modals and the faint input lift.",
+      "**Don't** add a second accent hue, or use series colours outside charts and their legends and tile bars.",
+      "**Don't** colour a column amber when it is at or above the rule, and don't use amber for emphasis.",
+      "**Don't** use glyphs or emoji as icons. Use the stroke set in `icons.tsx`.",
+      "**Don't** put uppercase tracked kicker labels above headings. Uppercase belongs only to statement section rows (and to `/planning` table heads).",
+      "**Don't** bring Nunito, JetBrains Mono, the plan-accent or 14px cards out of `/planning`.",
+      "**Don't** show real customer figures in examples or demos without labelling them as demonstration data."
+    ]
+  }
+}
