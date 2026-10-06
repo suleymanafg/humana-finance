@@ -1,7 +1,8 @@
 // 1C (pinetrade) sales API sync: fetch a period, match SKUs, classify channels,
 // preview vs current data, commit as a full-snapshot replace of the month.
 //
-// Endpoint: https://db.mobi-c.uz/pinetrade/hs/sales/api/v1/sales?dateFrom&dateTo
+// Endpoint: https://db.mobi-c.uz/turboimpex/hs/sales/api/v1/sales?dateFrom&dateTo
+// (the base was «pinetrade» until October 2026; the API is the same)
 // HTTP Basic auth; credentials are entered by the admin at load time and used
 // for one server-side request only — never stored, never sent to the browser.
 //
@@ -49,7 +50,7 @@ interface Api1cResponse {
   items: Api1cItem[];
 }
 
-const API_URL = "https://db.mobi-c.uz/pinetrade/hs/sales/api/v1/sales";
+const API_URL = "https://db.mobi-c.uz/turboimpex/hs/sales/api/v1/sales";
 
 export class SyncError extends Error {
   constructor(

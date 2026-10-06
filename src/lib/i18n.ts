@@ -555,8 +555,8 @@ export const dict = {
   // 1C sync panel (close page)
   sync1cTitle: { ru: "Синхронизация 1С", en: "1C sync" },
   sync1cSubtitle: {
-    ru: "Загрузка продаж за месяц напрямую из 1С (pinetrade). Суммы 1С не передаёт — выручка считается по ценам из «Справочников».",
-    en: "Pulls the month's sales directly from 1C (pinetrade). The API sends no amounts — revenue is valued at Settings prices.",
+    ru: "Загрузка продаж за месяц напрямую из 1С. Суммы 1С не передаёт — выручка считается по ценам из «Справочников».",
+    en: "Pulls the month's sales directly from 1C. The API sends no amounts — revenue is valued at Settings prices.",
   },
   sync1cLogin: { ru: "Логин 1С", en: "1C login" },
   sync1cPassword: { ru: "Пароль 1С", en: "1C password" },
