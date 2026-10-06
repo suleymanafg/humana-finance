@@ -141,6 +141,12 @@ figures, small bars).
   the 1C codes entered in Settings ("Код в 1С") — which are matched **first**
   and survive renames; names remain the fallback. Prefer codes for automated
   pulls.
+- **1C from outside Uzbekistan**: the 1C sales API (`db.mobi-c.uz`) answers
+  only connections from Uzbekistan, so the deployed app's server cannot reach
+  it (`UND_ERR_CONNECT_TIMEOUT`). Pull from a computer in Uzbekistan with
+  `npx tsx prisma/sync-1c.ts <YYYY-MM>` — the same preview and full replace of
+  the month as the app, into the database in `.env` — or open the month's link
+  in the browser, save the page and load the file in the sync panel.
 - **Inventory (per warehouse)**: warehouses live in Settings → Склады (with an
   optional 1C code for matching). Stock is stored per month × product ×
   warehouse; the balance sheet sums across warehouses at avg TI cost.
