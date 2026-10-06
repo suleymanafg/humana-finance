@@ -1,17 +1,30 @@
 "use client";
 
-// «Синхронизация 1С» — pulls the month's sales from the pinetrade API.
+// «Синхронизация 1С» — pulls the month's sales from the 1C sales API.
 // Credentials are typed in at load time and sent to our server route only
 // (the browser never talks to 1C directly); the server passes them through to
 // 1C and forgets them. Preview first, then an explicit full-snapshot Apply.
-import { useState } from "react";
+// When the server cannot reach 1C, the month's link opened in the browser and
+// saved as a file goes through the same preview and Apply.
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import { fmtN } from "@/lib/format";
 import { Badge, Button, Input } from "./ui";
-import type { BatchSyncReport, ReconcileReport, SyncReport } from "@/lib/sync-1c-core";
+import { parse1cFile, type BatchSyncReport, type ReconcileReport, type SyncReport } from "@/lib/sync-1c-core";
 
-export default function Sync1cPanel({ monthId, monthName }: { monthId: string; monthName: string }) {
+type SavedFile = { name: string; data: unknown };
+
+export default function Sync1cPanel({
+  monthId,
+  monthName,
+  apiLink,
+}: {
+  monthId: string;
+  monthName: string;
+  /** the month's request to 1C, for opening in the browser */
+  apiLink: string;
+}) {
   const { t } = useT();
   const router = useRouter();
   const [login, setLogin] = useState("");
@@ -27,10 +40,13 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
   const [batching, setBatching] = useState(false);
   const [excelOk, setExcelOk] = useState(false);
   const [done, setDone] = useState(false);
+  const [file, setFile] = useState<SavedFile | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const excelWarn = !!report && report.current.withAmount > 0 && !report.committed;
 
-  async function run(mode: "preview" | "commit") {
+  /** `source` is the saved file to read instead of asking 1C, or null for 1C itself */
+  async function run(mode: "preview" | "commit", source: SavedFile | null) {
     setBusy(true);
     setError(null);
     if (mode === "preview") {
@@ -42,7 +58,11 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
       const res = await fetch("/api/sync/1c", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, monthId, login, password, byClientName }),
+        body: JSON.stringify(
+          source
+            ? { mode, monthId, byClientName, data: source.data }
+            : { mode, monthId, login, password, byClientName }
+        ),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -59,6 +79,20 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
     } finally {
       setBusy(false);
     }
+  }
+
+  async function chooseFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = e.target.files?.[0];
+    e.target.value = "";
+    if (!picked) return;
+    const data = parse1cFile(await picked.text());
+    if (data == null) {
+      setError(t("sync1cFileBad"));
+      return;
+    }
+    const saved = { name: picked.name, data };
+    setFile(saved);
+    await run("preview", saved);
   }
 
   async function runReconcile() {
@@ -144,7 +178,13 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
             className="w-40"
           />
         </label>
-        <Button onClick={() => run("preview")} disabled={busy || reconciling || !login || !password}>
+        <Button
+          onClick={() => {
+            setFile(null);
+            run("preview", null);
+          }}
+          disabled={busy || reconciling || !login || !password}
+        >
           {busy && !report ? t("sync1cLoading") : t("sync1cLoad")}
         </Button>
         <Button
@@ -166,6 +206,30 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
         {t("sync1cByClient")}
       </label>
       <p className="mt-2 text-[12px] text-muted">{t("sync1cPasswordNote")}</p>
+
+      {/* when the server cannot reach 1C: the browser can */}
+      <div className="mt-4 rounded-lg border border-border bg-background px-4 py-3">
+        <p className="text-[12.5px] text-muted">{t("sync1cFileHint")}</p>
+        <a
+          href={apiLink}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 block break-all text-[12.5px] text-accent underline-offset-2 hover:underline"
+        >
+          {apiLink}
+        </a>
+        <div className="mt-2.5 flex flex-wrap items-center gap-3">
+          <input ref={fileInput} type="file" accept=".json,.txt,.html,application/json,text/plain" hidden onChange={chooseFile} />
+          <Button variant="secondary" onClick={() => fileInput.current?.click()} disabled={busy || reconciling}>
+            {busy && file && !report ? t("sync1cFileReading") : t("sync1cFileChoose")}
+          </Button>
+          {file && (
+            <span className="text-[12.5px] text-muted">
+              {t("sync1cFileFrom")}: {file.name}
+            </span>
+          )}
+        </div>
+      </div>
 
       {error && (
         <div className="mt-4 rounded-lg border border-warn/40 bg-warn-soft p-3 text-[13px] text-warn">
@@ -190,6 +254,11 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
             {report.fetched.outsidePeriod > 0 && (
               <span className="text-muted">
                 {fmtN(report.fetched.outsidePeriod)} {t("sync1cOutsidePeriod")}
+              </span>
+            )}
+            {file && (
+              <span className="text-muted">
+                {t("sync1cFileFrom")}: {file.name}
               </span>
             )}
             {done && <Badge tone="ok">{t("sync1cApplied")}</Badge>}
@@ -324,8 +393,8 @@ export default function Sync1cPanel({ monthId, monthName }: { monthId: string; m
               )}
               <div className="flex items-center gap-3">
                 <Button
-                  onClick={() => run("commit")}
-                  disabled={busy || (excelWarn && !excelOk) || !login || !password}
+                  onClick={() => run("commit", file)}
+                  disabled={busy || (excelWarn && !excelOk) || (!file && (!login || !password))}
                 >
                   {t("sync1cApply")}
                 </Button>

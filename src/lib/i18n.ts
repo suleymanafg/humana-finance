@@ -569,6 +569,17 @@ export const dict = {
     en: "Classify by client name when the district field is blank",
   },
   sync1cLoad: { ru: "Загрузить", en: "Load" },
+  sync1cFileHint: {
+    ru: "Если загрузка не проходит: откройте ссылку за этот месяц в браузере (он спросит логин и пароль 1С), сохраните страницу (Ctrl+S) и выберите сохранённый файл.",
+    en: "If loading fails: open this month's link in your browser (it asks for the 1C login and password), save the page (Ctrl+S) and choose the saved file.",
+  },
+  sync1cFileChoose: { ru: "Выбрать файл", en: "Choose file" },
+  sync1cFileReading: { ru: "Чтение файла…", en: "Reading the file…" },
+  sync1cFileFrom: { ru: "Из файла", en: "From file" },
+  sync1cFileBad: {
+    ru: "Файл не похож на ответ 1С. Сохраните страницу по ссылке (Ctrl+S) и выберите этот файл.",
+    en: "The file does not look like a 1C response. Save the page from the link (Ctrl+S) and choose that file.",
+  },
   sync1cLoading: { ru: "Запрос к 1С…", en: "Querying 1C…" },
   sync1cApply: { ru: "Применить", en: "Apply" },
   sync1cApplied: { ru: "Данные заменены", en: "Data replaced" },

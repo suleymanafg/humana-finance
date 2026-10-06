@@ -1,7 +1,9 @@
-// 1C sales sync (admin session): preview fetches the month from the pinetrade
+// 1C sales sync (admin session): preview fetches the month from the 1C sales
 // API and shows what would change; commit replaces the month's sales as a full
 // snapshot. Credentials pass through to 1C for this one request — they are not
-// stored, not logged, and never echoed back.
+// stored, not logged, and never echoed back. When the app's server cannot
+// reach 1C, the admin can open the month's link in the browser, save the page
+// and send its contents as `data` instead of the credentials (one month only).
 import { NextResponse, type NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -11,6 +13,7 @@ import {
   commitAllMonths,
   commitSync,
   fetch1cSales,
+  itemsFromFile,
   monthRange,
   SyncError,
 } from "@/lib/sync-1c";
@@ -22,17 +25,22 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as {
     mode: "preview" | "commit" | "reconcile" | "commit-all";
     monthId?: string;
-    login: string;
-    password: string;
+    login?: string;
+    password?: string;
     byClientName?: boolean;
+    /** the month's 1C response saved from the browser, in place of login and password */
+    data?: unknown;
   } | null;
-  if (!body || !body.login || !body.password)
+  const fromFile = body?.data !== undefined;
+  if (!body || (!fromFile && (!body.login || !body.password)))
     return NextResponse.json({ error: "login and password are required" }, { status: 400 });
 
   // whole-range modes: reconcile (read-only comparison) and commit-all
   // (replace every loaded month with 1C data — owner decision: 1C is the
   // source of truth)
   if (body.mode === "reconcile" || body.mode === "commit-all") {
+    if (fromFile)
+      return NextResponse.json({ error: "a file covers one month: load it month by month" }, { status: 400 });
     const withSales = await prisma.sale.groupBy({ by: ["monthId"] });
     if (withSales.length === 0)
       return NextResponse.json({ error: "no sales data to reconcile" }, { status: 400 });
@@ -40,7 +48,7 @@ export async function POST(request: NextRequest) {
     const { dateFrom } = monthRange(ids[0]);
     const { dateTo } = monthRange(ids[ids.length - 1]);
     try {
-      const data = await fetch1cSales(dateFrom, dateTo, body.login, body.password);
+      const data = await fetch1cSales(dateFrom, dateTo, body.login ?? "", body.password ?? "");
       if (body.mode === "reconcile")
         return NextResponse.json(await buildReconcile(data.items, dateFrom, dateTo));
       const result = await commitAllMonths(
@@ -63,10 +71,17 @@ export async function POST(request: NextRequest) {
 
   try {
     const { dateFrom, dateTo } = monthRange(body.monthId);
-    const data = await fetch1cSales(dateFrom, dateTo, body.login, body.password);
+    const items = fromFile
+      ? itemsFromFile(body.data)
+      : (await fetch1cSales(dateFrom, dateTo, body.login ?? "", body.password ?? "")).items;
+    if (!items)
+      return NextResponse.json(
+        { error: "Файл не похож на ответ 1С: в нём нет списка продаж. Сохраните страницу по ссылке (Ctrl+S) и выберите этот файл." },
+        { status: 400 }
+      );
     const { report, matched, learned, clientDetail } = await buildSync(
       body.monthId,
-      data.items,
+      items,
       body.byClientName !== false
     );
     if (body.mode === "commit") {

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { classifyChannel, monthRange, tashkentDistrictOf } from "../sync-1c-core";
+import {
+  classifyChannel,
+  itemsFromFile,
+  monthRange,
+  parse1cFile,
+  tashkentDistrictOf,
+  unreachableMessage,
+} from "../sync-1c-core";
 
 describe("tashkentDistrictOf", () => {
   it("maps район spellings to canonical district names", () => {
@@ -103,5 +110,38 @@ describe("monthRange", () => {
     expect(monthRange("2026-07")).toEqual({ dateFrom: "2026-07-01", dateTo: "2026-07-31" });
     expect(monthRange("2025-12")).toEqual({ dateFrom: "2025-12-01", dateTo: "2025-12-31" });
     expect(monthRange("2028-02")).toEqual({ dateFrom: "2028-02-01", dateTo: "2028-02-29" });
+  });
+});
+
+describe("1C response saved from the browser", () => {
+  const item = { Дата: "2026-09-03T00:00:00", ТипОперации: "Продажа", КодСКЮ: 96599, СКЮ: "x", Количество: 12 };
+  it("reads the whole response or just its list", () => {
+    expect(itemsFromFile({ status: "ok", items: [item] })).toHaveLength(1);
+    expect(itemsFromFile([item])).toHaveLength(1);
+  });
+  it("refuses anything else", () => {
+    expect(itemsFromFile({ error: "unauthorized" })).toBeNull();
+    expect(itemsFromFile({ items: [{ foo: 1 }] })).toBeNull();
+    expect(itemsFromFile(null)).toBeNull();
+  });
+  it("finds the JSON when the browser saved the page as HTML", () => {
+    const html = `<html><body><pre>{"items":[{"Дата":"2026-09-03","Количество":1,"Контрагент":"A &amp; B"}]}</pre></body></html>`;
+    const parsed = parse1cFile(html) as { items: Array<{ Контрагент: string }> };
+    expect(parsed.items[0].Контрагент).toBe("A & B");
+    expect(parse1cFile("not json")).toBeNull();
+  });
+});
+
+describe("1C unreachable", () => {
+  const failed = (code: string) => Object.assign(new TypeError("fetch failed"), { cause: { code, message: "x" } });
+  it("names a certificate problem", () => {
+    expect(unreachableMessage(failed("UNABLE_TO_VERIFY_LEAF_SIGNATURE"))).toMatch(/сертификат/);
+  });
+  it("names a refused or timed-out connection", () => {
+    expect(unreachableMessage(failed("UND_ERR_CONNECT_TIMEOUT"))).toMatch(/не принимает подключения/);
+    expect(unreachableMessage(failed("ECONNREFUSED"))).toMatch(/ECONNREFUSED/);
+  });
+  it("keeps the underlying reason otherwise", () => {
+    expect(unreachableMessage(failed("EPROTO"))).toMatch(/EPROTO/);
   });
 });

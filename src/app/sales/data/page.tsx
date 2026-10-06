@@ -2,6 +2,7 @@ import SalesView from "@/components/SalesView";
 import Sync1cPanel from "@/components/Sync1cPanel";
 import { salesData } from "@/lib/sales-data";
 import type { SearchParams } from "@/lib/page-context";
+import { salesApiLink } from "@/lib/sync-1c-core";
 
 export default async function SalesDataPage({ searchParams }: { searchParams: SearchParams }) {
   const { month } = await searchParams;
@@ -9,7 +10,13 @@ export default async function SalesDataPage({ searchParams }: { searchParams: Se
   const m = ctx.dataset.months.find((x) => x.id === ctx.monthId);
   return (
     <>
-      {ctx.canEditAny && <Sync1cPanel monthId={ctx.monthId} monthName={m ? ctx.l({ ru: m.nameRu, en: m.nameEn }) : ctx.monthId} />}
+      {ctx.canEditAny && (
+        <Sync1cPanel
+          monthId={ctx.monthId}
+          monthName={m ? ctx.l({ ru: m.nameRu, en: m.nameEn }) : ctx.monthId}
+          apiLink={salesApiLink(ctx.monthId)}
+        />
+      )}
       <SalesView tab="data" {...props} />
     </>
   );

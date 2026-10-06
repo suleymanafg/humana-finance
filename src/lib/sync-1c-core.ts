@@ -50,7 +50,13 @@ interface Api1cResponse {
   items: Api1cItem[];
 }
 
-const API_URL = "https://db.mobi-c.uz/turboimpex/hs/sales/api/v1/sales";
+export const SALES_API_URL = "https://db.mobi-c.uz/turboimpex/hs/sales/api/v1/sales";
+
+/** The month's request, as a link the browser can open with the 1C login. */
+export function salesApiLink(monthId: string): string {
+  const { dateFrom, dateTo } = monthRange(monthId);
+  return `${SALES_API_URL}?dateFrom=${dateFrom}&dateTo=${dateTo}`;
+}
 
 export class SyncError extends Error {
   constructor(
@@ -67,7 +73,7 @@ export async function fetch1cSales(
   login: string,
   password: string
 ): Promise<Api1cResponse> {
-  const url = `${API_URL}?dateFrom=${dateFrom}&dateTo=${dateTo}`;
+  const url = `${SALES_API_URL}?dateFrom=${dateFrom}&dateTo=${dateTo}`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -78,10 +84,7 @@ export async function fetch1cSales(
       signal: AbortSignal.timeout(90_000),
     });
   } catch (e) {
-    throw new SyncError(
-      `Сервер 1С недоступен: ${e instanceof Error ? e.message : String(e)}`,
-      "NETWORK"
-    );
+    throw new SyncError(unreachableMessage(e), "NETWORK");
   }
   if (res.status === 401 || res.status === 403)
     throw new SyncError("1С отклонила логин или пароль", "AUTH");
@@ -90,6 +93,73 @@ export async function fetch1cSales(
   if (!body || !Array.isArray(body.items))
     throw new SyncError("Неожиданный формат ответа 1С (нет items)", "BADDATA");
   return body;
+}
+
+// fetch() reports only "fetch failed"; the reason is in its cause
+const CERT_CODES = new Set([
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "CERT_UNTRUSTED",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+const CONNECT_CODES = new Set([
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+/** Why the app's server could not reach 1C, in words that can be passed on to 1C's administrators. */
+export function unreachableMessage(e: unknown): string {
+  const err = e as { name?: string; message?: string; cause?: { code?: string; message?: string } } | null;
+  if (err?.name === "TimeoutError")
+    return "1С не ответила за 90 секунд. Попробуйте ещё раз или загрузите ответ 1С файлом (ниже).";
+  const code = err?.cause?.code ?? "";
+  const detail = [code, err?.cause?.message].filter(Boolean).join(": ") || err?.message || String(e);
+  if (CERT_CODES.has(code))
+    return `Сервер 1С отвечает, но сервер приложения не принимает его сертификат (${detail}). Браузер ссылку открывает, поэтому загрузите ответ 1С файлом (ниже); исправить сертификат могут администраторы 1С.`;
+  if (CONNECT_CODES.has(code))
+    return `Сервер 1С не принимает подключения от сервера приложения (${detail}). Похоже, доступ открыт только из Узбекистана: загрузите ответ 1С файлом (ниже) или попросите администраторов 1С открыть доступ.`;
+  return `Сервер 1С недоступен (${detail}). Загрузите ответ 1С файлом (ниже).`;
+}
+
+/**
+ * The sales rows of a 1C response saved from the browser: the whole response
+ * ({ items: [...] }) or just its list. Null when the file is something else.
+ */
+export function itemsFromFile(data: unknown): Api1cItem[] | null {
+  const items = Array.isArray(data) ? data : (data as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) return null;
+  const valid = items.every(
+    (it) => it !== null && typeof it === "object" && typeof (it as Api1cItem).Дата === "string" && "Количество" in it
+  );
+  return valid ? (items as Api1cItem[]) : null;
+}
+
+/** A saved page read as JSON — also when the browser wrapped it in HTML. */
+export function parse1cFile(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const from = text.indexOf("{");
+    const to = text.lastIndexOf("}");
+    if (from < 0 || to <= from) return null;
+    try {
+      return JSON.parse(text.slice(from, to + 1).replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
+    } catch {
+      return null;
+    }
+  }
 }
 
 // ─────────────────────── channel classifier ───────────────────────
