@@ -46,7 +46,16 @@ export default function LoginPage() {
         <form onSubmit={submit} className="space-y-3">
           <div>
             <label className="mb-1 block text-[12px] font-medium text-muted">{t("username")}</label>
-            <Input value={username} onChange={(e) => setUsername(e.target.value)} className="w-full" autoFocus />
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full"
+              autoFocus
+              autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
           </div>
           <div>
             <label className="mb-1 block text-[12px] font-medium text-muted">{t("password")}</label>
