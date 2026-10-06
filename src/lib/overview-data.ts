@@ -111,9 +111,11 @@ export async function overviewData(monthParam: string | undefined) {
       .filter((v) => v > 0);
     return recent.length === 0 ? 0 : recent.reduce((s, v) => s + v, 0) / recent.length;
   };
+  // stock below zero in the books means a count is missing, not a cover figure
   const coverOf = (m: string, pid?: string) => {
     const avg = avgUnits(m, pid);
-    return avg > 0 ? stockUnits(m, pid) / avg : null;
+    const stock = stockUnits(m, pid);
+    return avg > 0 && stock >= 0 ? stock / avg : null;
   };
 
   // the colours follow the channels and products that lead the whole window
@@ -208,11 +210,15 @@ export async function overviewData(monthParam: string | undefined) {
       : moverRows.filter((r) => r.units !== r.prev).sort((a, b) => Math.abs(b.units - b.prev) - Math.abs(a.units - a.prev))
   ).slice(0, 6);
 
-  // products below the cover rule at month-end
+  // products below the cover rule at month-end; stock below zero in the books
+  // asks for a count first
   const lowCover = Object.keys(computed.fifo)
-    .map((pid) => ({ name: productName(pid), cover: coverOf(monthId, pid), stock: stockUnits(monthId, pid) }))
-    .filter((r): r is { name: string; cover: number; stock: number } => r.cover != null && r.cover < coverRule)
-    .sort((a, b) => a.cover - b.cover)
+    .map((pid) => {
+      const stock = stockUnits(monthId, pid);
+      return { name: productName(pid), cover: coverOf(monthId, pid), stock, recount: stock < -0.5 };
+    })
+    .filter((r) => r.recount || (r.cover != null && r.cover < coverRule))
+    .sort((a, b) => (a.recount !== b.recount ? (a.recount ? -1 : 1) : (a.cover ?? 0) - (b.cover ?? 0)))
     .slice(0, 5);
 
   const trucks = await prisma.shipment.findMany({
@@ -224,15 +230,13 @@ export async function overviewData(monthParam: string | undefined) {
   const units = (rows: Array<{ monthId: string; qty: number }>) =>
     rows.filter((w) => w.monthId === monthId).reduce((s, w) => s + w.qty, 0);
 
-  // what the month still lacks, as the month-close checklist counts it
+  // what the month lacks of the inputs this page reads; the rest of the
+  // month-close checklist lives in its own section
   const status = ctx.status.find((s) => s.monthId === monthId);
   const required: Array<[boolean, { ru: string; en: string }, string]> = status
     ? [
         [status.hasSales, { ru: "продажи", en: "sales" }, "/sales"],
-        [status.hasOpexTi, { ru: "расходы TI", en: "TI expenses" }, "/expenses/ti"],
-        [status.hasOpexFargo, { ru: "расходы Fargo", en: "Fargo expenses" }, "/expenses/fargo"],
         [status.hasStock, { ru: "пересчёт склада", en: "stock count" }, "/goods/stock"],
-        [status.hasInputs, { ru: "остатки денег", en: "cash balances" }, "/funding/balances"],
       ]
     : [];
 
@@ -259,6 +263,7 @@ export async function overviewData(monthParam: string | undefined) {
         })),
       cover: coverOf(monthId),
       stockUnits: stockUnits(monthId),
+      recount: stockUnits(monthId) < -0.5,
       order: { deadline: slot.deadline, daysLeft: slot.daysLeft, arrivalMonth: slot.arrivalMonth },
     },
     movers,
@@ -272,9 +277,7 @@ export async function overviewData(monthParam: string | undefined) {
     writtenOff: units(computed.fargoWriteOffs) + units(computed.writeOffs),
     status: {
       missing: required.filter(([ok]) => !ok).map(([, label, href]) => ({ label: ctx.l(label), href })),
-      required: required.length,
       closed: !!monthRow(monthId)?.closedAt,
-      warnings: computed.healthChecks.filter((h) => h.status === "warn" && h.severity === "warn").length,
     },
     isAdmin: ctx.isAdmin,
   };

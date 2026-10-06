@@ -99,7 +99,7 @@ function Trend({ values, active, rule, warn }: { values: Array<number | null>; a
     <span className="relative block h-7" aria-hidden>
       <svg viewBox={`0 0 100 ${H}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible">
         {rule != null && (
-          <line x1={0} x2={100} y1={yOf(rule)} y2={yOf(rule)} stroke="var(--warn)" strokeOpacity={0.55} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <line x1={0} x2={100} y1={yOf(rule)} y2={yOf(rule)} stroke="var(--border-strong)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
         )}
         <path
           d={d}
@@ -320,30 +320,18 @@ export default function OverviewView(props: OverviewProps) {
               ? l({ ru: "Месяц закрыт", en: "Month closed" })
               : l({ ru: "Месяц открыт: цифры предварительные", en: "Month open: figures are preliminary" })}
         </span>
-        <span>
-          {status.missing.length === 0 ? (
-            l({ ru: "Все данные месяца внесены", en: "All of the month's data is in" })
-          ) : (
-            <>
-              {l({ ru: "Не внесено: ", en: "Not entered: " })}
-              {status.missing.map((m, k) => (
-                <span key={m.href}>
-                  {k > 0 && ", "}
-                  <Link href={m.href} className="text-foreground underline decoration-border-strong underline-offset-[3px] hover:text-accent hover:decoration-accent">
-                    {m.label}
-                  </Link>
-                </span>
-              ))}
-            </>
-          )}
-        </span>
-        {status.warnings > 0 && (
-          <Link href="/health" className="text-foreground underline decoration-border-strong underline-offset-[3px] hover:text-accent hover:decoration-accent">
-            {l({
-              ru: `Проверки: ${status.warnings} ${status.warnings === 1 ? "предупреждение" : status.warnings < 5 ? "предупреждения" : "предупреждений"}`,
-              en: `Checks: ${status.warnings} ${status.warnings === 1 ? "warning" : "warnings"}`,
-            })}
-          </Link>
+        {status.missing.length > 0 && (
+          <span>
+            {l({ ru: "Не внесено: ", en: "Not entered: " })}
+            {status.missing.map((m, k) => (
+              <span key={m.href}>
+                {k > 0 && ", "}
+                <Link href={m.href} className="text-foreground underline decoration-border-strong underline-offset-[3px] hover:text-accent hover:decoration-accent">
+                  {m.label}
+                </Link>
+              </span>
+            ))}
+          </span>
         )}
       </p>
 
@@ -398,6 +386,11 @@ export default function OverviewView(props: OverviewProps) {
           value={pulse.cover == null ? "—" : `${months1(pulse.cover)} ${monthsWord}`}
           tone={coverWarn ? "warn" : undefined}
           lines={[
+            pulse.recount && (
+              <span key="c" className="text-warn">
+                {l({ ru: "нужен пересчёт склада", en: "a stock count is needed" })}
+              </span>
+            ),
             pulse.cover != null && (
               <span key="r" className={coverWarn ? "text-warn" : "text-muted"}>
                 {coverWarn
@@ -405,9 +398,11 @@ export default function OverviewView(props: OverviewProps) {
                   : l({ ru: `норма ${coverRule} мес`, en: `rule: ${coverRule} months` })}
               </span>
             ),
-            <span key="u" className="text-muted">
-              {`${fmtN(pulse.stockUnits)} ${unitsWord} ${l({ ru: "на складах", en: "in stock" })}`}
-            </span>,
+            !pulse.recount && (
+              <span key="u" className="text-muted">
+                {`${fmtN(pulse.stockUnits)} ${unitsWord} ${l({ ru: "на складах", en: "in stock" })}`}
+              </span>
+            ),
           ]}
           foot={<Trend values={months.map((m) => m.cover)} active={measure === "cover"} rule={coverRule} warn={coverWarn} />}
           active={measure === "cover"}
@@ -415,7 +410,7 @@ export default function OverviewView(props: OverviewProps) {
         />
         <Tile
           className="col-span-2 xl:col-span-1"
-          label={l({ ru: "Заказ в IBP", en: "IBP order" })}
+          label={l({ ru: "Ближайший заказ в IBP", en: "Next IBP order" })}
           value={pulse.order.daysLeft === 0 ? l({ ru: "сегодня", en: "today" }) : days(pulse.order.daysLeft, locale)}
           lines={[
             <span key="d" className="text-muted">
@@ -527,7 +522,7 @@ export default function OverviewView(props: OverviewProps) {
           )}
         </div>
 
-        <footer className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-border px-5 py-2.5">
+        <footer className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-border py-2.5 pl-5 pr-16">
           <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-foreground">
             {series.map((s) => (
               <li key={s.key} className="flex items-center gap-1.5">
@@ -585,7 +580,7 @@ function ChartTable({
   const { l } = useT();
   const plain = (v: number | null | undefined) => (v == null ? "—" : fmtN(v));
   return (
-    <div className="max-h-[300px] overflow-auto">
+    <div className="overflow-x-auto">
       <table className="stmt is-compact">
         <thead>
           <tr>
@@ -687,7 +682,9 @@ function Movers({
               <th>{l({ ru: "Товар", en: "Product" })}</th>
               <th>{prev?.short ?? ""}</th>
               <th>{progress ? l({ ru: `${current?.short ?? ""}, пока`, en: `${current?.short ?? ""} so far` }) : (current?.short ?? "")}</th>
-              <th>{progress ? l({ ru: "От прошлого месяца", en: "Of last month" }) : l({ ru: "Изменение", en: "Change" })}</th>
+              <th>
+                {progress ? l({ ru: `Доля от ${prev?.short ?? ""}`, en: `Share of ${prev?.short ?? ""}` }) : l({ ru: "Изменение", en: "Change" })}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -731,7 +728,7 @@ function Supply({ trucks, lowCover, coverRule, writtenOff, isAdmin }: OverviewPr
       </header>
 
       <h3 className="border-t border-border bg-surface-low/50 px-5 py-1.5 text-[12px] font-semibold text-muted">
-        {l({ ru: "В пути", en: "On the way" })}
+        {l({ ru: "Сейчас в пути", en: "On the way now" })}
       </h3>
       {trucks.length === 0 ? (
         <p className={`${row} text-muted`}>{l({ ru: "Машин в пути нет", en: "No trucks on the way" })}</p>
@@ -763,19 +760,26 @@ function Supply({ trucks, lowCover, coverRule, writtenOff, isAdmin }: OverviewPr
       {lowCover.length === 0 ? (
         <p className={`${row} text-muted`}>{l({ ru: "Все товары на норме", en: "Every product meets the rule" })}</p>
       ) : (
-        lowCover.map((p) => (
-          <Link key={p.name} href={isAdmin ? "/planning" : "/goods/stock"} className={`${row} transition-colors hover:bg-background`}>
-            <span className="min-w-0 truncate">{p.name}</span>
-            <span className="flex shrink-0 items-baseline gap-4">
-              <span className="figure-num text-muted">
-                {fmtN(p.stock)} {l({ ru: "шт", en: "units" })}
+        lowCover.map((p) =>
+          p.recount || p.cover == null ? (
+            <Link key={p.name} href="/goods/stock" className={`${row} transition-colors hover:bg-background`}>
+              <span className="min-w-0 truncate">{p.name}</span>
+              <span className="shrink-0 text-warn">{l({ ru: "нужен пересчёт склада", en: "a stock count is needed" })}</span>
+            </Link>
+          ) : (
+            <Link key={p.name} href={isAdmin ? "/planning" : "/goods/stock"} className={`${row} transition-colors hover:bg-background`}>
+              <span className="min-w-0 truncate">{p.name}</span>
+              <span className="flex shrink-0 items-baseline gap-4">
+                <span className="figure-num text-muted">
+                  {fmtN(p.stock)} {l({ ru: "шт", en: "units" })}
+                </span>
+                <span className="figure-num w-16 text-right font-semibold text-warn">
+                  {p.cover.toFixed(1)} {locale === "ru" ? "мес" : "mo"}
+                </span>
               </span>
-              <span className="figure-num w-16 text-right font-semibold text-warn">
-                {p.cover.toFixed(1)} {locale === "ru" ? "мес" : "mo"}
-              </span>
-            </span>
-          </Link>
-        ))
+            </Link>
+          )
+        )
       )}
 
       {writtenOff > 0 && (

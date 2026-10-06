@@ -296,10 +296,10 @@ export default function FocusChart({
                 x2={plotL + plotW}
                 y1={Math.round(y(rule.value)) + 0.5}
                 y2={Math.round(y(rule.value)) + 0.5}
-                stroke="var(--warn)"
-                strokeWidth={1.5}
+                stroke="var(--foreground)"
+                strokeWidth={1}
               />
-              <text x={plotL - 10} y={y(rule.value)} textAnchor="end" dominantBaseline="middle" fontSize={11} fontWeight={600} fill="var(--warn)">
+              <text x={plotL - 10} y={y(rule.value)} textAnchor="end" dominantBaseline="middle" fontSize={11} fontWeight={600} fill="var(--foreground)">
                 {rule.label}
               </text>
             </g>
@@ -310,7 +310,7 @@ export default function FocusChart({
             const tipY = segs.length ? segs[segs.length - 1].top : base;
             return (
               <g key={c.key}>
-                {c.focus && c.total != null && c.total !== 0 && (
+                {c.focus && i !== shown && c.total != null && c.total !== 0 && (
                   <text x={cx(i)} y={tipY - 8} textAnchor="middle" fontSize={11.5} fontWeight={650} fill="var(--foreground)">
                     {cap(c.total)}
                   </text>
