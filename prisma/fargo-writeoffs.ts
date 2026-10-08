@@ -45,6 +45,14 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  // a client generated before the write-offs table existed has no delegate for it
+  if (!(prisma as unknown as Record<string, unknown>).fargoWriteOff) {
+    console.error(
+      "✗ This computer's database client is older than the write-offs table. Run these two, then this command again:\n    npx prisma db push\n    npx prisma generate"
+    );
+    process.exitCode = 1;
+    return;
+  }
   const month = await prisma.month.findUnique({ where: { id: date.slice(0, 7) } });
   if (!month) {
     console.error(`There is no month ${date.slice(0, 7)} in the database.`);
@@ -110,6 +118,12 @@ async function main() {
 
 main()
   .catch((e) => {
+    // the table missing from the database itself
+    if ((e as { code?: string })?.code === "P2021") {
+      console.error("✗ The database has no write-offs table yet. Run `npx prisma db push`, then this command again.");
+      process.exitCode = 1;
+      return;
+    }
     console.error("✗", e instanceof Error ? e.message : e);
     process.exitCode = 1;
   })
