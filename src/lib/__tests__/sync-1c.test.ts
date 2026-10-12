@@ -3,7 +3,11 @@ import {
   classifyChannel,
   itemsFromFile,
   monthRange,
+  monthsCovered,
   parse1cFile,
+  salesApiLink,
+  salesApiPeriodLink,
+  salesFromFile,
   tashkentDistrictOf,
   unreachableMessage,
 } from "../sync-1c-core";
@@ -129,6 +133,34 @@ describe("1C response saved from the browser", () => {
     const parsed = parse1cFile(html) as { items: Array<{ Контрагент: string }> };
     expect(parsed.items[0].Контрагент).toBe("A & B");
     expect(parse1cFile("not json")).toBeNull();
+  });
+});
+
+describe("a period saved from 1C", () => {
+  const sale = (Дата: string) => ({ Дата, ТипОперации: "Продажа", КодСКЮ: 1, СКЮ: "x", Количество: 1 });
+  it("links one month or a run of whole months", () => {
+    expect(salesApiLink("2026-09")).toMatch(/dateFrom=2026-09-01&dateTo=2026-09-30$/);
+    expect(salesApiPeriodLink("2025-08", "2026-09")).toMatch(/dateFrom=2025-08-01&dateTo=2026-09-30$/);
+  });
+  it("takes the period the response declares, in either date style", () => {
+    const file = { dateFrom: "2025-08-01T00:00:00", dateTo: "30.09.2026", items: [sale("2025-08-05T10:00:00")] };
+    expect(salesFromFile(file)?.period).toEqual({ dateFrom: "2025-08-01", dateTo: "2026-09-30", declared: true });
+  });
+  it("falls back to the first and last sale, and knows an empty list has no period", () => {
+    expect(salesFromFile([sale("2026-09-30"), sale("2026-09-01T09:00:00")])?.period).toEqual({
+      dateFrom: "2026-09-01",
+      dateTo: "2026-09-30",
+      declared: false,
+    });
+    expect(salesFromFile([])?.period).toBeNull();
+    expect(salesFromFile({ error: "unauthorized" })).toBeNull();
+  });
+  it("counts only whole months", () => {
+    expect(monthsCovered("2025-08-01", "2026-09-30")).toHaveLength(14);
+    expect(monthsCovered("2025-08-01", "2025-08-31")).toEqual(["2025-08"]);
+    expect(monthsCovered("2025-08-02", "2025-10-30")).toEqual(["2025-09"]);
+    expect(monthsCovered("2025-12-01", "2026-01-31")).toEqual(["2025-12", "2026-01"]);
+    expect(monthsCovered("2026-02-01", "2026-02-27")).toEqual([]);
   });
 });
 

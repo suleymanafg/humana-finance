@@ -143,10 +143,16 @@ figures, small bars).
   pulls.
 - **1C from outside Uzbekistan**: the 1C sales API (`db.mobi-c.uz`) answers
   only connections from Uzbekistan, so the deployed app's server cannot reach
-  it (`UND_ERR_CONNECT_TIMEOUT`). Pull from a computer in Uzbekistan with
-  `npx tsx prisma/sync-1c.ts <YYYY-MM>` — the same preview and full replace of
-  the month as the app, into the database in `.env` — or open the month's link
-  in the browser, save the page and load the file in the sync panel.
+  it (`UND_ERR_CONNECT_TIMEOUT`), and it sends no CORS headers, so the browser
+  cannot call it for the app either. The sync panel therefore shows two links,
+  for the month and for every month with sales: open one in the browser (it
+  asks for the 1C login), save the page and choose the file. A whole-period
+  file runs the all-months reconciliation and «Заменить все месяцы», and any
+  single month can be previewed and applied from it; only months the file
+  covers in full are compared or replaced. The panel gzips the file (a year
+  of sales is several MB, over Vercel's 4.5 MB request limit). From a computer
+  in Uzbekistan, `npx tsx prisma/sync-1c.ts <YYYY-MM>` does the month's
+  preview and full replace into the database in `.env`.
 - **Inventory (per warehouse)**: warehouses live in Settings → Склады (with an
   optional 1C code for matching). Stock is stored per month × product ×
   warehouse; the balance sheet sums across warehouses at avg TI cost.

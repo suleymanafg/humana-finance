@@ -54,8 +54,12 @@ export const SALES_API_URL = "https://db.mobi-c.uz/turboimpex/hs/sales/api/v1/sa
 
 /** The month's request, as a link the browser can open with the 1C login. */
 export function salesApiLink(monthId: string): string {
-  const { dateFrom, dateTo } = monthRange(monthId);
-  return `${SALES_API_URL}?dateFrom=${dateFrom}&dateTo=${dateTo}`;
+  return salesApiPeriodLink(monthId, monthId);
+}
+
+/** The request for a run of whole months — one saved page then covers all of them. */
+export function salesApiPeriodLink(fromMonth: string, toMonth: string): string {
+  return `${SALES_API_URL}?dateFrom=${monthRange(fromMonth).dateFrom}&dateTo=${monthRange(toMonth).dateTo}`;
 }
 
 export class SyncError extends Error {
@@ -144,6 +148,55 @@ export function itemsFromFile(data: unknown): Api1cItem[] | null {
     (it) => it !== null && typeof it === "object" && typeof (it as Api1cItem).Дата === "string" && "Количество" in it
   );
   return valid ? (items as Api1cItem[]) : null;
+}
+
+/** "2026-09-01", "2026-09-01T00:00:00" or "01.09.2026" → "2026-09-01"; null for anything else. */
+function isoDay(value: unknown): string | null {
+  const s = String(value ?? "").trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const ru = s.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+  return ru ? `${ru[3]}-${ru[2]}-${ru[1]}` : null;
+}
+
+export interface SavedSales {
+  items: Api1cItem[];
+  /**
+   * The days the file covers: the response's own dateFrom/dateTo (`declared`),
+   * else its first and last sale. Null for a bare, empty list.
+   */
+  period: { dateFrom: string; dateTo: string; declared: boolean } | null;
+}
+
+/** A 1C response saved from the browser, with the period it covers. Null when the file is something else. */
+export function salesFromFile(data: unknown): SavedSales | null {
+  const items = itemsFromFile(data);
+  if (!items) return null;
+  const response = Array.isArray(data) ? null : (data as { dateFrom?: unknown; dateTo?: unknown });
+  const from = isoDay(response?.dateFrom);
+  const to = isoDay(response?.dateTo);
+  if (from && to && from <= to) return { items, period: { dateFrom: from, dateTo: to, declared: true } };
+  const days = items
+    .map((it) => isoDay(it.Дата))
+    .filter((d): d is string => d !== null)
+    .sort();
+  return {
+    items,
+    period: days.length ? { dateFrom: days[0], dateTo: days[days.length - 1], declared: false } : null,
+  };
+}
+
+const nextMonthId = (id: string) => {
+  const [y, m] = id.split("-").map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+};
+
+/** The whole months between two days: a month cut at either end is left out. */
+export function monthsCovered(dateFrom: string, dateTo: string): string[] {
+  const out: string[] = [];
+  let m = dateFrom.slice(8, 10) === "01" ? dateFrom.slice(0, 7) : nextMonthId(dateFrom.slice(0, 7));
+  for (; m <= dateTo.slice(0, 7); m = nextMonthId(m)) if (monthRange(m).dateTo <= dateTo) out.push(m);
+  return out;
 }
 
 /** A saved page read as JSON — also when the browser wrapped it in HTML. */
@@ -319,6 +372,8 @@ export interface ReconcileReport {
   months: ReconcileMonthRow[];
   // SKUs outside the approved range — excluded on BOTH sides, listed for transparency
   unknownSkus: Array<{ code: string; name: string; qty: number }>;
+  /** app months with sales that the period does not cover in full — not compared */
+  notCovered: string[];
 }
 
 // Batch replace: every loaded month is re-synced from 1C in one operation
@@ -336,6 +391,7 @@ export interface BatchSyncReport {
   dateTo: string;
   months: BatchSyncMonthRow[];
   skipped: string[]; // app months with data but nothing from 1C — left untouched
+  notCovered: string[]; // app months with data the period does not cover in full — left untouched
   unknownSkus: Array<{ code: string; name: string; qty: number }>;
   fallbackClients: Array<{ client: string; qty: number }>;
 }

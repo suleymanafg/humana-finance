@@ -4,26 +4,62 @@
 // Credentials are typed in at load time and sent to our server route only
 // (the browser never talks to 1C directly); the server passes them through to
 // 1C and forgets them. Preview first, then an explicit full-snapshot Apply.
-// When the server cannot reach 1C, the month's link opened in the browser and
-// saved as a file goes through the same preview and Apply.
+// The app's server cannot reach 1C (it answers only Uzbekistan), so a link
+// opened in the browser and saved as a file does the same: a file for the
+// month gives its preview and Apply; a file for all months gives the
+// reconciliation, «Заменить все месяцы», and any single month.
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import { fmtN } from "@/lib/format";
 import { Badge, Button, Input } from "./ui";
-import { parse1cFile, type BatchSyncReport, type ReconcileReport, type SyncReport } from "@/lib/sync-1c-core";
+import {
+  monthsCovered,
+  parse1cFile,
+  salesFromFile,
+  type BatchSyncReport,
+  type ReconcileReport,
+  type SyncReport,
+} from "@/lib/sync-1c-core";
 
-type SavedFile = { name: string; data: unknown };
+type SavedFile = {
+  name: string;
+  data: unknown;
+  /** the days the file covers, as dd.mm.yyyy */
+  label: string | null;
+  /** the whole months in it */
+  months: string[];
+};
+
+const day = (iso: string) => iso.split("-").reverse().join(".");
+
+/** A saved period runs to megabytes, more than a request may carry: files go gzipped. */
+async function post(payload: Record<string, unknown>): Promise<Response> {
+  const json = JSON.stringify(payload);
+  if (payload.data === undefined || typeof CompressionStream === "undefined")
+    return fetch("/api/sync/1c", { method: "POST", headers: { "Content-Type": "application/json" }, body: json });
+  const gzipped = await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+  return fetch("/api/sync/1c", {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream", "X-Body-Encoding": "gzip" },
+    body: gzipped,
+  });
+}
 
 export default function Sync1cPanel({
   monthId,
   monthName,
   apiLink,
+  periodLink,
+  periodName,
 }: {
   monthId: string;
   monthName: string;
   /** the month's request to 1C, for opening in the browser */
   apiLink: string;
+  /** the request for every month with sales — one saved file then serves them all */
+  periodLink: string;
+  periodName: string;
 }) {
   const { t } = useT();
   const router = useRouter();
@@ -55,15 +91,11 @@ export default function Sync1cPanel({
       setExcelOk(false);
     }
     try {
-      const res = await fetch("/api/sync/1c", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          source
-            ? { mode, monthId, byClientName, data: source.data }
-            : { mode, monthId, login, password, byClientName }
-        ),
-      });
+      const res = await post(
+        source
+          ? { mode, monthId, byClientName, data: source.data }
+          : { mode, monthId, login, password, byClientName }
+      );
       const body = await res.json();
       if (!res.ok) {
         setError(body.error ?? `HTTP ${res.status}`);
@@ -86,25 +118,33 @@ export default function Sync1cPanel({
     e.target.value = "";
     if (!picked) return;
     const data = parse1cFile(await picked.text());
-    if (data == null) {
+    const sales = data == null ? null : salesFromFile(data);
+    if (!sales) {
       setError(t("sync1cFileBad"));
       return;
     }
-    const saved = { name: picked.name, data };
+    const { period } = sales;
+    const saved: SavedFile = {
+      name: picked.name,
+      data,
+      label: period ? `${day(period.dateFrom)} – ${day(period.dateTo)}` : null,
+      months: period ? monthsCovered(period.dateFrom, period.dateTo) : [],
+    };
     setFile(saved);
-    await run("preview", saved);
+    setReport(null);
+    setReconcile(null);
+    setBatch(null);
+    // a file for several months is for the reconciliation; one month goes straight to its preview
+    if (saved.months.length > 1) await runReconcile(saved);
+    else await run("preview", saved);
   }
 
-  async function runReconcile() {
+  async function runReconcile(source: SavedFile | null) {
     setReconciling(true);
     setError(null);
     setReconcile(null);
     try {
-      const res = await fetch("/api/sync/1c", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "reconcile", login, password }),
-      });
+      const res = await post(source ? { mode: "reconcile", data: source.data } : { mode: "reconcile", login, password });
       const body = await res.json();
       if (!res.ok) {
         setError(body.error ?? `HTTP ${res.status}`);
@@ -118,15 +158,15 @@ export default function Sync1cPanel({
     }
   }
 
-  async function runBatch() {
+  async function runBatch(source: SavedFile | null) {
     setBatching(true);
     setError(null);
     try {
-      const res = await fetch("/api/sync/1c", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "commit-all", login, password, byClientName }),
-      });
+      const res = await post(
+        source
+          ? { mode: "commit-all", byClientName, data: source.data }
+          : { mode: "commit-all", login, password, byClientName }
+      );
       const body = await res.json();
       if (!res.ok) {
         setError(body.error ?? `HTTP ${res.status}`);
@@ -189,7 +229,10 @@ export default function Sync1cPanel({
         </Button>
         <Button
           variant="secondary"
-          onClick={runReconcile}
+          onClick={() => {
+            setFile(null);
+            runReconcile(null);
+          }}
           disabled={busy || reconciling || !login || !password}
         >
           {reconciling ? t("sync1cReconciling") : t("sync1cReconcile")}
@@ -210,23 +253,46 @@ export default function Sync1cPanel({
       {/* when the server cannot reach 1C: the browser can */}
       <div className="mt-4 rounded-lg border border-border bg-background px-4 py-3">
         <p className="text-[12.5px] text-muted">{t("sync1cFileHint")}</p>
-        <a
-          href={apiLink}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-1 block break-all text-[12.5px] text-accent underline-offset-2 hover:underline"
-        >
-          {apiLink}
-        </a>
+        {[
+          { label: `${t("sync1cLinkMonth")} · ${monthName}`, href: apiLink },
+          { label: `${t("sync1cLinkAll")} · ${periodName}`, href: periodLink },
+        ].map((l) => (
+          <div key={l.href} className="mt-1.5 text-[12.5px]">
+            <span className="text-muted">{l.label}: </span>
+            <a
+              href={l.href}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all text-accent underline-offset-2 hover:underline"
+            >
+              {l.href}
+            </a>
+          </div>
+        ))}
         <div className="mt-2.5 flex flex-wrap items-center gap-3">
           <input ref={fileInput} type="file" accept=".json,.txt,.html,application/json,text/plain" hidden onChange={chooseFile} />
-          <Button variant="secondary" onClick={() => fileInput.current?.click()} disabled={busy || reconciling}>
-            {busy && file && !report ? t("sync1cFileReading") : t("sync1cFileChoose")}
+          <Button
+            variant="secondary"
+            onClick={() => fileInput.current?.click()}
+            disabled={busy || reconciling || batching}
+          >
+            {(busy || reconciling) && file && !report && !reconcile ? t("sync1cFileReading") : t("sync1cFileChoose")}
           </Button>
           {file && (
             <span className="text-[12.5px] text-muted">
               {t("sync1cFileFrom")}: {file.name}
+              {file.label && ` · ${file.label}`}
+              {file.months.length > 1 && ` · ${file.months.length} ${t("sync1cFileMonths")}`}
             </span>
+          )}
+          {file && file.months.length > 1 && (
+            <Button
+              variant="secondary"
+              onClick={() => run("preview", file)}
+              disabled={busy || reconciling || batching}
+            >
+              {t("sync1cFileShowMonth")} · {monthName}
+            </Button>
           )}
         </div>
       </div>
@@ -474,6 +540,11 @@ export default function Sync1cPanel({
               {reconcile.unknownSkus.map((u) => `${u.name} (${fmtN(u.qty)})`).join("; ")}
             </div>
           )}
+          {reconcile.notCovered.length > 0 && (
+            <div className="text-[12px] text-muted">
+              {t("sync1cNotCovered")}: {reconcile.notCovered.join(", ")}
+            </div>
+          )}
 
           {/* batch replace — deliberately only offered after seeing the diff */}
           <div className="space-y-3 border-t border-border pt-4">
@@ -489,8 +560,8 @@ export default function Sync1cPanel({
             </label>
             <Button
               variant="danger"
-              onClick={runBatch}
-              disabled={batching || busy || !batchOk || !login || !password}
+              onClick={() => runBatch(file)}
+              disabled={batching || busy || !batchOk || (!file && (!login || !password))}
             >
               {batching ? t("sync1cReplacing") : t("sync1cReplaceAll")}
             </Button>
@@ -540,6 +611,11 @@ export default function Sync1cPanel({
           {batch.skipped.length > 0 && (
             <div className="text-[12px] text-muted">
               {t("sync1cSkippedMonths")}: {batch.skipped.join(", ")}
+            </div>
+          )}
+          {batch.notCovered.length > 0 && (
+            <div className="text-[12px] text-muted">
+              {t("sync1cNotCovered")}: {batch.notCovered.join(", ")}
             </div>
           )}
           {batch.unknownSkus.length > 0 && (

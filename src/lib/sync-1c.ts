@@ -4,6 +4,7 @@
 import { prisma } from "./db";
 import {
   classifyChannel,
+  monthsCovered,
   norm,
   type Api1cItem,
   type BatchSyncMonthRow,
@@ -323,19 +324,23 @@ export async function commitSync(
  * Quantity-only reconciliation of every month that has sales in the app
  * against the same period in 1C. Matched SKUs are compared per month;
  * out-of-range SKUs (excluded on both sides by design) are listed separately.
- * Read-only.
+ * Only months the period covers in full are compared — a saved file may start
+ * or end mid-month. Read-only.
  */
 export async function buildReconcile(
   items: Api1cItem[],
   dateFrom: string,
   dateTo: string
 ): Promise<ReconcileReport> {
-  const [products, sales, monthRows] = await Promise.all([
+  const [products, allSales, monthRows] = await Promise.all([
     prisma.product.findMany({ where: { active: true } }),
     prisma.sale.findMany({ select: { monthId: true, productId: true, qty: true } }),
     prisma.month.findMany({ select: { id: true } }),
   ]);
-  const validMonths = new Set(monthRows.map((m) => m.id));
+  const covered = new Set(monthsCovered(dateFrom, dateTo));
+  const validMonths = new Set(monthRows.map((m) => m.id).filter((id) => covered.has(id)));
+  const sales = allSales.filter((s) => validMonths.has(s.monthId));
+  const notCovered = [...new Set(allSales.map((s) => s.monthId))].filter((id) => !validMonths.has(id)).sort();
 
   const byCode = new Map<string, string>();
   const byArticle = new Map<string, string>();
@@ -406,22 +411,29 @@ export async function buildReconcile(
     fetchedTotal: items.length,
     months,
     unknownSkus: [...unknownSkus.values()].sort((x, y) => Math.abs(y.qty) - Math.abs(x.qty)),
+    notCovered,
   };
 }
 
 /**
  * Batch replace: split the fetched range by month and run the normal
  * build + commit for each month that has 1C data. Months with app data but
- * no 1C rows are left untouched and reported as skipped. Sequential on
- * purpose — codes learned in an early month are visible to later ones.
+ * no 1C rows are left untouched and reported as skipped, and so are months the
+ * period does not cover in full (a saved file may start or end mid-month).
+ * Sequential on purpose — codes learned in an early month are visible to
+ * later ones.
  */
 export async function commitAllMonths(
   items: Api1cItem[],
   byClientName: boolean,
-  username: string
+  username: string,
+  dateFrom: string,
+  dateTo: string,
+  source: "1c" | "file" = "1c"
 ): Promise<Omit<BatchSyncReport, "dateFrom" | "dateTo">> {
   const monthRows = await prisma.month.findMany({ select: { id: true } });
-  const validMonths = new Set(monthRows.map((m) => m.id));
+  const covered = new Set(monthsCovered(dateFrom, dateTo));
+  const validMonths = new Set(monthRows.map((m) => m.id).filter((id) => covered.has(id)));
   const byMonth = new Map<string, Api1cItem[]>();
   for (const it of items) {
     const monthId = String(it.Дата ?? "").slice(0, 7);
@@ -431,8 +443,9 @@ export async function commitAllMonths(
     byMonth.set(monthId, list);
   }
 
-  const appMonths = await prisma.sale.groupBy({ by: ["monthId"] });
-  const skipped = appMonths.map((m) => m.monthId).filter((id) => !byMonth.has(id)).sort();
+  const appMonths = (await prisma.sale.groupBy({ by: ["monthId"] })).map((m) => m.monthId);
+  const notCovered = appMonths.filter((id) => !validMonths.has(id)).sort();
+  const skipped = appMonths.filter((id) => validMonths.has(id) && !byMonth.has(id)).sort();
 
   const months: BatchSyncMonthRow[] = [];
   const unknownAgg = new Map<string, { code: string; name: string; qty: number }>();
@@ -447,6 +460,7 @@ export async function commitAllMonths(
       learned,
       {
         batch: true,
+        source,
         fetched: report.fetched,
         totalQty: qtyNew,
         replacedRows: report.current.rows,
@@ -474,6 +488,7 @@ export async function commitAllMonths(
   return {
     months,
     skipped,
+    notCovered,
     unknownSkus: [...unknownAgg.values()].sort((a, b) => Math.abs(b.qty) - Math.abs(a.qty)),
     fallbackClients: [...fallbackAgg.values()].sort((a, b) => b.qty - a.qty),
   };
