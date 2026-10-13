@@ -1,8 +1,8 @@
 "use client";
 
-// Frame shared by the five supply-planning screens (owner's design canvas):
-// the scoped palette, a sticky section header carrying the one fact every
-// screen repeats — the next IBP deadline — and the tab strip.
+// Frame shared by the supply-planning screens (owner's design canvas): the
+// scoped palette, a sticky section header carrying the one fact every screen
+// repeats — the next IBP deadline — and the tab strip.
 // The app's own chrome (sidebar, user menu, RU/EN switch) stays where it is,
 // so the canvas header drops its duplicate logo and language toggle.
 import Link from "next/link";
@@ -12,11 +12,8 @@ import { daysLeftLong, dstr } from "@/lib/planning/ui-format";
 import type { OrderSlot } from "@/lib/planning/compute";
 
 const TABS = [
-  { href: "/planning/decisions", ru: "Решения", en: "Decisions" },
-  { href: "/planning/inventory", ru: "Запасы", en: "Inventory" },
-  { href: "/planning/order", ru: "Заказ", en: "Order" },
-  { href: "/planning/plan", ru: "План (IBP)", en: "Plan (IBP)" },
-  { href: "/planning/scenarios", ru: "Сценарии", en: "Scenarios" },
+  { href: "/planning", ru: "Что делать", en: "What to do" },
+  { href: "/planning/orders", ru: "Заказы IBP", en: "IBP orders" },
 ];
 
 export default function PlanningShell({

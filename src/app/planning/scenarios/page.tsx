@@ -1,30 +1,6 @@
-import { loadPlanning } from "@/lib/planning/data";
-import { monthKeyOf, nextOrderSlot } from "@/lib/planning/compute";
-import { getSession } from "@/lib/auth";
-import PlanningShell from "@/components/PlanningShell";
-import ScenariosView from "@/components/ScenariosView";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
-export default async function ScenariosPage() {
-  const data = await loadPlanning();
-  const session = await getSession();
-  const slot = nextOrderSlot(new Date(), data.settings);
-  const startMonth = monthKeyOf(new Date());
-  return (
-    <PlanningShell slot={slot}>
-      <ScenariosView
-        skus={data.skus}
-        situations={data.situations}
-        recruitment={data.recruitment}
-        cohortParams={data.cohortParams}
-        settings={data.settings}
-        slot={slot}
-        startMonth={startMonth}
-        eurRate={data.eurRate}
-        purchases={data.purchases}
-        isAdmin={session?.role === "ADMIN"}
-      />
-    </PlanningShell>
-  );
+// The section was rebuilt around two decisions on one screen; old links land there.
+export default function OldPlanningPage() {
+  redirect("/planning");
 }

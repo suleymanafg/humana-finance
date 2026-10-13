@@ -1,6 +1,8 @@
-// Excel export of one ship-month's committed purchases, in the shape
-// Germany's order form expects: item #, description, pcs, cartons, pallets,
-// gross/net weight, EUR value.
+// Excel export in the shape Germany's order form expects: item #,
+// description, pcs, cartons, pallets, gross/net weight, EUR value. Either one
+// ship-month's saved IBP order (?ship=YYYY-MM), or the lines the planning page
+// recommends (?ship=YYYY-MM|pickup&lines=skuId:qty,…) — the pickup request
+// for DMK, or an IBP order before it is saved.
 import { type NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
@@ -12,13 +14,25 @@ export async function GET(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const ship = request.nextUrl.searchParams.get("ship");
-  if (!ship || !/^\d{4}-(0[1-9]|1[0-2])$/.test(ship)) {
+  const pickup = ship === "pickup";
+  if (!ship || (!pickup && !/^\d{4}-(0[1-9]|1[0-2])$/.test(ship))) {
     return NextResponse.json({ error: "ship month required" }, { status: 400 });
   }
-  const purchases = await prisma.planningPurchase.findMany({
-    where: { shipMonth: ship, qty: { gt: 0 } },
-    include: { sku: true },
-  });
+  const given = (request.nextUrl.searchParams.get("lines") ?? "")
+    .split(",")
+    .map((x) => x.split(":"))
+    .filter(([id, q]) => id && Number(q) > 0)
+    .map(([skuId, q]) => ({ skuId, qty: Math.round(Number(q)) }));
+  if (pickup && given.length === 0) return NextResponse.json({ error: "lines required" }, { status: 400 });
+  const purchases =
+    given.length > 0
+      ? await prisma.planningSku
+          .findMany({ where: { id: { in: given.map((g) => g.skuId) } } })
+          .then((skus) => skus.map((sku) => ({ sku, qty: given.find((g) => g.skuId === sku.id)!.qty })))
+      : await prisma.planningPurchase.findMany({
+          where: { shipMonth: ship, qty: { gt: 0 } },
+          include: { sku: true },
+        });
   if (purchases.length === 0) return NextResponse.json({ error: "no purchases for this month" }, { status: 404 });
 
   const rows: Array<Array<string | number | null>> = [];
@@ -36,12 +50,15 @@ export async function GET(request: NextRequest) {
   }
   rows.push(["", "TOTAL", tUnits, tCartons, tPallets, tGross, tNet, null, tEur]);
 
-  const label = `sales ${ship.slice(5)}-${ship.slice(0, 4)}`;
+  const today = new Date().toISOString().slice(0, 10);
+  const label = pickup ? `pickup ${today}` : `sales ${ship.slice(5)}-${ship.slice(0, 4)}`;
   const wb = buildWorkbook([
     {
       name: "Order",
       title: `Humana order — ${label}`,
-      subtitle: `ship month: ${ship} · arrival: ~1 month later`,
+      subtitle: pickup
+        ? "call-off from open orders · loading this week"
+        : `ship month: ${ship} · arrival: ~1 month later`,
       columns: [
         { header: "Item #", width: 10 },
         { header: "Item description", width: 38 },
