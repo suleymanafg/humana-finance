@@ -9,7 +9,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
-import { addMonths } from "@/lib/planning/compute";
+import { addMonths, BACKLOG_EPOCH, openOrdersAt } from "@/lib/planning/compute";
 import { dstr, monthLong, monthShort, pn, splitPack } from "@/lib/planning/ui-format";
 import type {
   OrderSlot,
@@ -46,9 +46,6 @@ export interface PlanningViewProps {
   pickups: Record<string, Record<string, number>>; // skuId -> DISPATCH month -> units picked up
   isAdmin: boolean;
 }
-
-// cumulative Open Orders start here — the owner confirmed 2025 nets to zero
-const BACKLOG_EPOCH = "2026-01";
 
 /** A month's place in the IBP cycle, as the canvas colours it. */
 type MonthState = "history" | "closed" | "deadline" | "open";
@@ -181,17 +178,8 @@ export default function PlanningView({
     }
   }
 
-  // Open Orders — ONE rule for every month (the owner's ruling): cumulative
-  // Partner Order − Partner Purchase (pickups at dispatch) since the epoch.
-  // Positive = ordered but not collected; negative = collected beyond orders.
-  function cumOpenAt(skuId: string, m: string): number {
-    let cum = 0;
-    for (let t = BACKLOG_EPOCH; t <= m; t = addMonths(t, 1)) {
-      cum += purchases[skuId]?.[t] ?? 0;
-      cum -= pickups[skuId]?.[t] ?? 0;
-    }
-    return cum;
-  }
+  // Open Orders — the same rule supply planning books as pipeline
+  const cumOpenAt = (skuId: string, m: string) => openOrdersAt(purchases[skuId], pickups[skuId], m);
 
   // per-SKU numbers for the selected month, live with pending edits
   const rows = active.map((sku) => {

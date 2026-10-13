@@ -31,6 +31,7 @@ This app is the financial + supply-planning system for **Humana Uzbekistan**: Tu
 - Orders are entered into Humana's **IBP system by the 20th of each month** = de facto order for the ship month 4 months later; +~1 month transit +1 week customs → sellable ~5 months after the deadline. Committed purchases (PlanningPurchase, per SKU per SHIP month) are the pipeline; contracts from order forms are historical seeds only.
 - Trucks must be filled **≥98%** (transport safety), ~33 pallets / ~21.5t. Pallet densities: 400g SKUs 624/pal, 800g 384/pal, AC 864, HN 1160 (PlanningSku logistics from the Order Form import).
 - Owner policy: ≥4 months of stock cover at all times (planning.minCoverMonths setting).
+- Planning's stock on hand is the Stock page's figure (engine: TI's own units + Fargo's latest count rolled forward), to date in the current month. Its pipeline is TRANSIT trucks, Open Orders (purchases by ship month − pickups by dispatch month since 2026-01, the Plan page's rule) and purchases for later ship months. Every PlanningSku needs its `productId` link or it shows no stock, sales or trucks — `prisma/link-planning-skus.ts` restores the links (dry run; `--commit` writes).
 - Germany renumbered articles; PlanningSku.altArticles maps old→new (70836→70987 etc.).
 
 ## Operational conventions

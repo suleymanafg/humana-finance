@@ -23,7 +23,10 @@ export interface PlanningSkuIn {
 export interface SkuSituation {
   skuId: string;
   currentStock: number; // units, as of stockAsOf
-  stockAsOf: string | null; // monthKey of the count the stock figure comes from
+  stockAsOf: string | null; // monthKey the stock figure stands at (to date, in the current month)
+  /** units already sold in the stock month: the stock figure is net of them,
+   *  so that month's demand only counts what is still to be sold */
+  soldToDate?: { monthKey: string; qty: number };
   forecast: Record<string, number>; // monthKey -> manual forecast qty (IBP Partner Forecast)
   model?: Record<string, number>; // monthKey -> cohort-model demand (advisory + fallback)
   actualSales: Record<string, number>; // monthKey -> actual sold qty (promo folded in)
@@ -80,6 +83,29 @@ export function nextOrderSlot(today: Date, s: PlanningSettings = DEFAULT_SETTING
   return { deadline: deadlineStr, daysLeft, orderMonth, shipMonth, arrivalMonth: addMonths(shipMonth, 1) };
 }
 
+// ── open orders ──────────────────────────────────────────────────
+// cumulative Open Orders start here — the owner confirmed 2025 nets to zero
+export const BACKLOG_EPOCH = "2026-01";
+
+/**
+ * Open Orders at the end of `month` — ONE rule for every month (the owner's
+ * ruling): everything ordered (committed purchases by ship month) minus
+ * everything collected (pickups by dispatch month) since the epoch. Positive =
+ * ordered but not collected; negative = collected beyond orders.
+ */
+export function openOrdersAt(
+  purchases: Record<string, number> | undefined,
+  pickups: Record<string, number> | undefined,
+  month: string
+): number {
+  let cum = 0;
+  for (let t = BACKLOG_EPOCH; t <= month; t = addMonths(t, 1)) {
+    cum += purchases?.[t] ?? 0;
+    cum -= pickups?.[t] ?? 0;
+  }
+  return cum;
+}
+
 // ── demand: forecast first, run-rate fallback ────────────────────
 /** Average of the last `n` months of actual sales strictly before `fromMonth`. */
 export function runRate(actual: Record<string, number>, fromMonth: string, n = 3): number {
@@ -122,23 +148,29 @@ export interface SkuProjection {
   riskMonth: string | null; // first month cover < minCover
 }
 
-/** Cover of `stock` looking forward from (exclusive) `fromMonth`. */
-function coverOf(stock: number, months: string[], demandOf: (m: string) => number): number {
+/** Cover of `stock` looking forward from (exclusive) `fromMonth`; `share` is
+ *  how much of a month is still ahead (below 1 only for the month in progress). */
+function coverOf(
+  stock: number,
+  months: string[],
+  demandOf: (m: string) => number,
+  share: (m: string) => number = () => 1
+): number {
   if (stock <= 0) return 0;
   let remaining = stock;
   let cover = 0;
   for (const m of months) {
     const d = demandOf(m);
     if (d <= 0) {
-      cover += 1; // a zero-demand month is a free month of cover
+      cover += share(m); // a zero-demand month is a free month of cover
       if (cover >= 24) return 24;
       continue;
     }
     if (remaining >= d) {
       remaining -= d;
-      cover += 1;
+      cover += share(m);
     } else {
-      cover += Math.max(0, remaining / d);
+      cover += share(m) * Math.max(0, remaining / d);
       return cover;
     }
     if (cover >= 24) return 24;
@@ -154,8 +186,18 @@ export function projectSku(
 ): SkuProjection {
   const rr = runRate(sit.actualSales, startMonth);
   const months = Array.from({ length: horizonMonths }, (_, i) => addMonths(startMonth, i));
-  // demand lookup used both for the ledger and for cover
-  const demandOf = (m: string) => demandFor(sit, m, rr).qty;
+  // demand still to come: the stock month's sales so far are already out of stock
+  const sold = sit.soldToDate;
+  const demandOf = (m: string) => {
+    const d = demandFor(sit, m, rr).qty;
+    return sold && m === sold.monthKey ? Math.max(0, d - sold.qty) : d;
+  };
+  // the month in progress counts for the part of its demand still to come
+  const share = (m: string) => {
+    if (!sold || m !== sold.monthKey) return 1;
+    const full = demandFor(sit, m, rr).qty;
+    return full > 0 ? Math.max(0, full - sold.qty) / full : 1;
+  };
 
   const cells: LedgerCell[] = [];
   let stock = sit.currentStock;
@@ -163,7 +205,8 @@ export function projectSku(
   let riskMonth: string | null = null;
 
   for (const [i, m] of months.entries()) {
-    const { qty: demand, fromForecast } = demandFor(sit, m, rr);
+    const { fromForecast } = demandFor(sit, m, rr);
+    const demand = demandOf(m);
     const arrivals = sit.arrivals[m] ?? 0;
     stock = stock + arrivals - demand;
     const forward = months.slice(i + 1);
@@ -173,7 +216,8 @@ export function projectSku(
     cells.push({ monthKey: m, demand, fromForecast, arrivals, closing: stock, coverMonths });
   }
 
-  const demands = cells.map((c) => c.demand).filter((d) => d > 0);
+  // the average is a monthly rate: a part-month left over would understate it
+  const demands = cells.filter((c) => c.monthKey !== sold?.monthKey).map((c) => c.demand).filter((d) => d > 0);
   const avg = demands.length > 0 ? demands.reduce((s, d) => s + d, 0) / demands.length : 0;
   return {
     skuId: sit.skuId,
@@ -182,7 +226,7 @@ export function projectSku(
     runRatePerMonth: rr,
     avgDemandPerMonth: avg,
     cells,
-    currentCover: coverOf(sit.currentStock, months, demandOf),
+    currentCover: coverOf(sit.currentStock, months, demandOf, share),
     stockoutMonth,
     riskMonth,
   };

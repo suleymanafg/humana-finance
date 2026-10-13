@@ -1,12 +1,16 @@
 // Assembles everything the planning pages need from the DB. Promo-variant
 // sales and stock are folded into their regular product, since Germany only
-// knows the physical SKU. Supply pipeline = committed purchases (закуп), the
-// de facto IBP orders; demand = manual forecast, advised by the cohort model.
+// knows the physical SKU. Stock on hand is the books' figure (the Stock page):
+// TI's own units plus Fargo's. Supply pipeline = trucks on the road, Open
+// Orders (ordered, not yet collected) and committed purchases (закуп) for
+// later ship months; demand = manual forecast, advised by the cohort model.
 import { prisma } from "@/lib/db";
+import { getComputed } from "@/lib/data";
 import {
   addMonths,
   DEFAULT_SETTINGS,
   monthKeyOf,
+  openOrdersAt,
   type PlanningSettings,
   type PlanningSkuIn,
   type SkuSituation,
@@ -53,7 +57,7 @@ export function shortSkuName(name: string): string {
 }
 
 export async function loadPlanning(): Promise<PlanningData> {
-  const [skus, forecasts, purchases, recruitmentRows, settings, products, sales, stockCounts, shipments] =
+  const [skus, forecasts, purchases, recruitmentRows, settings, products, sales, shipments, { computed }] =
     await Promise.all([
       prisma.planningSku.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.planningForecast.findMany(),
@@ -62,12 +66,12 @@ export async function loadPlanning(): Promise<PlanningData> {
       prisma.setting.findMany({ where: { key: { startsWith: "planning." } } }),
       prisma.product.findMany({ select: { id: true, regularProductId: true, isPromo: true } }),
       prisma.sale.groupBy({ by: ["monthId", "productId"], _sum: { qty: true } }),
-      prisma.stockCount.findMany({ select: { monthId: true, productId: true, qty: true } }),
       prisma.shipment.findMany({
         where: { deletedAt: null },
         orderBy: { createdAt: "desc" },
         include: { lines: { where: { deletedAt: null } } },
       }),
+      getComputed(),
     ]);
 
   const settingOf = (key: string, fallback: number): number => {
@@ -120,28 +124,33 @@ export async function loadPlanning(): Promise<PlanningData> {
     sit.actualSales[row.monthId] = (sit.actualSales[row.monthId] ?? 0) + (row._sum.qty ?? 0);
   }
 
-  // current stock = the latest month that has any stock counts at all
-  const latestStockMonth = stockCounts.reduce<string | null>(
-    (max, r) => (r.qty !== 0 && (!max || r.monthId > max) ? r.monthId : max),
-    null
-  );
-  if (latestStockMonth) {
-    for (const r of stockCounts) {
-      if (r.monthId !== latestStockMonth) continue;
-      const regular = regularOf.get(r.productId) ?? r.productId;
-      const skuId = skuByProduct.get(regular);
-      if (!skuId) continue;
-      situations[skuId].currentStock += r.qty;
-      situations[skuId].stockAsOf = latestStockMonth;
+  // current stock = the Stock page's figure, as far as the books reach this
+  // month: TI's own units (arrived, not invoiced or written off) plus Fargo's
+  // (its latest count, rolled forward by invoices, sales and write-offs since).
+  // Sales already recorded this month are out of it, so the projection counts
+  // only the rest of the month's demand.
+  const thisMonth = monthKeyOf(new Date());
+  const stockMonth = computed.monthIds.filter((m) => m <= thisMonth).at(-1) ?? null;
+  if (stockMonth) {
+    for (const [productId, fifo] of Object.entries(computed.fifo)) {
+      const pos = fifo.months[stockMonth];
+      const skuId = skuByProduct.get(regularOf.get(productId) ?? productId);
+      if (!pos || !skuId) continue;
+      situations[skuId].currentStock += pos.tiStockUnits + pos.fargoStockUnits;
+    }
+    for (const sit of Object.values(situations)) {
+      sit.currentStock = Math.max(0, sit.currentStock);
+      sit.stockAsOf = stockMonth;
+      const sold = sit.actualSales[stockMonth] ?? 0;
+      if (stockMonth === thisMonth && sold > 0) sit.soldToDate = { monthKey: stockMonth, qty: sold };
     }
   }
 
   // committed purchases: supply pipeline; arrival ≈ ship + 1 month.
   // Only STRICTLY future ship months project arrivals — commitments at the
   // current month or earlier are either delivered (stock/transit) or still
-  // undelivered, and the undelivered part is the live backlog booked below.
+  // open, and the open part is the Open Orders booked below.
   const purchasesBySku: Record<string, Record<string, number>> = {};
-  const thisMonth = monthKeyOf(new Date());
   for (const p of purchases) {
     (purchasesBySku[p.skuId] ??= {})[p.shipMonth] = p.qty;
     const sit = situations[p.skuId];
@@ -158,19 +167,7 @@ export async function loadPlanning(): Promise<PlanningData> {
   const actualArrivals: Record<string, Record<string, number>> = {};
   const pickups: Record<string, Record<string, number>> = {};
   const transit: TransitShipment[] = [];
-  // units shipped AFTER the last IBP sync — every such truck reduces the
-  // synced Open Orders backlog (DMK dispatches backlog first)
   const ibpSyncedAt = settings.find((s) => s.key === "planning.ibpSyncedAt")?.value ?? null;
-  const shippedSinceSync: Record<string, number> = {};
-  for (const sh of shipments) {
-    if (ibpSyncedAt && sh.createdAt.toISOString().slice(0, 10) > ibpSyncedAt) {
-      for (const l of sh.lines) {
-        const regular = regularOf.get(l.productId) ?? l.productId;
-        const skuId = skuByProduct.get(regular);
-        if (skuId) shippedSinceSync[skuId] = (shippedSinceSync[skuId] ?? 0) + l.qty;
-      }
-    }
-  }
   for (const sh of shipments) {
     if (sh.status === "TRANSIT") {
       const etaMonth = sh.etaDate ? monthKeyOf(sh.etaDate) : addMonths(thisMonth, 1);
@@ -206,16 +203,16 @@ export async function loadPlanning(): Promise<PlanningData> {
     }
   }
 
-  // live backlog = synced Open Orders − everything shipped since the sync
-  // (clamped at 0). Falls as pickup trucks are created; re-anchors to DMK's
-  // truth at every re-sync. Booked as supply arriving next month so
-  // recommendations never re-order what is already committed — and since a
-  // pickup truck reduces it the moment it exists, its transit units are
-  // never counted twice.
+  // live backlog = Open Orders as the Plan page shows them: everything ordered
+  // for ship months up to this one, less everything collected (clamped at 0).
+  // It updates with every purchase entered and every truck created. Booked as
+  // supply arriving next month so recommendations never re-order what is
+  // already committed — and since a pickup truck reduces it the moment it
+  // exists, its transit units are never counted twice.
   const backlogMonth = addMonths(thisMonth, 1);
   const backlogLive: Record<string, number> = {};
   for (const s of skus) {
-    const live = Math.max(0, s.openOrderQty - (shippedSinceSync[s.id] ?? 0));
+    const live = Math.max(0, openOrdersAt(purchasesBySku[s.id], pickups[s.id], thisMonth));
     backlogLive[s.id] = live;
     if (live > 0) {
       const sit = situations[s.id];

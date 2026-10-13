@@ -3,6 +3,7 @@ import {
   addMonths,
   demandFor,
   nextOrderSlot,
+  openOrdersAt,
   projectSku,
   recommendQty,
   runRate,
@@ -86,6 +87,33 @@ describe("projection", () => {
     const p = projectSku(baseSit, "2026-08", 12);
     // stock 10000, demand 2000/mo -> current cover 5
     expect(p.currentCover).toBeCloseTo(5, 5);
+  });
+  it("counts only the rest of the month when stock is net of sales to date", () => {
+    const sit: SkuSituation = { ...baseSit, currentStock: 8500, soldToDate: { monthKey: "2026-09", qty: 1500 } };
+    const p = projectSku(sit, "2026-09", 6);
+    // Sep: 2000 forecast, 1500 already sold -> 500 still to go
+    expect(p.cells[0].demand).toBe(500);
+    expect(p.cells[0].closing).toBe(8000);
+    expect(p.cells[1].closing).toBe(6000);
+    expect(p.currentCover).toBeCloseTo(4.25, 5); // 500 + 4 × 2000 = 8500
+    expect(p.avgDemandPerMonth).toBe(2000); // the part month is not a monthly rate
+  });
+  it("sells more than forecast to date: nothing left of the month", () => {
+    const sit: SkuSituation = { ...baseSit, soldToDate: { monthKey: "2026-09", qty: 2600 } };
+    const p = projectSku(sit, "2026-09", 3);
+    expect(p.cells[0].demand).toBe(0);
+    expect(p.cells[0].closing).toBe(10_000);
+  });
+});
+
+describe("open orders", () => {
+  it("is ordered by ship month less collected by dispatch month, since the epoch", () => {
+    const ordered = { "2025-12": 9000, "2026-01": 10_000, "2026-03": 8000, "2026-11": 5000 };
+    const collected = { "2025-12": 4000, "2026-02": 9000, "2026-04": 6000 };
+    expect(openOrdersAt(ordered, collected, "2026-01")).toBe(10_000); // 2025 is outside
+    expect(openOrdersAt(ordered, collected, "2026-03")).toBe(9000);
+    expect(openOrdersAt(ordered, collected, "2026-10")).toBe(3000); // November not yet due
+    expect(openOrdersAt(undefined, { "2026-05": 100 }, "2026-06")).toBe(-100);
   });
 });
 
