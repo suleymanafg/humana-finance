@@ -202,6 +202,76 @@ const registry: Record<string, EntityConfig> = {
     fields: ["key", "value"],
     upsertWhere: (d) => ({ key: d.key }),
   },
+  // distribution handover (/transition) — ADMIN-only, see TRANSITION_ENTITIES
+  trTask: {
+    delegate: () => prisma.trTask,
+    fields: [
+      "stream",
+      "title",
+      "titleEn",
+      "details",
+      "detailsEn",
+      "owner",
+      "status",
+      "priority",
+      "startDate",
+      "dueDate",
+      "doneAt",
+      "dependsOnId",
+      "regionId",
+      "sortOrder",
+      "notes",
+    ],
+    dateFields: ["startDate", "dueDate", "doneAt"],
+    requiredFields: ["stream", "title"],
+    softDelete: true,
+  },
+  trRegion: {
+    delegate: () => prisma.trRegion,
+    fields: ["name", "kind", "route", "partner", "switchDate", "status", "notes", "sortOrder"],
+    dateFields: ["switchDate"],
+    requiredFields: ["name"],
+    softDelete: true,
+  },
+  trOutlet: {
+    delegate: () => prisma.trOutlet,
+    fields: [
+      "name",
+      "regionId",
+      "district",
+      "type",
+      "contact",
+      "phone",
+      "status",
+      "creditDays",
+      "contractNo",
+      "signedDate",
+      "firstOrderDate",
+      "notes",
+    ],
+    dateFields: ["signedDate", "firstOrderDate"],
+    requiredFields: ["name"],
+    softDelete: true,
+  },
+  trStockLot: {
+    delegate: () => prisma.trStockLot,
+    fields: ["productId", "itemName", "batch", "expiry", "qty", "location", "countDate", "preAug2025", "unitPrice", "status", "notes"],
+    dateFields: ["expiry", "countDate"],
+    requiredFields: ["itemName"],
+    softDelete: true,
+  },
+  trDecision: {
+    delegate: () => prisma.trDecision,
+    fields: ["topic", "topicEn", "options", "decision", "status", "dueDate", "decidedAt", "sortOrder", "notes"],
+    dateFields: ["dueDate", "decidedAt"],
+    // topic or topicEn — checked below, as the EN view edits topicEn only
+    softDelete: true,
+  },
+  trTiSale: {
+    delegate: () => prisma.trTiSale,
+    fields: ["monthId", "regionId", "amount", "units", "notes"],
+    requiredFields: ["monthId", "regionId"],
+  },
 };
 
 // Which field ties each figure entity to a month, for the closed-month guard.
@@ -330,6 +400,14 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ entity
       }
       data[f] = v;
     }
+  }
+
+  if (entity === "trDecision" && body.action === "create") {
+    if (!data.topic) data.topic = data.topicEn;
+    if (!data.topic) return NextResponse.json({ error: "topic is required" }, { status: 400 });
+  }
+  if (entity === "trTiSale" && "monthId" in data && !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(data.monthId ?? ""))) {
+    return NextResponse.json({ error: "monthId: формат ГГГГ-ММ / format YYYY-MM" }, { status: 400 });
   }
 
   try {

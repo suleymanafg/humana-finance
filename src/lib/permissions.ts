@@ -24,6 +24,19 @@ export const STRUCTURAL_ENTITIES = new Set([
   "clientChannelMap",
 ]);
 
+/**
+ * The distribution handover (/transition) is the owner's working plan: its
+ * tables are ADMIN-only to read and to write, like supply planning.
+ */
+export const TRANSITION_ENTITIES = new Set([
+  "trTask",
+  "trRegion",
+  "trOutlet",
+  "trStockLot",
+  "trDecision",
+  "trTiSale",
+]);
+
 /** May write figures (OPEX amounts, stock, AR, shipments, balance inputs). */
 export const canEditData = (role?: Role): boolean => role === "ADMIN" || role === "STAFF";
 
@@ -38,14 +51,14 @@ export const canEditStructure = (role?: Role): boolean => role === "ADMIN";
 
 /** May write a specific CRUD entity. */
 export const canWriteEntity = (role: Role | undefined, entity: string): boolean =>
-  STRUCTURAL_ENTITIES.has(entity) ? canEditStructure(role) : canEditData(role);
+  STRUCTURAL_ENTITIES.has(entity) || TRANSITION_ENTITIES.has(entity) ? canEditStructure(role) : canEditData(role);
 
 /**
  * Pages STAFF and VIEWER never see: reference data, integrity checks, the
  * request/collection workflow, and the 1C sync that lives on the close page.
  * Guarded server-side in proxy.ts as well as hidden from the nav.
  */
-export const ADMIN_ONLY_PATHS = ["/settings", "/health", "/requests", "/planning"];
+export const ADMIN_ONLY_PATHS = ["/settings", "/health", "/requests", "/planning", "/transition", "/api/transition"];
 
 export const canAccessPath = (role: Role | undefined, pathname: string): boolean =>
   ADMIN_ONLY_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))

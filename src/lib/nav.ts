@@ -114,6 +114,21 @@ export const SECTIONS: NavSection[] = [
     pages: [{ href: "/planning", label: { ru: "Планирование закупок", en: "Supply planning" } }],
   },
   {
+    key: "transition",
+    label: { ru: "Переход дистрибуции", en: "Distribution handover" },
+    group: "main",
+    adminOnly: true,
+    pages: [
+      { href: "/transition", label: { ru: "Обзор", en: "Overview" } },
+      { href: "/transition/plan", label: { ru: "План", en: "Plan" } },
+      { href: "/transition/regions", label: { ru: "Регионы", en: "Regions" } },
+      { href: "/transition/outlets", label: { ru: "Торговые точки", en: "Outlets" } },
+      { href: "/transition/stock", label: { ru: "Товар и выкуп", en: "Stock and buyback" } },
+      { href: "/transition/sales", label: { ru: "Продажи", en: "Sales" } },
+      { href: "/transition/decisions", label: { ru: "Решения", en: "Decisions" } },
+    ],
+  },
+  {
     key: "admin",
     label: { ru: "Администрирование", en: "Administration" },
     group: "admin",

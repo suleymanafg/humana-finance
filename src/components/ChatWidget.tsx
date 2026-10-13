@@ -7,8 +7,8 @@
 // that is still streaming keeps arriving in the background and is complete
 // when the panel is restored. Closing unmounts; history survives anyway in
 // sessionStorage.
-import { useState } from "react";
-import ChatBody from "./ChatBody";
+import { useEffect, useState } from "react";
+import ChatBody, { CHAT_ASK_EVENT } from "./ChatBody";
 import { IconMinus, IconSparkles, IconX } from "./icons";
 import { useT } from "@/lib/locale-context";
 
@@ -18,6 +18,18 @@ export default function ChatWidget({ configured, canWrite }: { configured: boole
   const { locale, t } = useT();
   const ru = locale === "ru";
   const [mode, setMode] = useState<Mode>("closed");
+  // a page can hand the assistant a question (e.g. the handover guide buttons)
+  const [pending, setPending] = useState<string | null>(null);
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const q = (e as CustomEvent<string>).detail;
+      if (typeof q !== "string" || !q.trim()) return;
+      setPending(q);
+      setMode("open");
+    };
+    window.addEventListener(CHAT_ASK_EVENT, onAsk);
+    return () => window.removeEventListener(CHAT_ASK_EVENT, onAsk);
+  }, []);
 
   return (
     <>
@@ -58,7 +70,7 @@ export default function ChatWidget({ configured, canWrite }: { configured: boole
               <IconX size={15} />
             </button>
           </div>
-          <ChatBody configured={configured} />
+          <ChatBody configured={configured} pending={pending} onPendingTaken={() => setPending(null)} />
         </div>
       )}
 

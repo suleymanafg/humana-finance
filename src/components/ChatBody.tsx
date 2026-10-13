@@ -6,6 +6,7 @@
 // question — the server is stateless. Mounted only client-side (after the
 // launcher is clicked), so reading sessionStorage in the initializer is safe.
 import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Badge } from "./ui";
 import { IconSparkles } from "./icons";
 import { useT } from "@/lib/locale-context";
@@ -18,6 +19,14 @@ interface ChatMsg {
 
 const STORAGE_KEY = "hf-chat";
 
+/** window event a page dispatches to put a question to the assistant: detail = the question */
+export const CHAT_ASK_EVENT = "hf-chat-ask";
+
+/** Ask the floating assistant a question from anywhere on the page. */
+export function askAssistant(question: string) {
+  window.dispatchEvent(new CustomEvent(CHAT_ASK_EVENT, { detail: question }));
+}
+
 const STARTERS: { ru: string; en: string }[] = [
   { ru: "Почему изменилась прибыль в мае 2026?", en: "Why did profit change in May 2026?" },
   { ru: "Что сейчас не так с данными?", en: "What is currently wrong with the data?" },
@@ -25,9 +34,27 @@ const STARTERS: { ru: string; en: string }[] = [
   { ru: "Какой продукт даёт лучшую маржу?", en: "Which product has the best margin?" },
 ];
 
-export default function ChatBody({ configured }: { configured: boolean }) {
+const TRANSITION_STARTERS: { ru: string; en: string }[] = [
+  { ru: "Что мне сделать на этой неделе по переходу?", en: "What should I do this week on the handover?" },
+  { ru: "Какие риски у январского запуска?", en: "What are the risks to the January go-live?" },
+  { ru: "Проверь остатки Fargo для выкупа", en: "Check Fargo's stock for the buyback" },
+  { ru: "Напиши письмо клиентам о смене поставщика", en: "Draft the letter to customers on the change of supplier" },
+];
+
+export default function ChatBody({
+  configured,
+  pending = null,
+  onPendingTaken,
+}: {
+  configured: boolean;
+  /** a question handed over by the page, asked as soon as the panel can */
+  pending?: string | null;
+  onPendingTaken?: () => void;
+}) {
   const { locale } = useT();
   const ru = locale === "ru";
+  const pathname = usePathname();
+  const starters = pathname.startsWith("/transition") ? TRANSITION_STARTERS : STARTERS;
   const [msgs, setMsgs] = useState<ChatMsg[]>(() => {
     try {
       return JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? "[]") as ChatMsg[];
@@ -123,6 +150,17 @@ export default function ChatBody({ configured }: { configured: boolean }) {
     }
   }
 
+  // a question handed over by the page: ask it once the previous answer is in
+  const askRef = useRef(ask);
+  useEffect(() => {
+    askRef.current = ask;
+  });
+  useEffect(() => {
+    if (!pending || busy) return;
+    onPendingTaken?.();
+    void askRef.current(pending);
+  }, [pending, busy, onPendingTaken]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3.5 py-3">
@@ -145,7 +183,7 @@ export default function ChatBody({ configured }: { configured: boolean }) {
                 : "Ask about revenue, margins, expenses, the balance sheet, or data discrepancies."}
             </p>
             <div className="flex flex-col items-stretch gap-1.5 px-2">
-              {STARTERS.map((s) => (
+              {starters.map((s) => (
                 <button
                   key={s.ru}
                   onClick={() => ask(ru ? s.ru : s.en)}
