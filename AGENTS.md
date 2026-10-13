@@ -39,3 +39,10 @@ This app is the financial + supply-planning system for **Humana Uzbekistan**: Tu
 - New financial model (branch `claude/upbeat-knuth-bbh4ug`, Vercel preview): since Oct 2026 the owner enters real data into it, and it runs on the Neon `dev` branch. That branch is no longer a disposable copy — never refresh it from production (the script refuses unless `--force`), never reset it from its parent, and remember that `prisma/import-workbook.ts` replaces everything up to the workbook's report month (rows after it stay as the app has them) — re-import only a workbook the owner gives as the corrected record. The plan is a separate Vercel project for this version with its own database once it has proven itself.
 - Roles: ADMIN (owner) / STAFF (figures only) / VIEWER. Planning section is ADMIN-only.
 - For bulk data the owner provides files (Downloads folder); parse with the `xlsx` npm package (no Python on this machine).
+
+## Distribution handover (/transition) — temporary module
+- Plan for moving Humana trade from Fargo into TI (target: new structure from January 2027): tasks by workstream, a row per sales channel (route, switch date, status), outlet register, Fargo's stock by batch for the buyback, monthly sales continuity by channel, open decisions. ADMIN-only, like planning.
+- Self-contained: tables `Tr*` (TrRegion, TrTask, TrOutlet, TrStockLot, TrDecision, TrTiSale) point at the rest of the app by plain ids and nothing outside `src/lib/transition`, `src/app/transition`, `src/app/api/transition` and the chat's `transition_*` tools reads them. Existing data is read, never written. Drop the module by deleting those folders, the `tr*` CRUD entries and the `Tr*` models.
+- The starting plan (`src/lib/transition/seed-plan.ts`) is loaded once from the Plan page and is idempotent (keyed by `seedKey` / `channelId`). After that the database is the record.
+- The AI briefing (Setting `transition.brief`) and go-live date (`transition.goLive`) are edited on the overview; the chat appends the briefing to its system prompt for ADMIN sessions.
+- Uploads: `.xlsx` / `.csv` only (exceljs + papaparse); the owner maps columns in the browser, then preview → commit.

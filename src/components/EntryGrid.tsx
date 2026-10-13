@@ -21,6 +21,8 @@ export interface Col {
   readOnly?: boolean;
   decimals?: number;
   width?: string;
+  /** number columns: an empty box saves as empty (null) instead of 0 */
+  nullable?: boolean;
 }
 
 type Row = Record<string, unknown> & { id: string };
@@ -76,7 +78,7 @@ export default function EntryGrid({
     const data: Record<string, unknown> = editingId === "new" ? { ...defaults } : {};
     for (const c of editableCols) {
       let v = draft[c.field];
-      if (c.type === "number") v = typeof v === "number" ? v : parseNum(String(v ?? "")) ?? 0;
+      if (c.type === "number") v = typeof v === "number" ? v : parseNum(String(v ?? "")) ?? (c.nullable ? null : 0);
       if (c.type === "bool") v = v === true || v === "true";
       if (v === "" && c.type !== "text") v = null;
       data[c.field] = v;

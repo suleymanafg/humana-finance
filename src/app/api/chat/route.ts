@@ -19,6 +19,15 @@ import {
   runAiWriteTool,
 } from "@/lib/ai/tools";
 import { ADMIN_WRITE_RULES, STAFF_RULES, SYSTEM_PROMPT, VIEWER_RULES } from "@/lib/ai/prompt";
+import {
+  TRANSITION_LABELS,
+  TRANSITION_TOOLS,
+  TRANSITION_WRITE_NAMES,
+  TRANSITION_WRITE_TOOLS,
+  runTransitionTool,
+  runTransitionWriteTool,
+  transitionPrompt,
+} from "@/lib/ai/transition-tools";
 
 // The tool loop can take a while on a hard question; Vercel fluid compute
 // allows up to 300s on this plan.
@@ -52,10 +61,21 @@ export async function POST(request: NextRequest) {
   // Write tools exist only for ADMIN sessions — a viewer's model never even
   // sees them, and the executor below re-checks the role as defense in depth.
   const isAdmin = session.role === "ADMIN";
-  const tools = isAdmin ? [...AI_TOOLS, ...AI_WRITE_TOOLS] : AI_TOOLS;
+  // the distribution handover (/transition) is ADMIN-only, and so are its tools
+  const tools = isAdmin ? [...AI_TOOLS, ...AI_WRITE_TOOLS, ...TRANSITION_TOOLS, ...TRANSITION_WRITE_TOOLS] : AI_TOOLS;
+  let transitionRules = "";
+  if (isAdmin) {
+    try {
+      transitionRules = await transitionPrompt();
+    } catch {
+      // handover tables not created yet (schema not pushed): the chat works without them
+      transitionRules = "";
+    }
+  }
   const system =
     SYSTEM_PROMPT +
-    (isAdmin ? ADMIN_WRITE_RULES : session.role === "STAFF" ? STAFF_RULES : VIEWER_RULES);
+    (isAdmin ? ADMIN_WRITE_RULES : session.role === "STAFF" ? STAFF_RULES : VIEWER_RULES) +
+    transitionRules;
 
   const messages: Anthropic.Beta.BetaMessageParam[] = history.map((m) => ({
     role: m.role,
@@ -111,11 +131,17 @@ export async function POST(request: NextRequest) {
           const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
           for (const block of response.content) {
             if (block.type !== "tool_use") continue;
-            send({ t: "tool", label: TOOL_LABELS[block.name]?.[lang] ?? block.name });
+            send({ t: "tool", label: (TOOL_LABELS[block.name] ?? TRANSITION_LABELS[block.name])?.[lang] ?? block.name });
             let result: unknown;
             try {
               const toolInput = (block.input ?? {}) as Record<string, unknown>;
-              if (WRITE_TOOL_NAMES.has(block.name)) {
+              if (block.name.startsWith("transition_")) {
+                result = !isAdmin
+                  ? { error: "раздел перехода доступен только администратору" }
+                  : TRANSITION_WRITE_NAMES.has(block.name)
+                    ? await runTransitionWriteTool(block.name, toolInput, session.username)
+                    : await runTransitionTool(block.name, toolInput);
+              } else if (WRITE_TOOL_NAMES.has(block.name)) {
                 result = isAdmin
                   ? await runAiWriteTool(block.name, toolInput, session.username)
                   : { error: "запись доступна только администратору" };

@@ -646,3 +646,133 @@ model DataRequestItem {
 
   @@index([requestId])
 }
+
+// ──────────── Distribution handover Fargo → Turbo Impex (/transition) ────────────
+// A temporary, self-contained module for moving Humana trade from Fargo into
+// TI. These tables point at the rest of the app by plain ids (Channel,
+// ClientChannelMap, Product, Month) and nothing outside the module reads or
+// writes them, so the section can be dropped once the handover is finished.
+
+// One row per sales channel being handed over: a region, a chain, or a bucket.
+model TrRegion {
+  id         String    @id @default(cuid())
+  channelId  String?   @unique // Channel.id this row covers (null for a row added by hand)
+  name       String
+  kind       String    @default("REGION") // REGION | CHAIN | OTHER
+  route      String    @default("UNDECIDED") // TI_AGENTS | NUTRIBEN_DEALER | FARGO_DEALER | CHAIN_DIRECT | UNDECIDED
+  partner    String? // dealer / chain contact who will buy from TI
+  switchDate DateTime? // first day TI supplies; Fargo keeps selling here until then
+  status     String    @default("NOT_STARTED") // NOT_STARTED | PREPARING | READY | SWITCHED
+  notes      String?
+  sortOrder  Int       @default(0)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  tasks   TrTask[]
+  outlets TrOutlet[]
+  tiSales TrTiSale[]
+}
+
+model TrTask {
+  id          String    @id @default(cuid())
+  stream      String // key into TR_STREAMS (src/lib/transition/model.ts)
+  title       String
+  titleEn     String?
+  details     String?
+  detailsEn   String?
+  owner       String?
+  status      String    @default("TODO") // TODO | DOING | BLOCKED | DONE | DROPPED
+  priority    String    @default("NORMAL") // URGENT | HIGH | NORMAL
+  startDate   DateTime?
+  dueDate     DateTime?
+  doneAt      DateTime?
+  dependsOnId String? // TrTask.id that has to be done first
+  regionId    String?
+  region      TrRegion? @relation(fields: [regionId], references: [id])
+  seedKey     String?   @unique // set on tasks that came from the starting plan
+  sortOrder   Int       @default(0)
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([stream])
+}
+
+// A retail point (or dealer) that has to sign with TI.
+model TrOutlet {
+  id             String    @id @default(cuid())
+  clientMapId    String?   @unique // ClientChannelMap.id when the outlet appears in Fargo's 1C sales
+  name           String
+  regionId       String?
+  region         TrRegion? @relation(fields: [regionId], references: [id])
+  district       String?
+  type           String    @default("SHOP") // CHAIN | PHARMACY | SHOP | DEALER | OTHER
+  contact        String?
+  phone          String?
+  status         String    @default("TO_CONTACT") // TO_CONTACT | CONTACTED | CONTRACT_SENT | SIGNED | FIRST_ORDER | LOST | INACTIVE
+  creditDays     Int?
+  contractNo     String?
+  signedDate     DateTime?
+  firstOrderDate DateTime?
+  source         String    @default("MANUAL") // MANUAL | SALES | UPLOAD
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  @@index([regionId])
+}
+
+// Humana stock held by Fargo, by batch — the basis of the buyback.
+model TrStockLot {
+  id         String    @id @default(cuid())
+  productId  String? // Product.id when the item was matched
+  itemName   String // as written in Fargo's list
+  batch      String?
+  expiry     DateTime?
+  qty        Float
+  location   String? // Fargo warehouse or branch
+  countDate  DateTime?
+  preAug2025 Boolean   @default(false) // Fargo's own stock from before the partnership — outside the buyback
+  unitPrice  Float? // buyback price per unit; empty = latest TI→Fargo invoice price
+  status     String    @default("COUNTED") // COUNTED | AGREED | MOVED | WRITTEN_OFF
+  source     String    @default("MANUAL") // MANUAL | UPLOAD
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+}
+
+model TrDecision {
+  id        String    @id @default(cuid())
+  topic     String
+  topicEn   String?
+  options   String?
+  decision  String?
+  status    String    @default("OPEN") // OPEN | DECIDED
+  dueDate   DateTime?
+  decidedAt DateTime?
+  seedKey   String?   @unique
+  sortOrder Int       @default(0)
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+// TI's own sales in a region after it switches (SmartUp), so continuity can be
+// read across the handover. Fargo's side comes from the existing sales data.
+model TrTiSale {
+  id        String   @id @default(cuid())
+  monthId   String // YYYY-MM (may be later than the app's last month)
+  regionId  String
+  region    TrRegion @relation(fields: [regionId], references: [id])
+  amount    Float // at customer prices incl. VAT, the same basis as Fargo's sales
+  units     Float?
+  notes     String?
+  updatedAt DateTime @updatedAt
+
+  @@unique([monthId, regionId])
+}
