@@ -106,6 +106,17 @@ export const SECTIONS: NavSection[] = [
     pages: [{ href: "/close", label: { ru: "Закрытие месяца", en: "Month close" } }],
   },
   {
+    key: "budget",
+    label: { ru: "Бюджет и капитал", en: "Budget and capital" },
+    group: "main",
+    adminOnly: true,
+    pages: [
+      { href: "/budget", label: { ru: "Капитал", en: "Capital" } },
+      { href: "/budget/statements", label: { ru: "Отчёты по месяцам", en: "Statements by month" } },
+      { href: "/budget/inputs", label: { ru: "Допущения", en: "Assumptions" } },
+    ],
+  },
+  {
     key: "planning",
     label: { ru: "Планирование закупок", en: "Supply planning" },
     group: "main",
