@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import { dstr, monthLong, monthShort, pn, splitPack } from "@/lib/planning/ui-format";
 import type { LoadView, PipelineView, SkuHead, StockRow } from "@/lib/planning/plan-view";
+import TruckComposer, { compositionTotals, palletsOf, unitsOf, type Composition } from "./TruckComposer";
 
 export interface PlanViewProps {
   today: string;
@@ -56,7 +57,48 @@ export function SkuName({ name }: { name: string }) {
   );
 }
 
+const EDITABLE = ["PLANNED", "ORDERED"];
+
 const sumOf = (r: Record<string, number>) => Object.values(r).reduce((t, v) => t + v, 0);
+
+/** Fills HQ's uploaded order form with these trucks and downloads it; an error message, or null. */
+async function downloadHqForm(file: File, trucks: Record<string, number>[], name: string, ru: boolean): Promise<string | null> {
+  if (trucks.length > 3) return ru ? "В форме HQ не больше 3 фур — разделите на две формы." : "HQ's form takes at most 3 trucks — split it in two forms.";
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("trucks", JSON.stringify(trucks.map((units) => ({ units }))));
+  fd.append("name", name);
+  const res = await fetch("/api/planning/hq-form", { method: "POST", body: fd });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return body.error ?? (ru ? "Не удалось заполнить форму" : "Could not fill the form");
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${name}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+  return null;
+}
+
+const formName = (shipMonth: string, trucks: number) => `Order Form ${monthLong(shipMonth, false)} - Turbo Impex - ${trucks} ${trucks === 1 ? "truck" : "trucks"}`;
+
+function HqFormRow({ busy, ru, onFill }: { busy: boolean; ru: boolean; onFill: (f: File) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3" style={{ borderColor: "var(--hair)" }}>
+      <span className="text-[12px] font-bold text-muted">{ru ? "Форма заказа HQ:" : "HQ's order form:"}</span>
+      <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-[12px]" />
+      <button type="button" disabled={busy || !file} onClick={() => file && onFill(file)} className="rounded-lg border border-border px-3.5 py-1.5 text-[12.5px] font-bold">
+        {busy ? "…" : ru ? "Заполнить фуры" : "Fill in the trucks"}
+      </button>
+      <span className="text-[11px] font-semibold text-muted">
+        {ru ? "последняя форма от HQ; вернётся заполненной этим составом, в приложении не хранится" : "HQ's latest form; it comes back filled with this composition and is not stored"}
+      </span>
+    </div>
+  );
+}
 
 function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: { load: LoadView; skus: SkuHead[]; eurRate: number; settings: PlanViewProps["settings"]; isAdmin: boolean; ru: boolean; thisMonth: string }) {
   const router = useRouter();
@@ -64,53 +106,28 @@ function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: {
   const [dispatch, setDispatch] = useState(load.shipMonth === thisMonth ? new Date().toISOString().slice(0, 10) : defaultDay);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const rows = skus.filter((s) => (load.units[s.id] ?? 0) > 0);
+  const planComp = () => load.split.map((t) => palletsOf(t.units, skus));
+  const [comp, setComp] = useState<Composition>(planComp);
+  const edited = JSON.stringify(comp) !== JSON.stringify(planComp());
+  const trucksUnits = comp.map((t) => unitsOf(t, skus)).filter((u) => Object.keys(u).length > 0);
+  const totalUnits = compositionTotals(comp, skus);
+  const lines = skus.filter((s) => totalUnits[s.id] > 0).map((s) => `${s.id}:${totalUnits[s.id]}`).join(",");
   const extraUnits = sumOf(load.extra);
-  const lines = rows.map((s) => `${s.id}:${Math.round(load.units[s.id])}`).join(",");
-
-  const [hqFile, setHqFile] = useState<File | null>(null);
-  async function fillHqForm() {
-    if (!hqFile || busy) return;
-    if (load.split.length > 3) {
-      setMsg(ru ? "В форме HQ не больше 3 фур — разделите на две формы." : "HQ's form takes at most 3 trucks — split it in two forms.");
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    const name = `Order Form ${monthLong(load.shipMonth, false)} - Turbo Impex - ${load.trucks} ${load.trucks === 1 ? "truck" : "trucks"}`;
-    const fd = new FormData();
-    fd.append("file", hqFile);
-    fd.append("trucks", JSON.stringify(load.split.map((t) => ({ units: t.units }))));
-    fd.append("name", name);
-    const res = await fetch("/api/planning/hq-form", { method: "POST", body: fd });
-    setBusy(false);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setMsg(body.error ?? (ru ? "Не удалось заполнить форму" : "Could not fill the form"));
-      return;
-    }
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${name}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setMsg(ru ? "Форма HQ заполнена — проверьте D43 (0,98) и отправьте HQ." : "HQ's form filled — check D43 (0.98) and send it to HQ.");
-  }
 
   async function createTrucks() {
-    if (busy) return;
+    if (busy || trucksUnits.length === 0) return;
+    const n = trucksUnits.length;
     const ok = confirm(
       ru
-        ? `Завести ${load.trucks} ${trucksWord(load.trucks, true)} как «Запланирована» с отгрузкой ${dstr(dispatch)}? В продаже ≈ через ${settings.leadDays} дн. В остатки и себестоимость они попадут только после прибытия.`
-        : `Create ${load.trucks} ${trucksWord(load.trucks, false)} as Planned, dispatched ${dstr(dispatch)}? Sellable ≈ ${settings.leadDays} days later. They enter stock and COGS only on arrival.`
+        ? `Завести ${n} ${trucksWord(n, true)} как «Запланирована» с отгрузкой ${dstr(dispatch)}${edited ? " (ваш состав)" : ""}? В продаже ≈ через ${settings.leadDays} дн. В остатки и себестоимость они попадут только после прибытия. Состав можно менять и потом.`
+        : `Create ${n} ${trucksWord(n, false)} as Planned, dispatched ${dstr(dispatch)}${edited ? " (your composition)" : ""}? Sellable ≈ ${settings.leadDays} days later. They enter stock and COGS only on arrival. The composition can still be changed later.`
     );
     if (!ok) return;
     setBusy(true);
     const res = await fetch("/api/planning/trucks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dispatchDate: dispatch, trucks: load.split.map((t) => ({ units: t.units })) }),
+      body: JSON.stringify({ dispatchDate: dispatch, trucks: trucksUnits.map((units) => ({ units })) }),
     });
     const body = await res.json().catch(() => ({}));
     setBusy(false);
@@ -120,10 +137,18 @@ function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: {
     } else setMsg(body.error ?? (ru ? "Не удалось" : "Failed"));
   }
 
+  async function fill(file: File) {
+    setBusy(true);
+    setMsg(null);
+    const err = await downloadHqForm(file, trucksUnits, formName(load.shipMonth, trucksUnits.length), ru);
+    setBusy(false);
+    setMsg(err ?? (ru ? "Форма HQ заполнена — проверьте D43 (0,98) и отправьте HQ." : "HQ's form filled — check D43 (0.98) and send it to HQ."));
+  }
+
   return (
     <section className="pcard p-5" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
       <div className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">
-        {ru ? `Забрать у DMK · ${monthLong(load.shipMonth, true).toLowerCase()}` : `Pick up from DMK · ${monthLong(load.shipMonth, false)}`}
+        {ru ? `Забрать у DMK · ${monthLong(load.shipMonth, true).toLowerCase()} · предложение плана` : `Pick up from DMK · ${monthLong(load.shipMonth, false)} · the plan's proposal`}
       </div>
       <div className="mt-1 text-[30px] font-extrabold leading-tight">
         <span className="pnum">{load.trucks}</span> {trucksWord(load.trucks, ru)}
@@ -138,48 +163,27 @@ function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: {
           {ru ? `Загрузка ниже ${pct(settings.minFill, true)} — перевозка на риске покупателя.` : `Under ${pct(settings.minFill, false)} full — transport at the buyer's risk.`}
         </p>
       )}
-      <table className="ptable mt-3 text-[12.5px]">
-        <thead>
-          <tr>
-            <th>{ru ? "Товар" : "Product"}</th>
-            <th>{ru ? "шт" : "units"}</th>
-            <th>{ru ? "паллет" : "pallets"}</th>
-            <th>{ru ? "из ждущего у DMK" : "from open at DMK"}</th>
-            <th>{ru ? "сверх (просить HQ)" : "on top (ask HQ)"}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((s) => (
-            <tr key={s.id}>
-              <td><SkuName name={s.name} /></td>
-              <td className="pnum">{pn(load.units[s.id])}</td>
-              <td className="pnum">{pn(load.units[s.id] / (s.pcsPerPallet || 1))}</td>
-              <td className="pnum text-muted">{load.fromOpen[s.id] ? pn(load.fromOpen[s.id]) : "—"}</td>
-              <td className="pnum" style={{ color: load.extra[s.id] ? "var(--info)" : undefined }}>{load.extra[s.id] ? pn(load.extra[s.id]) : "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
       {extraUnits > 0 && (
-        <p className="mt-2 text-[12px] font-semibold text-muted">
+        <p className="mt-1 text-[12px] font-semibold text-muted">
           {ru
-            ? `${pn(extraUnits)} шт сверх ждущего у DMK — подтвердите с HQ, что они могут добавить.`
-            : `${pn(extraUnits)} units beyond what waits at DMK — confirm with HQ they can add them.`}
+            ? `По плану ${pn(sumOf(load.fromOpen))} шт — из ждущего у DMK, ${pn(extraUnits)} шт — сверх него: подтвердите с HQ, что они могут добавить.`
+            : `By the plan ${pn(sumOf(load.fromOpen))} units come from what waits at DMK and ${pn(extraUnits)} on top of it — confirm with HQ they can add them.`}
         </p>
       )}
-      {load.split.length > 1 && (
-        <div className="mt-3 text-[12px] font-semibold text-muted">
-          {load.split.map((t, i) => {
-            const pal = skus.reduce((a, s) => a + (t.units[s.id] ?? 0) / (s.pcsPerPallet || 1), 0);
-            return (
-              <div key={i}>
-                {ru ? "Фура" : "Truck"} {i + 1}: <span className="pnum">{pn(pal)}</span> {ru ? "паллет" : "pallets"}, <span className="pnum">{t.places.toFixed(1)}</span> {ru ? "мест" : "places"} ({pct(t.places / settings.truckPlaces, ru)})
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="mt-3">
+        <TruckComposer
+          skus={skus}
+          value={comp}
+          onChange={setComp}
+          truckPlaces={settings.truckPlaces}
+          minFill={settings.minFill}
+          maxFill={settings.maxFill}
+          eurRate={eurRate}
+          baseline={palletsOf(load.units, skus)}
+          readOnly={!isAdmin}
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <a href={`/api/export/planning-order?ship=pickup&lines=${encodeURIComponent(lines)}`} className="rounded-lg px-3.5 py-2 text-[12.5px] font-extrabold text-white" style={{ background: "var(--accent)" }}>
           {ru ? "Скачать заявку" : "Download the request"}
         </a>
@@ -189,25 +193,129 @@ function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: {
               {ru ? "отгрузка" : "dispatch"}
               <input type="date" value={dispatch} onChange={(e) => setDispatch(e.target.value)} className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px]" />
             </label>
-            <button type="button" disabled={busy || !dispatch} onClick={() => void createTrucks()} className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] font-bold">
+            <button type="button" disabled={busy || !dispatch || trucksUnits.length === 0} onClick={() => void createTrucks()} className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] font-bold">
               {busy ? "…" : ru ? "Завести как запланированные" : "Create as planned trucks"}
             </button>
+            {edited && (
+              <button type="button" onClick={() => setComp(planComp())} className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] font-bold text-muted">
+                {ru ? "Вернуть состав плана" : "Back to the plan's mix"}
+              </button>
+            )}
           </>
         )}
         {msg && <span className="text-[12px] font-bold text-muted">{msg}</span>}
       </div>
-      {isAdmin && (
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3" style={{ borderColor: "var(--hair)" }}>
-          <span className="text-[12px] font-bold text-muted">{ru ? "Форма заказа HQ:" : "HQ's order form:"}</span>
-          <input type="file" accept=".xlsx" onChange={(e) => setHqFile(e.target.files?.[0] ?? null)} className="text-[12px]" />
-          <button type="button" disabled={busy || !hqFile} onClick={() => void fillHqForm()} className="rounded-lg border border-border px-3.5 py-1.5 text-[12.5px] font-bold">
-            {busy ? "…" : ru ? "Заполнить фуры" : "Fill in the trucks"}
-          </button>
-          <span className="text-[11px] font-semibold text-muted">
-            {ru ? "последняя форма от HQ; вернётся заполненной, в приложении не хранится" : "HQ's latest form; it comes back filled and is not stored"}
+      {isAdmin && <HqFormRow busy={busy} ru={ru} onFill={(f) => void fill(f)} />}
+    </section>
+  );
+}
+
+/** Trucks already in the app for a ship month, not yet dispatched: change their composition, fill HQ's form, or remove them so the month is planned again. */
+function PlannedMonthCard({ month, trucks, skus, eurRate, settings, isAdmin, ru }: { month: string; trucks: PipelineView[]; skus: SkuHead[]; eurRate: number; settings: PlanViewProps["settings"]; isAdmin: boolean; ru: boolean }) {
+  const router = useRouter();
+  const saved = () => trucks.map((t) => palletsOf(t.units, skus));
+  const [comp, setComp] = useState<Composition>(saved);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const edited = JSON.stringify(comp) !== JSON.stringify(saved());
+  const planned = trucks.filter((t) => t.status === "PLANNED");
+  const sell = trucks.map((t) => t.sellDate).sort()[0];
+
+  async function save() {
+    const units = comp.map((t) => unitsOf(t, skus));
+    if (units.some((u) => Object.keys(u).length === 0)) {
+      setMsg(ru ? "В каждой фуре должен быть товар — пустую фуру уберите." : "Every truck needs products — remove an empty truck instead.");
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    const res = await fetch("/api/planning/trucks", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trucks: trucks.map((t, i) => ({ id: t.id, units: units[i] })) }),
+    });
+    const body = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) {
+      setMsg(ru ? "Состав сохранён — план пересчитан." : "Composition saved — the plan recalculated.");
+      router.refresh();
+    } else setMsg(body.error ?? (ru ? "Не удалось" : "Failed"));
+  }
+
+  async function remove(ids: string[]) {
+    const codes = trucks.filter((t) => ids.includes(t.id)).map((t) => t.code).join(", ");
+    const all = ids.length === trucks.length;
+    const ok = confirm(
+      ru
+        ? `Убрать ${codes}? ${all ? `Месяц ${monthLong(month, true).toLowerCase()} снова уйдёт в план — его потребность появится как заказ.` : "Остальные фуры месяца останутся как решено (план не пересчитывает месяц, пока в нём есть фуры)."}`
+        : `Remove ${codes}? ${all ? `${monthLong(month, false)} goes back to the plan — its need shows again as an order to place.` : "The month's other trucks stay as decided (the plan does not redo a month while it has trucks)."}`
+    );
+    if (!ok) return;
+    setBusy(true);
+    const res = await fetch("/api/planning/trucks", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+    const body = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) router.refresh();
+    else setMsg(body.error ?? (ru ? "Не удалось" : "Failed"));
+  }
+
+  async function fill(file: File) {
+    setBusy(true);
+    setMsg(null);
+    const units = comp.map((t) => unitsOf(t, skus));
+    const err = await downloadHqForm(file, units, formName(month, units.length), ru);
+    setBusy(false);
+    setMsg(err ?? (ru ? "Форма HQ заполнена — проверьте D43 (0,98) и отправьте HQ." : "HQ's form filled — check D43 (0.98) and send it to HQ."));
+  }
+
+  return (
+    <section className="pcard p-5">
+      <div className="flex flex-wrap items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">
+        <span>{ru ? `Заведены на ${monthLong(month, true).toLowerCase()}` : `In the app for ${monthLong(month, false)}`}</span>
+        {trucks.map((t) => (
+          <span key={t.id} className="ppill normal-case tracking-normal" style={{ background: t.status === "PLANNED" ? "var(--surface-low)" : "var(--info-soft)", color: t.status === "PLANNED" ? "var(--muted)" : "var(--info)" }}>
+            {t.code} · {(STATUS_RU[t.status] ?? STATUS_RU.TRANSIT)[ru ? 0 : 1]}
           </span>
+        ))}
+      </div>
+      <div className="mt-1 text-[13px] font-semibold text-muted">
+        {ru ? "отгрузка" : "dispatch"} {trucks[0]?.dispatchDate ? dstr(trucks[0].dispatchDate) : "—"} · {ru ? "в продаже ≈" : "sellable ≈"} {sell ? dstr(sell) : "—"}
+      </div>
+      <div className="mt-3">
+        <TruckComposer
+          skus={skus}
+          value={comp}
+          onChange={setComp}
+          truckPlaces={settings.truckPlaces}
+          minFill={settings.minFill}
+          maxFill={settings.maxFill}
+          eurRate={eurRate}
+          names={trucks.map((t) => t.code)}
+          canAddTrucks={false}
+          readOnly={!isAdmin}
+        />
+      </div>
+      {isAdmin && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" disabled={busy || !edited} onClick={() => void save()} className="rounded-lg px-3.5 py-2 text-[12.5px] font-extrabold text-white disabled:opacity-50" style={{ background: "var(--accent)" }}>
+            {busy ? "…" : ru ? "Сохранить состав" : "Save the composition"}
+          </button>
+          {edited && (
+            <button type="button" onClick={() => setComp(saved())} className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] font-bold text-muted">
+              {ru ? "Отменить изменения" : "Undo changes"}
+            </button>
+          )}
+          {planned.length > 0 && (
+            <button type="button" disabled={busy} onClick={() => void remove(planned.map((t) => t.id))} className="rounded-lg border px-3.5 py-2 text-[12.5px] font-bold" style={{ borderColor: "var(--warn-border)", color: "var(--warn-ink)" }}>
+              {planned.length === trucks.length
+                ? ru ? "Убрать фуры — вернуть месяц в план" : "Remove the trucks — back to the plan"
+                : ru ? `Убрать запланированные (${planned.length})` : `Remove the planned ones (${planned.length})`}
+            </button>
+          )}
+          {msg && <span className="text-[12px] font-bold text-muted">{msg}</span>}
         </div>
       )}
+      {isAdmin && <HqFormRow busy={busy} ru={ru} onFill={(f) => void fill(f)} />}
     </section>
   );
 }
@@ -218,6 +326,8 @@ export default function PlanView(props: PlanViewProps) {
   const ru = locale === "ru";
   const name = (id: string) => skus.find((s) => s.id === id)?.name ?? id;
   const urgent = due.daysLeft <= 7;
+  // ship months with trucks in the app that have not left DMK yet
+  const plannedMonths = [...new Set(pipeline.filter((t) => EDITABLE.includes(t.status)).map((t) => t.shipMonth))].sort();
 
   const onHand = stock.reduce((t, r) => t + r.onHand, 0);
   const sold = stock.reduce((t, r) => t + r.soldThisMonth, 0);
@@ -246,17 +356,22 @@ export default function PlanView(props: PlanViewProps) {
         <span>{ru ? "не прибыло" : "on the way"} <b className="pnum text-foreground">{pn(onWay)}</b> · {pipeline.length} {trucksWord(pipeline.length, ru)}</span>
       </div>
 
-      <div className="grid gap-3.5 lg:grid-cols-2">
-        {pickups.length === 0 ? (
-          <section className="pcard p-5">
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">{ru ? "Забрать у DMK" : "Pick up from DMK"}</div>
-            <div className="mt-1 text-[24px] font-extrabold leading-tight">{ru ? "Забирать не нужно" : "Nothing to pick up"}</div>
-            <p className="mt-1 text-[12px] font-semibold text-muted">{ru ? "На ближайшие месяцы фуры уже заведены или не нужны." : "The coming months' trucks are already in or not needed."}</p>
-          </section>
-        ) : (
-          pickups.map((l) => <PickupCard key={l.shipMonth} load={l} skus={skus} eurRate={eurRate} settings={settings} isAdmin={isAdmin} ru={ru} thisMonth={thisMonth} />)
-        )}
+      {/* trucks in the app, not yet dispatched — their composition stays editable */}
+      {plannedMonths.map((m) => (
+        <PlannedMonthCard key={`${m}:${pipeline.filter((t) => t.shipMonth === m).map((t) => t.id + sumOf(t.units)).join()}`} month={m} trucks={pipeline.filter((t) => t.shipMonth === m && EDITABLE.includes(t.status))} skus={skus} eurRate={eurRate} settings={settings} isAdmin={isAdmin} ru={ru} />
+      ))}
+      {/* the plan's proposals for the months without trucks */}
+      {pickups.length === 0 ? (
+        <section className="pcard p-5">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">{ru ? "Забрать у DMK" : "Pick up from DMK"}</div>
+          <div className="mt-1 text-[24px] font-extrabold leading-tight">{ru ? "Забирать не нужно" : "Nothing to pick up"}</div>
+          <p className="mt-1 text-[12px] font-semibold text-muted">{ru ? "На ближайшие месяцы фуры уже заведены или не нужны." : "The coming months' trucks are already in or not needed."}</p>
+        </section>
+      ) : (
+        pickups.map((l) => <PickupCard key={`${l.shipMonth}:${sumOf(l.units)}`} load={l} skus={skus} eurRate={eurRate} settings={settings} isAdmin={isAdmin} ru={ru} thisMonth={thisMonth} />)
+      )}
 
+      <div className="grid gap-3.5">
         <section className="pcard p-5">
           <div className="flex flex-wrap items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">
             <span>{ru ? `Ввести в IBP до ${dstr(due.deadline)}` : `Enter in IBP by ${dstr(due.deadline)}`}</span>

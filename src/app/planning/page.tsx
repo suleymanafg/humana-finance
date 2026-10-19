@@ -23,7 +23,7 @@ export default async function PlanningPage() {
         skus={skuHeads(p)}
         eurRate={p.eurRate}
         settings={{ truckPlaces: s.truckPlaces, minFill: s.minFill, maxFill: s.maxFill, dangerLine: s.dangerLine, leadDays: s.leadDays, dispatchDay: s.dispatchDay }}
-        pickups={p.plan.loads.filter((l) => l.shipMonth <= p.extraThrough).map((l) => loadView(p, l))}
+        pickups={p.plan.loads.filter((l) => l.shipMonth <= p.extraThrough && l.trucks > 0).map((l) => loadView(p, l))}
         due={{ ...due, entered: p.ibpEntered[due.shipMonth] ?? {} }}
         pipeline={pipelineView(p)}
         stock={stockRows(p)}
