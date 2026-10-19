@@ -13,6 +13,8 @@ import { runBudget } from "@/lib/budget/model";
 import { capitalAnswer } from "@/lib/budget/capital";
 import { openingAt } from "@/lib/budget/actuals";
 import { checkInputs, parseStored, SETTING_APPROVED, SETTING_FORECAST, SETTING_PREVIOUS, type StoredBudget } from "@/lib/budget/store";
+import { planSupply } from "@/lib/budget/data";
+import { addMonths } from "@/lib/planning/compute";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const upsert = (key: string, value: string) => prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } });
@@ -38,7 +40,9 @@ export async function POST(request: NextRequest) {
   const ok = checkInputs(inputs);
   if ("error" in ok) return NextResponse.json({ error: `the workbook's inputs: ${ok.error}` }, { status: 400 });
 
-  const run = runBudget(ok.inputs);
+  // trucks, HQ payments and units sold from the supply plan as it stands today
+  const supply = (await planSupply(addMonths(ok.inputs.opening.monthId, 1), ok.inputs)) ?? undefined;
+  const run = runBudget(ok.inputs, { supply });
   const cap = capitalAnswer(run, ok.inputs);
   const { dataset, computed } = await getComputed();
   const books = openingAt(dataset, computed, ok.inputs.opening.monthId, ok.inputs)?.opening;
@@ -52,7 +56,8 @@ export async function POST(request: NextRequest) {
     const previous = parseStored(before?.value);
     await prisma.$transaction([
       ...(target !== "forecast" && previous ? [upsert(SETTING_PREVIOUS, JSON.stringify(previous))] : []),
-      ...(target !== "forecast" ? [upsert(SETTING_APPROVED, JSON.stringify(stored))] : []),
+      // approved: kept with the supply plan as it stands today (the forecast follows the live plan)
+      ...(target !== "forecast" ? [upsert(SETTING_APPROVED, JSON.stringify({ ...stored, supply }))] : []),
       ...(target !== "approved" ? [upsert(SETTING_FORECAST, JSON.stringify(stored))] : []),
       prisma.auditLog.create({
         data: { entity: "budget", entityId: `import ${target}`, action: "UPSERT", data: JSON.stringify({ file: file.name, ask: cap.ask }), username: session.username },

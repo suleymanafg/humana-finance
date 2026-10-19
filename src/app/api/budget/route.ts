@@ -6,6 +6,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { checkInputs, parseStored, SETTING_APPROVED, SETTING_FORECAST, SETTING_PREVIOUS, type StoredBudget } from "@/lib/budget/store";
+import { planSupply } from "@/lib/budget/data";
+import { addMonths } from "@/lib/planning/compute";
 
 const upsert = (key: string, value: string) => prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } });
 
@@ -23,6 +25,7 @@ export async function POST(request: NextRequest) {
   if (body?.action === "save") {
     const ok = checkInputs(body.inputs);
     if ("error" in ok) return NextResponse.json({ error: ok.error }, { status: 400 });
+    // the forecast follows the live supply plan: no snapshot
     const next: StoredBudget = { name: body.name?.trim() || forecast?.name || approved?.name || "Forecast", ...stamp, source: "edited in the app", inputs: ok.inputs };
     await prisma.$transaction([upsert(SETTING_FORECAST, JSON.stringify(next)), audit("save forecast", { before: forecast?.inputs ?? null })]);
     return NextResponse.json({ ok: true });
@@ -30,7 +33,9 @@ export async function POST(request: NextRequest) {
   if (body?.action === "approve") {
     const source = forecast ?? approved;
     if (!source) return NextResponse.json({ error: "no forecast to approve" }, { status: 400 });
-    const next: StoredBudget = { ...source, ...stamp };
+    // the approved budget keeps the supply plan as it stands today
+    const supply = (await planSupply(addMonths(source.inputs.opening.monthId, 1), source.inputs)) ?? source.supply;
+    const next: StoredBudget = { ...source, ...stamp, supply };
     await prisma.$transaction([
       ...(approved ? [upsert(SETTING_PREVIOUS, JSON.stringify(approved))] : []),
       upsert(SETTING_APPROVED, JSON.stringify(next)),
@@ -40,7 +45,7 @@ export async function POST(request: NextRequest) {
   }
   if (body?.action === "reset") {
     if (!approved) return NextResponse.json({ error: "no approved budget" }, { status: 400 });
-    await prisma.$transaction([upsert(SETTING_FORECAST, JSON.stringify({ ...approved, ...stamp })), audit("reset forecast", { before: forecast?.inputs ?? null })]);
+    await prisma.$transaction([upsert(SETTING_FORECAST, JSON.stringify({ ...approved, ...stamp, supply: undefined })), audit("reset forecast", { before: forecast?.inputs ?? null })]);
     return NextResponse.json({ ok: true });
   }
   return NextResponse.json({ error: "action: save | approve | reset" }, { status: 400 });

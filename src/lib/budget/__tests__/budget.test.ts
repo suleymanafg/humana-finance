@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { channelShares, CHANNEL_KEYS, monthNumber, paymentWeights, runBudget, type BudgetInputs } from "../model";
 import { capitalAnswer } from "../capital";
 import { forecastRun } from "../forecast";
-import { checkInputs, shiftMonthly } from "../store";
+import { checkInputs, parseStored, shiftMonthly } from "../store";
 import { opexGroupOf } from "../actuals";
 
 // A small business with round numbers: 1,000 units a month at 100 incl. VAT, all sold by TI,
@@ -105,6 +105,19 @@ describe("supply from the plan", () => {
     expect(r.cash.paidHq.map((x) => x + 0)).toEqual([0, -100_000, 0]);
     expect(r.stock.transit).toEqual([0, 100_000, 0]); // paid before the start, then February's payment — both arrived
     expect(r.balance.check).toEqual([0, 0, 0]);
+  });
+
+  it("keeps an approved budget's plan snapshot when stored, and drops a malformed one", () => {
+    const year = <T,>(v: T) => Array.from({ length: 12 }, () => v); // a stored budget runs to December 2027
+    const full = inputs({
+      monthly: { spikePct: year(0), expectedUnits: year(null), tiShare: year(1), fixedTrucks: year(null), stockToFargo: year(0), fargoPaid: year(null), fargoReturns: year(0), loans: year(0), priorOwnerPaid: year(0), plannedCapital: year(0) },
+    });
+    const supply = { marketUnits: { "2027-01": 1 }, arrivals: {}, arrivalsHq: {}, paidHq: {}, trucks: {} };
+    const stored = parseStored(JSON.stringify({ name: "b", savedAt: "2026-10-19T00:00:00Z", savedBy: "x", inputs: full, supply }));
+    expect(stored?.supply).toEqual(supply);
+    const bad = parseStored(JSON.stringify({ name: "b", savedAt: "2026-10-19T00:00:00Z", savedBy: "x", inputs: full, supply: [1] }));
+    expect(bad).not.toBeNull();
+    expect(bad?.supply).toBeUndefined();
   });
 });
 

@@ -3,7 +3,7 @@
 // against it) and the working forecast (the owner's current assumptions).
 // Pure — no DB imports; the API routes do the reading and writing.
 import { addMonths } from "../planning/compute";
-import { CHANNEL_KEYS, monthRange, type BudgetInputs, type BudgetMonthly, type BudgetOpening } from "./model";
+import { CHANNEL_KEYS, monthRange, type BudgetInputs, type BudgetMonthly, type BudgetOpening, type BudgetSupply } from "./model";
 
 export const SETTING_APPROVED = "budget.approved";
 export const SETTING_FORECAST = "budget.forecast";
@@ -16,6 +16,8 @@ export interface StoredBudget {
   savedBy: string;
   source?: string; // e.g. the workbook it was loaded from
   inputs: BudgetInputs;
+  /** approved budgets: the supply plan as it stood when approved (the forecast follows the live plan) */
+  supply?: BudgetSupply;
 }
 
 const SCALARS = [
@@ -79,7 +81,8 @@ export function parseStored(value: string | null | undefined): StoredBudget | nu
   try {
     const s = JSON.parse(value) as StoredBudget;
     const ok = checkInputs(s.inputs);
-    return "inputs" in ok ? { ...s, inputs: ok.inputs } : null;
+    const supply = isObj(s.supply) && isObj(s.supply.marketUnits) && isObj(s.supply.arrivals) && isObj(s.supply.paidHq) ? s.supply : undefined;
+    return "inputs" in ok ? { ...s, inputs: ok.inputs, supply } : null;
   } catch {
     return null;
   }

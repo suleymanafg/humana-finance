@@ -21,9 +21,14 @@ function openingDiffs(budget: BudgetOpening, books: BudgetOpening) {
     .filter((d) => Math.abs(d.budget - d.books) > 0.5);
 }
 
-/** The supply plan as the forecast's supply side; null when planning cannot run (the workbook's own rule then). */
-async function supplyOf(start: string, inputs: Parameters<typeof supplyFromPlan>[2], c: Awaited<ReturnType<typeof getComputed>>["computed"]) {
+/**
+ * The supply plan as a budget's supply side, from `start`: live for the forecast, a snapshot for an
+ * approved budget (stored with it, so it stays as approved). Null when planning cannot run — the
+ * workbook's own truck rule then.
+ */
+export async function planSupply(start: string, inputs: Parameters<typeof supplyFromPlan>[2]) {
   try {
+    const { computed: c } = await getComputed();
     const [p, rows] = await Promise.all([
       loadPlan(),
       prisma.shipment.findMany({ where: { deletedAt: null, status: "ARRIVED" }, select: { id: true, dispatchDate: true } }),
@@ -54,10 +59,11 @@ export const loadBudget = cache(async () => {
 
   // the forecast starts from the books at the last closed month, once that is later than the budget's own opening
   const start = lastClosed && lastClosed > working.inputs.opening.monthId ? openingAt(ds, c, lastClosed, approved.inputs) : null;
-  const budget = runBudget(approved.inputs);
+  // the approved budget runs on the supply plan as it stood when approved
+  const budget = runBudget(approved.inputs, { supply: approved.supply });
   // the forecast's trucks, HQ payments and units sold come from the supply plan
   const planStart = addMonths((start?.opening ?? working.inputs.opening).monthId, 1);
-  const supply = await supplyOf(planStart, working.inputs, c);
+  const supply = await planSupply(planStart, working.inputs);
   const plan = !start || start.opening.monthId < BUDGET_END ? forecastRun(working.inputs, start?.opening ?? null, supply ?? undefined) : null;
   const booksAtBudgetOpening = openingAt(ds, c, approved.inputs.opening.monthId, approved.inputs);
 
