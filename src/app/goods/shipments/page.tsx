@@ -11,7 +11,7 @@ export default async function ShipmentsPage({ searchParams }: { searchParams: Se
     prisma.importExpenseCategory.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.importExpense.findMany({ where: { deletedAt: null }, include: { category: true, shipment: true } }),
     prisma.shipment.findMany({
-      where: { deletedAt: null, status: "TRANSIT" },
+      where: { deletedAt: null, status: { not: "ARRIVED" } },
       include: { lines: { where: { deletedAt: null } } },
       orderBy: { etaDate: "asc" },
     }),
@@ -50,6 +50,7 @@ export default async function ShipmentsPage({ searchParams }: { searchParams: Se
       transit={transit.map((s) => ({
         id: s.id,
         code: s.code,
+        status: s.status,
         etaDate: day(s.etaDate),
         totalUnits: s.lines.reduce((sum, l) => sum + l.qty, 0),
       }))}

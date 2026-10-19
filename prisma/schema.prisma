@@ -59,6 +59,9 @@ model PlanningSku {
   grossKgPerUnit  Float    @default(0)
   netKgPerUnit    Float    @default(0)
   priceEur        Float    @default(0)
+  // HQ's truck category (order form): 1 milks/standards — 10 layers a place,
+  // 2 cereals — 9, 3 desserts — 14, 4 400 g Platin — 15. A truck has 33 places.
+  loadCategory    Int      @default(1)
   sortOrder       Int      @default(0)
   active          Boolean  @default(true)
   // committed to DMK but not yet delivered ("Open Orders" in the IBP export) —
@@ -96,8 +99,28 @@ model PlanningPurchase {
   @@unique([skuId, shipMonth])
 }
 
+// The owner's say in supply planning, one row per (kind, sku, month):
+//   SHORT       a month marked as ran short (1) or as having had stock (0)
+//   OWN_DEMAND  the owner's own demand a month for a SKU (monthKey "")
+//   OWN_SHARE   the owner's own 800 g share for a stage (skuId = "P1" | "P2" | "P3")
+//   TARGET      months of stock to hold at the end of a ship month's sell month
+//   OPEN_FIX    HQ's open quantity at DMK for a SKU less the app's count (kept as the
+//               difference, so trucks added later still collect from it)
+model PlanningInput {
+  id        String   @id @default(cuid())
+  kind      String
+  skuId     String   @default("")
+  monthKey  String   @default("")
+  value     Float
+  note      String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@unique([kind, skuId, monthKey])
+}
+
 // Verified prescriptions per month (foil tracking) — one baby recruited per
-// prescription. Fuel for the cohort demand model.
+// prescription. Fuel for the stage demand engine.
 model PlanningRecruitment {
   monthKey  String   @id // "2025-11"
   babies    Float    @default(0)
@@ -286,10 +309,12 @@ model Shipment {
   code         String    @unique // "Авиа №1", "Фура №2", ...
   monthId      String
   month        Month     @relation(fields: [monthId], references: [id])
-  // TRANSIT trucks are visible to supply planning (arriving ~etaDate) but are
-  // EXCLUDED from COGS/stock flow until marked ARRIVED.
-  status       String    @default("ARRIVED") // TRANSIT | ARRIVED
-  etaDate      DateTime? // estimated warehouse arrival while in transit
+  // PLANNED (agreed, not yet ordered) → ORDERED (DMK confirmed) → TRANSIT
+  // (dispatched) → CUSTOMS (at customs) → ARRIVED (in the warehouse, sellable).
+  // Only ARRIVED counts in stock and COGS; the others are supply planning's
+  // pipeline, sellable from etaDate.
+  status       String    @default("ARRIVED") // PLANNED | ORDERED | TRANSIT | CUSTOMS | ARRIVED
+  etaDate      DateTime? // expected date it becomes sellable; the actual date once ARRIVED
   // invoice/dispatch date — when the truck loaded at DMK. Partner Purchase
   // and Open Orders count the pickup in THIS month; when absent the engine
   // assumes dispatch = arrival − 1 month.

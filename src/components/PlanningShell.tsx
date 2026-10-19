@@ -12,8 +12,10 @@ import { daysLeftLong, dstr } from "@/lib/planning/ui-format";
 import type { OrderSlot } from "@/lib/planning/compute";
 
 const TABS = [
-  { href: "/planning", ru: "Что делать", en: "What to do" },
-  { href: "/planning/orders", ru: "Заказы IBP", en: "IBP orders" },
+  { href: "/planning", ru: "Этот месяц", en: "This month" },
+  { href: "/planning/orders", ru: "Заказы", en: "Orders" },
+  { href: "/planning/demand", ru: "Спрос", en: "Demand" },
+  { href: "/planning/settings", ru: "Настройки", en: "Settings" },
 ];
 
 export default function PlanningShell({

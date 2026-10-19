@@ -221,8 +221,9 @@ export async function overviewData(monthParam: string | undefined) {
     .sort((a, b) => (a.recount !== b.recount ? (a.recount ? -1 : 1) : (a.cover ?? 0) - (b.cover ?? 0)))
     .slice(0, 5);
 
+  // on the road: dispatched (in transit) or at customs — not planned or only ordered
   const trucks = await prisma.shipment.findMany({
-    where: { deletedAt: null, status: "TRANSIT" },
+    where: { deletedAt: null, status: { in: ["TRANSIT", "CUSTOMS"] } },
     include: { lines: { where: { deletedAt: null }, select: { qty: true } } },
     orderBy: [{ etaDate: "asc" }, { code: "asc" }],
   });

@@ -42,6 +42,18 @@ interface Option {
 /** Air freight is materially more expensive than trucking — worth flagging. */
 const isAir = (code: string) => /avia|авиа|air/i.test(code);
 
+/** A truck's way from an agreed load to TI's warehouse. Only ARRIVED is in
+ *  stock and COGS; the rest count for supply planning from their sellable date. */
+const ON_THE_WAY = ["PLANNED", "ORDERED", "TRANSIT", "CUSTOMS"] as const;
+const STATUS_LABEL: Record<string, { ru: string; en: string }> = {
+  PLANNED: { ru: "Запланирована", en: "Planned" },
+  ORDERED: { ru: "Заказана", en: "Ordered" },
+  TRANSIT: { ru: "В пути", en: "In transit" },
+  CUSTOMS: { ru: "На таможне", en: "At customs" },
+  ARRIVED: { ru: "Прибыла", en: "Arrived" },
+};
+const statusLabel = (status: string, ru: boolean) => (STATUS_LABEL[status] ?? STATUS_LABEL.TRANSIT)[ru ? "ru" : "en"];
+
 const num = toNum;
 
 // ── inline-editable numeric field: commits on blur, figures recompute on refresh ──
@@ -339,7 +351,8 @@ function ArrivalDate({
 const arrivalValid = (months: MonthIn[], date: string) =>
   date !== "" && date <= today() && months.some((m) => m.id === date.slice(0, 7));
 
-/** One truck in the «В пути» strip: editable ETA + the arrived action. */
+/** One truck in the «Не прибыли» strip: its status, the expected sellable
+ *  date and the arrived action. */
 function TransitRow({
   shipment,
   months,
@@ -347,7 +360,7 @@ function TransitRow({
   ru,
   onSaved,
 }: {
-  shipment: { id: string; code: string; etaDate: string | null; totalUnits: number };
+  shipment: { id: string; code: string; status: string; etaDate: string | null; totalUnits: number };
   months: MonthIn[];
   readOnly: boolean;
   ru: boolean;
@@ -358,12 +371,39 @@ function TransitRow({
   // marking arrival asks for the day the goods were in the warehouse
   const [arrival, setArrival] = useState<string | null>(null);
 
+  async function setStatus(next: string) {
+    if (busy || next === shipment.status) return;
+    setBusy(true);
+    await crud("shipment", "update", { id: shipment.id, data: { status: next } });
+    setBusy(false);
+    onSaved();
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-4 bg-surface/60 px-4 py-2.5">
       <span className="text-[13px] font-semibold">{shipment.code}</span>
       <span className="num text-[12.5px] text-muted">{fmtN(shipment.totalUnits)} {ru ? "шт" : "pcs"}</span>
+      {readOnly ? (
+        <Badge tone="accent">{statusLabel(shipment.status, ru)}</Badge>
+      ) : (
+        <div className="flex rounded-lg border border-border bg-surface p-0.5">
+          {ON_THE_WAY.map((st) => (
+            <button
+              key={st}
+              type="button"
+              disabled={busy}
+              onClick={() => void setStatus(st)}
+              className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                shipment.status === st ? "bg-accent-soft-bg text-accent" : "text-muted hover:text-foreground"
+              }`}
+            >
+              {statusLabel(st, ru)}
+            </button>
+          ))}
+        </div>
+      )}
       <span className="flex items-center gap-1.5">
-        <span className="text-[11.5px] text-muted">{ru ? "приход ~" : "ETA ~"}</span>
+        <span className="text-[11.5px] text-muted">{ru ? "в продаже ~" : "sellable ~"}</span>
         {readOnly ? (
           <span className="num text-[12.5px]">
             {shipment.etaDate
@@ -456,7 +496,7 @@ function ShipmentStatusEdit({
   ru: boolean;
   onSaved: () => void;
 }) {
-  const transit = status === "TRANSIT";
+  const transit = status !== "ARRIVED";
   const [eta, setEta] = useState(etaDate ?? "");
   const [arrived, setArrived] = useState(transit ? "" : etaDate ?? "");
   const [disp, setDisp] = useState(dispatchDate ?? "");
@@ -525,7 +565,7 @@ function ShipmentStatusEdit({
 
   if (readOnly) {
     return (
-      <Badge tone={transit ? "accent" : "ok"}>{transit ? (ru ? "В пути" : "In transit") : ru ? "Прибыла" : "Arrived"}</Badge>
+      <Badge tone={transit ? "accent" : "ok"}>{statusLabel(status, ru)}</Badge>
     );
   }
   return (
@@ -1115,8 +1155,8 @@ export default function ShipmentsView({
   shipmentCosts: ShipmentCost[];
   expenses: ExpenseRow[];
   importCategories: Array<{ id: string; name: string }>;
-  /** trucks still on the road — planning-only until marked arrived */
-  transit: Array<{ id: string; code: string; etaDate: string | null; totalUnits: number }>;
+  /** trucks not arrived yet (planned … at customs) — planning-only until marked arrived */
+  transit: Array<{ id: string; code: string; status: string; etaDate: string | null; totalUnits: number }>;
   /** shipmentId -> live status/eta for every non-deleted shipment */
   statusById: Record<string, { status: string; etaDate: string | null; dispatchDate: string | null }>;
   readOnly: boolean;
@@ -1234,15 +1274,17 @@ export default function ShipmentsView({
 
       <MetricStrip metrics={metrics} />
 
-      {/* trucks in transit — visible to planning, outside COGS until arrival */}
+      {/* trucks not arrived yet — visible to planning, outside COGS until arrival */}
       {transit.length > 0 && (
         <div className="mb-5 overflow-hidden rounded-xl border border-accent-soft bg-accent-soft-bg/60">
           <div className="flex items-center gap-2 border-b border-accent-soft px-4 py-2.5">
             <span className="text-[13px] font-semibold text-accent">
-              {ru ? "В пути" : "In transit"} · {transit.length}
+              {ru ? "Не прибыли" : "On the way"} · {transit.length}
             </span>
             <span className="text-[11.5px] text-muted">
-              {ru ? "в себестоимость попадут после прибытия" : "enter cost of goods on arrival"}
+              {ru
+                ? "в остатки и себестоимость попадут после прибытия; дата — когда товар можно продавать"
+                : "enter stock and cost of goods on arrival; the date is when the goods can be sold"}
             </span>
           </div>
           <div className="divide-y divide-accent-soft/70">
@@ -1325,10 +1367,8 @@ export default function ShipmentsView({
                     <td className="num text-right">×{s.loadFactor.toFixed(3)}</td>
                     <td className="text-right">
                       <span className="inline-flex items-center gap-1.5">
-                        <Badge tone={statusById[s.shipmentId]?.status === "TRANSIT" ? "accent" : "ok"}>
-                          {statusById[s.shipmentId]?.status === "TRANSIT"
-                            ? ru ? "В пути" : "Transit"
-                            : ru ? "Прибыла" : "Arrived"}
+                        <Badge tone={(statusById[s.shipmentId]?.status ?? "ARRIVED") !== "ARRIVED" ? "accent" : "ok"}>
+                          {statusLabel(statusById[s.shipmentId]?.status ?? "ARRIVED", ru)}
                         </Badge>
                       </span>
                     </td>

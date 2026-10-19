@@ -176,7 +176,8 @@ export async function loadPlanning(): Promise<PlanningData> {
   const transit: TransitShipment[] = [];
   const leads: number[] = [];
   for (const sh of shipments) {
-    if (sh.status !== "TRANSIT" && sh.dispatchDate && sh.etaDate) {
+    // road time from the trucks that have really arrived (planned and ordered trucks only have estimates)
+    if (sh.status === "ARRIVED" && sh.dispatchDate && sh.etaDate) {
       leads.push((sh.etaDate.getTime() - sh.dispatchDate.getTime()) / 86_400_000);
     }
     const etaMonth = sh.etaDate ? monthKeyOf(sh.etaDate) : addMonths(thisMonth, 1);
