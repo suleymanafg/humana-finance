@@ -8,7 +8,7 @@ import { addMonths } from "../planning/compute";
 import { BUDGET_END, BUDGET_ORIGIN, monthRange, runBudget, type BudgetOpening } from "./model";
 import { capitalAnswer } from "./capital";
 import { actualMonth, openingAt, type ActualMonth } from "./actuals";
-import { forecastRun } from "./forecast";
+import { forecastInputs, forecastRun } from "./forecast";
 import { supplyFromPlan, type ArrivedTruck } from "./supply";
 import { loadPlan } from "../planning/plan-data";
 import { ESTIMATE_PREFIX, parseStored, SETTING_APPROVED, SETTING_FORECAST } from "./store";
@@ -103,6 +103,9 @@ export const loadBudget = cache(async () => {
     supplyFromPlan: supply !== null,
     /** the estimates kept at the start of each month — what a closed month is compared with */
     estimates,
+    /** what the estimate runs on — for what-ifs run in the browser */
+    planInputs: forecastInputs(working.inputs, start?.opening ?? null),
+    supply,
     /** does the approved budget's opening match the books at that month-end? */
     openingCheck: booksAtBudgetOpening ? openingDiffs(approved.inputs.opening, booksAtBudgetOpening.opening) : null,
     months: monthRange(BUDGET_ORIGIN, BUDGET_END),

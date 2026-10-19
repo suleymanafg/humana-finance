@@ -5,6 +5,7 @@ import { forecastRun } from "../forecast";
 import { checkInputs, parseStored, shiftMonthly } from "../store";
 import { opexGroupOf, type ActualMonth } from "../actuals";
 import { BUDGET_STATEMENTS, estimateSourceFor, snapshotFromRun, statementGrid } from "../statements";
+import { applyScenario } from "../scenario";
 
 // A small business with round numbers: 1,000 units a month at 100 incl. VAT, all sold by TI,
 // trucks of 1,000, HQ price 5 EUR × 10 = 50 a unit, three months from January to March 2027.
@@ -160,6 +161,34 @@ describe("estimate and actual", () => {
     expect(s.months).toEqual(months);
     expect(s.values["cash.close"]).toEqual(plan.cash.close);
     expect(s.values["stock.arrivals"]).toEqual(plan.stock.arrivals);
+  });
+});
+
+describe("what-ifs on the capital page", () => {
+  const by = (a: number, b: number, c: number) => ({ "2027-01": a, "2027-02": b, "2027-03": c });
+  const supply = { marketUnits: by(1000, 1000, 1000), listPrice: by(100, 100, 100), arrivals: by(1000, 1000, 1000), arrivalsHq: by(50_000, 50_000, 50_000), paidHq: by(50_000, 50_000, 50_000), trucks: by(1, 1, 1) };
+  const zero = { sales: 0, price: 0, fx: 0, days: 0, reserve: 1 };
+  const run = (s: typeof zero) => {
+    const a = applyScenario(inputs(), supply, s);
+    return runBudget(a.inputs, { end: "2027-03", supply: a.supply });
+  };
+
+  it("with every slider at zero it is the estimate itself", () => {
+    expect(run(zero)).toEqual(runBudget(inputs(), { end: "2027-03", supply }));
+  });
+
+  it("moves the figures the right way", () => {
+    const np = (r: ReturnType<typeof run>) => r.pnl.netProfit.reduce((t, x) => t + x, 0);
+    expect(np(run({ ...zero, price: 0.1 }))).toBeGreaterThan(np(run(zero)));
+    expect(np(run({ ...zero, fx: 0.1 }))).toBeLessThan(np(run(zero)));
+    // the first month's trucks are decided: sales and goods move from the month after
+    expect(run({ ...zero, sales: 0.1 }).sales.marketUnits.slice(0, 2)).toEqual([1000, 1100]);
+    expect(run({ ...zero, sales: 0.1 }).cash.paidHq[0]).toBeCloseTo(-50_000);
+    expect(run({ ...zero, sales: 0.1 }).cash.paidHq[1]).toBeCloseTo(-55_000);
+    // the euro rate moves every payment still to make, the first month's too
+    expect(run({ ...zero, fx: 0.1 }).cash.paidHq[0]).toBeCloseTo(-55_000);
+    expect(run({ ...zero, days: 30 }).sales.customersOwe[2]).toBeGreaterThan(run(zero).sales.customersOwe[2]);
+    expect(run({ ...zero, reserve: 0 }).cash.reserve.every((x) => x === 0)).toBe(true);
   });
 });
 

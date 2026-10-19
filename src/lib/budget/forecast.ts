@@ -6,9 +6,14 @@
 import { monthRange, runBudget, type BudgetInputs, type BudgetOpening, type BudgetSupply } from "./model";
 import { shiftMonthly } from "./store";
 
-/** The plan part of the forecast: from the inputs' own opening, or from a later real one; trucks and sales from the supply plan when given. */
-export function forecastRun(inputs: BudgetInputs, realOpening: BudgetOpening | null, supply?: BudgetSupply) {
-  if (!realOpening || realOpening.monthId <= inputs.opening.monthId) return runBudget(inputs, { supply });
+/** The inputs the forecast runs on: the inputs' own opening, or a later real one with the monthly inputs moved on. */
+export function forecastInputs(inputs: BudgetInputs, realOpening: BudgetOpening | null): BudgetInputs {
+  if (!realOpening || realOpening.monthId <= inputs.opening.monthId) return inputs;
   const offset = monthRange(inputs.opening.monthId, realOpening.monthId).length - 1;
-  return runBudget({ ...inputs, opening: realOpening, monthly: shiftMonthly(inputs.monthly, offset) }, { supply });
+  return { ...inputs, opening: realOpening, monthly: shiftMonthly(inputs.monthly, offset) };
+}
+
+/** The plan part of the forecast; trucks and sales from the supply plan when given. */
+export function forecastRun(inputs: BudgetInputs, realOpening: BudgetOpening | null, supply?: BudgetSupply) {
+  return runBudget(forecastInputs(inputs, realOpening), { supply });
 }
