@@ -1,16 +1,17 @@
 "use client";
 
 // The budget's assumptions — the workbook's yellow cells — as a form, with the
-// answer recalculated live as you type. Save keeps them as the working
-// forecast; Approve makes the forecast the budget that plan vs actual is
-// measured against. A budget workbook (v10 layout) can be loaded instead.
+// capital answer recalculated live as you type (on the supply plan, as the
+// Capital page does). Save keeps them as the estimate. While the supply plan
+// drives sales and trucks, the workbook's own sales and truck inputs are not
+// shown — they would change nothing.
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT, type Bi } from "@/lib/locale-context";
 import { fmtN, numberInputText, parseNum } from "@/lib/format";
 import { shortMonth } from "@/lib/statement-ui";
 import { addMonths } from "@/lib/planning/compute";
-import { channelShares, monthRange, type BudgetInputs, type BudgetMonthly, type BudgetOpening } from "@/lib/budget/model";
+import { channelShares, monthRange, type BudgetInputs, type BudgetMonthly, type BudgetOpening, type BudgetSupply } from "@/lib/budget/model";
 import { capitalAnswer } from "@/lib/budget/capital";
 import { forecastRun } from "@/lib/budget/forecast";
 import type { StoredBudget } from "@/lib/budget/store";
@@ -19,8 +20,8 @@ import { Button, Card, CardHeader, Modal, NumberInput, Select } from "../ui";
 type Kind = "pct" | "num" | "money" | "dec" | "int";
 type ScalarKey = { [K in keyof BudgetInputs]: BudgetInputs[K] extends number ? K : never }[keyof BudgetInputs];
 interface FieldDef { key: ScalarKey | "hqEurPerUnit"; label: Bi; kind: Kind; hint?: Bi }
-// the forecast takes its trucks from the supply plan; these drive only a budget without it
-const PLAN_HINT: Bi = { ru: "в оценке не используется: фуры — из плана поставок", en: "not used in the estimate: trucks come from the supply plan" };
+/** inputs the supply plan replaces: sales volume and the workbook's truck rule */
+const PLAN_DRIVEN = new Set<string>(["baseUnits", "growth", "spikeReady", "coverMonths", "buildupMonths", "leadDays", "truckUnits", "hqEurPerUnit", "spikeBuffer", "spikePct", "expectedUnits", "fixedTrucks"]);
 
 const SECTIONS: { title: Bi; fields: FieldDef[] }[] = [
   {
@@ -47,10 +48,10 @@ const SECTIONS: { title: Bi; fields: FieldDef[] }[] = [
   {
     title: { ru: "Импорт и запасы", en: "Imports and stock" },
     fields: [
-      { key: "coverMonths", label: { ru: "Целевой запас, месяцев продаж", en: "Target stock, months of sales" }, kind: "dec", hint: PLAN_HINT },
-      { key: "buildupMonths", label: { ru: "За сколько месяцев выйти на запас", en: "Months to build stock up" }, kind: "int", hint: PLAN_HINT },
-      { key: "leadDays", label: { ru: "Дней от оплаты HQ до продажи (0–60)", en: "Days from paying HQ to selling (0–60)" }, kind: "int", hint: PLAN_HINT },
-      { key: "truckUnits", label: { ru: "Штук в фуре", en: "Units per truck" }, kind: "num", hint: PLAN_HINT },
+      { key: "coverMonths", label: { ru: "Целевой запас, месяцев продаж", en: "Target stock, months of sales" }, kind: "dec" },
+      { key: "buildupMonths", label: { ru: "За сколько месяцев выйти на запас", en: "Months to build stock up" }, kind: "int" },
+      { key: "leadDays", label: { ru: "Дней от оплаты HQ до продажи (0–60)", en: "Days from paying HQ to selling (0–60)" }, kind: "int" },
+      { key: "truckUnits", label: { ru: "Штук в фуре", en: "Units per truck" }, kind: "num" },
       { key: "importCostPct", label: { ru: "Импортные расходы без НДС, % закупки", en: "Import costs excl. VAT, % of purchase" }, kind: "pct" },
       { key: "importVatPct", label: { ru: "Импортный НДС, % закупки", en: "Import VAT, % of purchase" }, kind: "pct" },
       { key: "hqEurPerUnit", label: { ru: "Цена HQ за шт., EUR (пусто = по ассортименту)", en: "HQ price per unit, EUR (blank = product mix)" }, kind: "dec" },
@@ -140,12 +141,15 @@ export default function BudgetInputsEditor({
   realOpening,
   alreadyIn,
   closed,
+  supply,
 }: {
   approved: StoredBudget;
   working: StoredBudget;
   realOpening: BudgetOpening | null;
   alreadyIn: number;
   closed: string[];
+  /** the supply plan the estimate runs on; null — the workbook's own rule */
+  supply: BudgetSupply | null;
 }) {
   const { locale, l } = useT();
   const router = useRouter();
@@ -158,9 +162,10 @@ export default function BudgetInputsEditor({
   const months = monthRange(addMonths(inputs.opening.monthId, 1), "2027-12");
   const closedSet = new Set(closed);
 
-  const answer = (i: BudgetInputs) => {
+  const planDriven = supply !== null;
+  const answer = (i: BudgetInputs, opening: BudgetOpening | null = realOpening, sup: BudgetSupply | null | undefined = supply) => {
     try {
-      const cap = capitalAnswer(forecastRun(i, realOpening), i);
+      const cap = capitalAnswer(forecastRun(i, opening, sup ?? undefined), i);
       return { ask: Math.max(0, cap.ask - alreadyIn), first: cap.firstNeeded, worst: cap.worstMonth, headroom: cap.headroom, ok: Object.values(cap.checks).every(Boolean) };
     } catch {
       return null;
@@ -168,7 +173,7 @@ export default function BudgetInputsEditor({
   };
   const live = useMemo(() => answer(inputs), [inputs]); // eslint-disable-line react-hooks/exhaustive-deps
   const saved = useMemo(() => answer(working.inputs), [working]); // eslint-disable-line react-hooks/exhaustive-deps
-  const budget = useMemo(() => answer(approved.inputs), [approved]); // eslint-disable-line react-hooks/exhaustive-deps
+  const budget = useMemo(() => answer(approved.inputs, null, approved.supply), [approved]); // eslint-disable-line react-hooks/exhaustive-deps
   const shares = channelShares(inputs);
 
   const set = <K extends keyof BudgetInputs>(key: K, v: BudgetInputs[K]) => setInputs((x) => ({ ...x, [key]: v }));
@@ -195,19 +200,15 @@ export default function BudgetInputsEditor({
     <div key={version}>
       <div className="sticky top-16 z-20 mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-border bg-surface px-4 py-3 shadow-sm">
         <div>
-          <div className="text-[11.5px] text-muted">{l({ ru: "Просим у акционеров — с этими допущениями", en: "Ask shareholders — with these assumptions" })}</div>
+          <div className="text-[11.5px] text-muted">{l({ ru: "Нужно от акционеров — с этими допущениями", en: "Needed from shareholders — with these assumptions" })}</div>
           <div className="text-[18px] font-semibold tabular-nums">{fmtAnswer(live)}</div>
         </div>
-        <div className="text-[12.5px]">
-          <div className="text-muted">{l({ ru: "Сохранённая оценка", en: "Saved estimate" })}: <b className="tabular-nums">{fmtAnswer(saved)}</b></div>
-          <div className="text-muted">{l({ ru: "Исходный бюджет", en: "Original budget" })}: <b className="tabular-nums">{fmtAnswer(budget)}</b></div>
-        </div>
-        {live && (
-          <div className={`text-[12.5px] ${live.headroom < 0 ? "text-danger" : "text-muted"}`}>
-            {l({ ru: "Самый узкий месяц", en: "Tightest month" })}: {shortMonth(live.worst, locale)} · {fmtN(live.headroom)}
-            {!live.ok && <span className="ml-2 text-danger">{l({ ru: "проверки не прошли", en: "checks fail" })}</span>}
+        {dirty && (
+          <div className="text-[12.5px] text-muted">
+            {l({ ru: "Сейчас сохранено", en: "Saved now" })}: <b className="tabular-nums">{fmtAnswer(saved)}</b>
           </div>
         )}
+        {live && !live.ok && <span className="text-[12.5px] text-danger">{l({ ru: "Расчёт не сходится — проверьте допущения", en: "The calculation does not add up — check the assumptions" })}</span>}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {message && <span className={`text-[12px] ${message.ok ? "text-ok" : "text-danger"}`}>{message.text}</span>}
           {dirty && (
@@ -215,8 +216,6 @@ export default function BudgetInputsEditor({
               {l({ ru: "Отменить правки", en: "Undo edits" })}
             </Button>
           )}
-          <Button variant="secondary" onClick={() => setConfirm("reset")} disabled={busy}>{l({ ru: "Вернуть к исходному бюджету", en: "Back to the original budget" })}</Button>
-          <Button variant="secondary" onClick={() => setConfirm("approve")} disabled={busy || dirty}>{l({ ru: "Сделать исходным бюджетом", en: "Make it the original budget" })}</Button>
           <Button onClick={() => post({ action: "save", inputs }, { ru: "Оценка сохранена", en: "Estimate saved" })} disabled={busy || !dirty}>
             {l({ ru: "Сохранить оценку", en: "Save the estimate" })}
           </Button>
@@ -224,12 +223,27 @@ export default function BudgetInputsEditor({
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        {SECTIONS.map((s) => (
+        {planDriven && (
+          <Card>
+            <CardHeader title={l({ ru: "Продажи и закупки", en: "Sales and purchases" })} />
+            <div className="space-y-1.5 px-4 pb-4 text-[12.5px]">
+              <div className="flex items-baseline justify-between gap-3">
+                <span>{l({ ru: "Продажи по месяцам, банок", en: "Sales by month, tins" })}</span>
+                <a href="/planning/demand" className="font-medium text-accent hover:underline">{l({ ru: "Модель спроса →", en: "Demand model →" })}</a>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <span>{l({ ru: "Фуры, оплаты HQ и приход товара", en: "Trucks, HQ payments and arrivals" })}</span>
+                <a href="/planning/orders" className="font-medium text-accent hover:underline">{l({ ru: "План поставок →", en: "Supply plan →" })}</a>
+              </div>
+            </div>
+          </Card>
+        )}
+        {SECTIONS.filter((s) => s.fields.some((fd) => !(planDriven && PLAN_DRIVEN.has(fd.key)))).map((s) => (
           <Card key={s.title.en}>
             <CardHeader title={l(s.title)} />
             <table className="w-full text-[12.5px]">
               <tbody>
-                {s.fields.map((fd) => {
+                {s.fields.filter((fd) => !(planDriven && PLAN_DRIVEN.has(fd.key))).map((fd) => {
                   const v = inputs[fd.key] as number | null;
                   const a = approvedOf(fd.key);
                   return (
@@ -254,7 +268,7 @@ export default function BudgetInputsEditor({
         ))}
 
         <Card>
-          <CardHeader title={l({ ru: "Каналы продаж", en: "Sales channels" })} desc={l({ ru: "Доля Корзинки — ваша; остальные каналы сохраняют структуру и заполняют остаток", en: "Korzinka's share is yours; the other channels keep their mix and fill the rest" })} />
+          <CardHeader title={l({ ru: "Каналы продаж", en: "Sales channels" })} />
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="text-[11.5px] text-muted">
@@ -286,14 +300,14 @@ export default function BudgetInputsEditor({
         </Card>
 
         <Card>
-          <CardHeader title={l({ ru: "Продукты", en: "Products" })} desc={l({ ru: "Прайс с НДС, цена HQ и продажи в базовом периоде (структура продаж)", en: "List price incl. VAT, HQ price and units in the base period (the sales mix)" })} />
+          <CardHeader title={l(planDriven ? { ru: "Цены продажи (прайс с НДС)", en: "Selling prices (list, incl. VAT)" } : { ru: "Продукты", en: "Products" })} />
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="text-[11.5px] text-muted">
                 <th className="px-4 py-1.5 text-left font-normal">{l({ ru: "Продукт", en: "Product" })}</th>
                 <th className="px-2 text-right font-normal">{l({ ru: "Прайс", en: "List price" })}</th>
-                <th className="px-2 text-right font-normal">EUR</th>
-                <th className="px-3 text-right font-normal">{l({ ru: "Шт.", en: "Units" })}</th>
+                {!planDriven && <th className="px-2 text-right font-normal">EUR</th>}
+                {!planDriven && <th className="px-3 text-right font-normal">{l({ ru: "Шт.", en: "Units" })}</th>}
               </tr>
             </thead>
             <tbody>
@@ -303,8 +317,8 @@ export default function BudgetInputsEditor({
                   <tr key={i} className="border-t border-border/60">
                     <td className="px-4 py-1.5">{p.name}</td>
                     <td className="px-2 text-right"><NumField value={p.listPrice} kind="money" className="w-24" onChange={(n) => setP({ listPrice: n ?? 0 })} /></td>
-                    <td className="px-2 text-right"><NumField value={p.hqEur} kind="dec" className="w-20" onChange={(n) => setP({ hqEur: n ?? 0 })} /></td>
-                    <td className="px-3 text-right"><NumField value={p.units} kind="num" className="w-20" onChange={(n) => setP({ units: n ?? 0 })} /></td>
+                    {!planDriven && <td className="px-2 text-right"><NumField value={p.hqEur} kind="dec" className="w-20" onChange={(n) => setP({ hqEur: n ?? 0 })} /></td>}
+                    {!planDriven && <td className="px-3 text-right"><NumField value={p.units} kind="num" className="w-20" onChange={(n) => setP({ units: n ?? 0 })} /></td>}
                   </tr>
                 );
               })}
@@ -313,7 +327,7 @@ export default function BudgetInputsEditor({
         </Card>
 
         <Card>
-          <CardHeader title={l({ ru: "Общие расходы с Union Invest (в месяц, на оба бренда)", en: "Costs shared with Union Invest (per month, both brands)" })} desc={l({ ru: "50/50 — поровну; SALES — по доле продаж брендов", en: "50/50 — half each; SALES — by each brand's share of sales" })} />
+          <CardHeader title={l({ ru: "Общие расходы с Union Invest (в месяц, на оба бренда)", en: "Costs shared with Union Invest (per month, both brands)" })} desc={l({ ru: "50/50 — поровну, SALES — по доле продаж", en: "50/50 — half each, SALES — by share of sales" })} />
           <table className="w-full text-[12.5px]">
             <tbody>
               {inputs.shared.map((s, i) => (
@@ -336,7 +350,7 @@ export default function BudgetInputsEditor({
       <Card className="mt-4">
         <CardHeader
           title={l({ ru: "По месяцам", en: "Month by month" })}
-          desc={l({ ru: "Закрытые месяцы — факт из учёта; их значения здесь не используются", en: "Closed months are actual from the books; their values here are not used" })}
+          desc={closed.length ? l({ ru: "Закрытые месяцы — по учёту", en: "Closed months come from the books" }) : undefined}
         />
         <div className="overflow-x-auto">
           <table className="text-[12px]">
@@ -352,7 +366,7 @@ export default function BudgetInputsEditor({
               </tr>
             </thead>
             <tbody>
-              {MONTHLY.map((row) => (
+              {MONTHLY.filter((row) => !(planDriven && PLAN_DRIVEN.has(row.key))).map((row) => (
                 <tr key={row.key} className="border-t border-border/60">
                   <td className="sticky left-0 z-10 bg-surface px-4 py-1">{l(row.label)}</td>
                   {months.map((m, i) => {
@@ -392,6 +406,14 @@ export default function BudgetInputsEditor({
           </table>
         </div>
       </Card>
+
+      <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-border pt-4 text-[12.5px]">
+        <span className="mr-2 text-muted">
+          {l({ ru: "Исходный бюджет", en: "Original budget" })}: <b className="tabular-nums">{fmtAnswer(budget)}</b>
+        </span>
+        <Button variant="secondary" onClick={() => setConfirm("reset")} disabled={busy}>{l({ ru: "Вернуть допущения исходного бюджета", en: "Back to the original budget's assumptions" })}</Button>
+        <Button variant="secondary" onClick={() => setConfirm("approve")} disabled={busy || dirty}>{l({ ru: "Сделать исходным бюджетом", en: "Make it the original budget" })}</Button>
+      </div>
 
       {confirm && (
         <Modal title={confirm === "approve" ? l({ ru: "Сделать эту оценку исходным бюджетом?", en: "Make this estimate the original budget?" }) : l({ ru: "Вернуть оценку к исходному бюджету?", en: "Reset the estimate to the original budget?" })} onClose={() => setConfirm(null)}>

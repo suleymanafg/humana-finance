@@ -150,7 +150,7 @@ export interface GridCell {
 export interface StatementGrid {
   columns: { key: string; months: string[]; kind: "actual" | "estimate" | "period"; source?: EstimateSource["kind"]; sourceMonth?: string; takenAt?: string }[];
   /** plain data, so a client table can render it */
-  rows: { key: string; label: Bi; kind: BudgetLine["kind"]; units: boolean; decimals: number; cells: GridCell[] }[];
+  rows: { key: string; label: Bi; kind: BudgetLine["kind"]; units: boolean; decimals: number; period: BudgetLine["period"]; cells: GridCell[] }[];
 }
 
 const periodOf = (line: BudgetLine, vals: (number | null)[]): number | null => {
@@ -211,6 +211,7 @@ export function statementGrid(
     kind: line.kind,
     units: !!line.units,
     decimals: line.decimals ?? 0,
+    period: line.period,
     cells: columns.map((c): GridCell => {
       if (line.kind === "header") return { v: null };
       if (c.kind !== "period") return { v: main(line, c.key), ref: ref(line, c.key) };

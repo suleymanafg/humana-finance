@@ -116,20 +116,3 @@ export const loadBudget = cache(async () => {
 });
 
 export type BudgetData = Exclude<Awaited<ReturnType<typeof loadBudget>>, { empty: true }>;
-
-/** The few facts every budget page shows in its status line. */
-export function statusInfo(d: BudgetData) {
-  return {
-    approvedName: d.approved.name,
-    approvedAt: d.approved.savedAt,
-    forecastName: d.working.name,
-    forecastAt: d.working.savedAt,
-    lastClosed: d.lastClosed,
-    planStart: d.plan?.months[0] ?? null,
-    budgetOpening: d.approved.inputs.opening.monthId,
-    openingCheck: d.openingCheck,
-    estimated: d.startEstimated,
-    missingBalances: d.missingBalances,
-    supplyFromPlan: d.supplyFromPlan,
-  };
-}
