@@ -51,6 +51,7 @@ This app is the financial + supply-planning system for **Humana Uzbekistan**: Tu
 - `prisma/debug-*.ts` are gitignored read-only diagnostics (support `--production`). `prisma/refresh-dev-from-prod.ts` mirrors prod→dev (owner runs `--commit`).
 - New financial model (branch `claude/upbeat-knuth-bbh4ug`, Vercel preview): since Oct 2026 the owner enters real data into it, and it runs on the Neon `dev` branch. That branch is no longer a disposable copy — never refresh it from production (the script refuses unless `--force`), never reset it from its parent, and remember that `prisma/import-workbook.ts` replaces everything up to the workbook's report month (rows after it stay as the app has them) — re-import only a workbook the owner gives as the corrected record. The plan is a separate Vercel project for this version with its own database once it has proven itself.
 - Roles: ADMIN (owner) / STAFF (figures only) / VIEWER. Planning section is ADMIN-only.
+- The header's month switch drives the sections that read the month (`pageContext(sp.month)`: statements, settlement, sales, goods, expenses, taxes, funding, close, overview). Sections that do not follow it carry `months` in `nav.ts` — `"today"` (supply planning: runs from today) or `"all"` (budget, distribution handover: every month on one page) — and the header shows a note there instead of the switch.
 - For bulk data the owner provides files (Downloads folder); parse with the `xlsx` npm package (no Python on this machine).
 
 ## Budget and capital (/budget)

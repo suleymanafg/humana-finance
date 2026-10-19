@@ -15,6 +15,8 @@ export interface NavSection {
   adminOnly?: boolean;
   /** the section renders its own header (supply planning) */
   ownHeader?: boolean;
+  /** a section that does not follow the month switch: "today" — it runs from today; "all" — every month on one page */
+  months?: "today" | "all";
   group: "main" | "admin";
 }
 
@@ -110,6 +112,7 @@ export const SECTIONS: NavSection[] = [
     label: { ru: "Бюджет и капитал", en: "Budget and capital" },
     group: "main",
     adminOnly: true,
+    months: "all",
     pages: [
       { href: "/budget", label: { ru: "Капитал", en: "Capital" } },
       { href: "/budget/statements", label: { ru: "Отчёты по месяцам", en: "Statements by month" } },
@@ -122,6 +125,7 @@ export const SECTIONS: NavSection[] = [
     group: "main",
     adminOnly: true,
     ownHeader: true,
+    months: "today",
     pages: [{ href: "/planning", label: { ru: "Планирование закупок", en: "Supply planning" } }],
   },
   {
@@ -129,6 +133,7 @@ export const SECTIONS: NavSection[] = [
     label: { ru: "Переход дистрибуции", en: "Distribution handover" },
     group: "main",
     adminOnly: true,
+    months: "all",
     pages: [
       { href: "/transition", label: { ru: "Обзор", en: "Overview" } },
       { href: "/transition/plan", label: { ru: "План", en: "Plan" } },

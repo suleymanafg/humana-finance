@@ -143,7 +143,7 @@ export default function AppShell({
 
       <main className="ml-60 flex min-h-screen min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-40 flex h-14 items-center border-b border-border bg-surface/95 px-8 backdrop-blur">
-          <MonthSwitcher months={months} status={status} fallbackMonth={fallbackMonth} />
+          {section?.months ? <MonthNote kind={section.months} /> : <MonthSwitcher months={months} status={status} fallbackMonth={fallbackMonth} />}
         </header>
         {role === "VIEWER" && (
           <div className="mx-8 mt-4 rounded border border-border bg-surface-low px-3.5 py-2 text-[13px] text-muted">
@@ -182,6 +182,29 @@ export default function AppShell({
         </div>
       </main>
       <ChatWidget configured={aiConfigured} canWrite={role === "ADMIN"} />
+    </div>
+  );
+}
+
+/** In place of the month switch, for a section that does not follow it: what the page's figures cover. */
+function MonthNote({ kind }: { kind: "today" | "all" }) {
+  const { locale } = useT();
+  const ru = locale === "ru";
+  const today = new Date().toLocaleDateString(ru ? "ru-RU" : "en-GB", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Tashkent" });
+  return (
+    <div className="flex items-center gap-2 text-[13px]">
+      <span className="rounded-md border border-border bg-surface-low px-2.5 py-1 font-medium">
+        {kind === "today" ? (ru ? `На сегодня, ${today}` : `As of today, ${today}`) : ru ? "Все месяцы на одной странице" : "Every month on one page"}
+      </span>
+      <span className="text-muted">
+        {kind === "today"
+          ? ru
+            ? "план считается от сегодняшнего дня; выбор месяца здесь не действует — прошлые месяцы во вкладке «Оценка и факт»"
+            : "the plan runs from today; the month switch does not apply here — past months are on the «Estimate and actual» tab"
+          : ru
+            ? "выбор месяца здесь не действует"
+            : "the month switch does not apply here"}
+      </span>
     </div>
   );
 }
