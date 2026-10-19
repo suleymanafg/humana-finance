@@ -379,6 +379,26 @@ function TransitRow({
     onSaved();
   }
 
+  // a planned truck is only an agreed load: it can be taken out, and its month goes back to the supply plan
+  async function remove() {
+    if (busy) return;
+    const ok = confirm(
+      ru
+        ? `Убрать ${shipment.code}? Это запланированная фура — когда в её месяце не останется фур, план снова покажет потребность как заказ.`
+        : `Remove ${shipment.code}? It is a planned truck — once its month has no trucks left, the plan shows the need again as an order to place.`
+    );
+    if (!ok) return;
+    setBusy(true);
+    const res = await fetch("/api/planning/trucks", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [shipment.id] }) });
+    setBusy(false);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert(body.error ?? (ru ? "Не удалось убрать фуру" : "Could not remove the truck"));
+      return;
+    }
+    onSaved();
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-4 bg-surface/60 px-4 py-2.5">
       <span className="text-[13px] font-semibold">{shipment.code}</span>
@@ -401,6 +421,16 @@ function TransitRow({
             </button>
           ))}
         </div>
+      )}
+      {!readOnly && (shipment.status === "PLANNED" || shipment.status === "ORDERED") && (
+        <a href="/planning" className="text-[12px] font-medium text-accent hover:underline">
+          {ru ? "изменить состав →" : "change the composition →"}
+        </a>
+      )}
+      {!readOnly && shipment.status === "PLANNED" && (
+        <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
+          <IconTrash size={13} /> {ru ? "Убрать" : "Remove"}
+        </Button>
       )}
       <span className="flex items-center gap-1.5">
         <span className="text-[11.5px] text-muted">{ru ? "в продаже ~" : "sellable ~"}</span>

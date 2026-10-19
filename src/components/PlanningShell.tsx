@@ -15,6 +15,7 @@ const TABS = [
   { href: "/planning", ru: "Этот месяц", en: "This month" },
   { href: "/planning/orders", ru: "Заказы", en: "Orders" },
   { href: "/planning/demand", ru: "Спрос", en: "Demand" },
+  { href: "/planning/review", ru: "Оценка и факт", en: "Estimate and actual" },
   { href: "/planning/settings", ru: "Настройки", en: "Settings" },
 ];
 

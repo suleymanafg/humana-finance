@@ -115,6 +115,12 @@ export interface PlanData {
   eurRate: number;
   slot: PlanningData["slot"];
   ibpSyncedAt: string | null;
+  /** the books, per SKU: month-end stock (TI + Fargo), trucks arrived by month, collected from DMK by dispatch month */
+  actual: {
+    stockEnd: Record<string, Record<string, number>>;
+    arrived: Record<string, Record<string, number>>;
+    pickedUp: Record<string, Record<string, number>>;
+  };
 }
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
@@ -215,6 +221,16 @@ export async function buildPlan(opts: { addTrucks?: WhatIfTruck[] } = {}): Promi
     for (const [m, pos] of Object.entries(fifo.months)) {
       if (m > lastClosed) continue;
       stockEnd[id][m] = (stockEnd[id][m] ?? 0) + pos.tiStockUnits + pos.fargoStockUnits;
+    }
+  }
+
+  // trucks that arrived, by their month in the books (promo folded in)
+  const arrived: Record<string, Record<string, number>> = Object.fromEntries(ids.map((id) => [id, {}]));
+  for (const sh of computed.shipments) {
+    if (sh.status !== "ARRIVED") continue;
+    for (const l of sh.lines) {
+      const id = skuByProduct.get(regularOf.get(l.productId) ?? l.productId);
+      if (id) arrived[id][sh.monthId] = (arrived[id][sh.monthId] ?? 0) + l.qty;
     }
   }
 
@@ -340,6 +356,7 @@ export async function buildPlan(opts: { addTrucks?: WhatIfTruck[] } = {}): Promi
     eurRate: data.eurRate,
     slot: data.slot,
     ibpSyncedAt: data.ibpSyncedAt,
+    actual: { stockEnd, arrived, pickedUp: data.pickups },
   };
 }
 
