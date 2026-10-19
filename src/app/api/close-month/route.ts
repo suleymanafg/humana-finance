@@ -4,6 +4,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
+import { saveEstimate } from "@/lib/budget/estimates";
 
 export async function POST(request: NextRequest) {
   const session = await requireAdmin();
@@ -45,5 +46,15 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({ ok: true });
+  // closing keeps the budget's estimate for the next month — what that month's actual is compared with
+  let estimate: Awaited<ReturnType<typeof saveEstimate>> | null = null;
+  if (action === "close") {
+    try {
+      estimate = await saveEstimate(session.username, { afterClosing: monthId });
+    } catch {
+      estimate = null; // the close stands either way
+    }
+  }
+
+  return NextResponse.json({ ok: true, estimate });
 }

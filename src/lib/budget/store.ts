@@ -9,6 +9,8 @@ export const SETTING_APPROVED = "budget.approved";
 export const SETTING_FORECAST = "budget.forecast";
 /** the approved budget before the last approval, kept for one step back */
 export const SETTING_PREVIOUS = "budget.approved.previous";
+/** the estimate kept at the start of each month: "budget.estimate.YYYY-MM" */
+export const ESTIMATE_PREFIX = "budget.estimate.";
 
 export interface StoredBudget {
   name: string;

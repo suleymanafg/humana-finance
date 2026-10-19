@@ -1,7 +1,7 @@
 // «Капитал» — the budget section's answer for shareholders: how much money to
 // bring in and when, where it is tied up, how the number is reached and what
-// could change it. The forecast (closed months actual, the rest plan from the
-// real balances) next to the approved budget.
+// could change it. The estimate (closed months actual, the rest estimated from
+// the real balances and the supply plan) next to the original budget.
 import { pageContext, type SearchParams } from "@/lib/page-context";
 import { loadBudget, statusInfo } from "@/lib/budget/data";
 import { BUDGET_STATEMENTS, statementGrid } from "@/lib/budget/statements";
@@ -35,13 +35,12 @@ export default async function BudgetCapitalPage({ searchParams }: { searchParams
       }).filter((r) => Math.abs(r.bring) >= 0.5 || (r.budgetBring ?? 0) >= 0.5)
     : [];
 
-  // the year at a glance: forecast totals include the closed months' actuals
-  const pnl = (basis: "forecast" | "budget") => statementGrid(BUDGET_STATEMENTS.pnl, data.months, data, basis);
-  const grids = { forecast: pnl("forecast"), budget: pnl("budget") };
+  // the year at a glance: actual so far + the estimate for the rest, next to the original budget
+  const grid = statementGrid(BUDGET_STATEMENTS.pnl, "pnl", data.months, data, "start");
   const yearValue = (basis: "forecast" | "budget", key: string, year: string) => {
-    const g = grids[basis];
-    const col = g.columns.findIndex((c) => c.key === `y${year}`);
-    return g.rows.find((r) => r.key === key)?.values[col] ?? null;
+    const col = grid.columns.findIndex((c) => c.key === `y${year}`);
+    const cell = grid.rows.find((r) => r.key === key)?.cells[col];
+    return (basis === "forecast" ? cell?.v : cell?.ref) ?? null;
   };
   const years = ["2026", "2027"];
   const glance = [
@@ -90,7 +89,7 @@ export default async function BudgetCapitalPage({ searchParams }: { searchParams
           sub={still > 0.5 ? l({ ru: `впервые нужно в ${m(fc?.firstNeeded ?? null)}`, en: `first needed in ${m(fc?.firstNeeded ?? null)}` }) : l({ ru: "новые деньги не нужны", en: "no new money needed" })}
         />
         <Figure
-          label={l({ ru: "В утверждённом бюджете", en: "In the approved budget" })}
+          label={l({ ru: "В исходном бюджете", en: "In the original budget" })}
           value={fmtN(bc.ask)}
           sub={bc.firstNeeded ? l({ ru: `с ${m(bc.firstNeeded)}`, en: `from ${m(bc.firstNeeded)}` }) : l({ ru: "не нужно", en: "not needed" })}
         />
@@ -117,7 +116,7 @@ export default async function BudgetCapitalPage({ searchParams }: { searchParams
         <Figure
           label={l({ ru: "Буфер на рост продаж (рекомендуем)", en: "Buffer for a sales jump (recommended)" })}
           value={fmtN(bc.spikeBuffer)}
-          sub={l({ ru: "по желанию, из бюджета", en: "optional, from the budget" })}
+          sub={l({ ru: "по желанию, из исходного бюджета", en: "optional, from the original budget" })}
         />
       </div>
 
@@ -129,9 +128,9 @@ export default async function BudgetCapitalPage({ searchParams }: { searchParams
               <thead>
                 <tr>
                   <th className="sticky-col">{l({ ru: "Месяц", en: "Month" })}</th>
-                  <th>{l({ ru: "Прогноз: внести", en: "Forecast: bring in" })}</th>
+                  <th>{l({ ru: "Оценка: внести", en: "Estimate: bring in" })}</th>
                   <th>{l({ ru: "Всего к этому месяцу", en: "Total by then" })}</th>
-                  <th>{l({ ru: "Бюджет: внести", en: "Budget: bring in" })}</th>
+                  <th>{l({ ru: "Исходный бюджет: внести", en: "Original budget: bring in" })}</th>
                 </tr>
               </thead>
               <tbody>
@@ -165,8 +164,8 @@ export default async function BudgetCapitalPage({ searchParams }: { searchParams
               <thead>
                 <tr>
                   <th className="sticky-col" />
-                  <th>{l({ ru: "Прогноз", en: "Forecast" })}</th>
-                  <th>{l({ ru: `Бюджет (${m(bc.peakMonth)})`, en: `Budget (${m(bc.peakMonth)})` })}</th>
+                  <th>{l({ ru: "Оценка", en: "Estimate" })}</th>
+                  <th>{l({ ru: `Исходный бюджет (${m(bc.peakMonth)})`, en: `Original budget (${m(bc.peakMonth)})` })}</th>
                 </tr>
               </thead>
               <tbody>
@@ -229,7 +228,7 @@ export default async function BudgetCapitalPage({ searchParams }: { searchParams
                     <th key={y}>{y === "2026" ? l({ ru: "Окт–дек 2026", en: "Oct–Dec 2026" }) : y}</th>
                   ))}
                   {years.map((y) => (
-                    <th key={`b${y}`} className="text-muted">{l({ ru: `Бюджет ${y === "2026" ? "окт–дек 26" : y}`, en: `Budget ${y === "2026" ? "Oct–Dec 26" : y}` })}</th>
+                    <th key={`b${y}`} className="text-muted">{l({ ru: `Исх. бюджет ${y === "2026" ? "окт–дек 26" : y}`, en: `Original budget ${y === "2026" ? "Oct–Dec 26" : y}` })}</th>
                   ))}
                 </tr>
               </thead>

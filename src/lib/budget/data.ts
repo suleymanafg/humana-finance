@@ -11,7 +11,8 @@ import { actualMonth, openingAt, type ActualMonth } from "./actuals";
 import { forecastRun } from "./forecast";
 import { supplyFromPlan, type ArrivedTruck } from "./supply";
 import { loadPlan } from "../planning/plan-data";
-import { parseStored, SETTING_APPROVED, SETTING_FORECAST } from "./store";
+import { ESTIMATE_PREFIX, parseStored, SETTING_APPROVED, SETTING_FORECAST } from "./store";
+import type { EstimateSnapshot } from "./statements";
 
 /** Opening lines whose budget figure differs from the books at the same month-end. */
 function openingDiffs(budget: BudgetOpening, books: BudgetOpening) {
@@ -43,8 +44,26 @@ export async function planSupply(start: string, inputs: Parameters<typeof supply
   }
 }
 
+/** The estimates kept at the start of each month, oldest first. */
+async function loadEstimates(): Promise<EstimateSnapshot[]> {
+  const rows = await prisma.setting.findMany({ where: { key: { startsWith: ESTIMATE_PREFIX } } });
+  const out: EstimateSnapshot[] = [];
+  for (const r of rows) {
+    try {
+      const s = JSON.parse(r.value) as EstimateSnapshot;
+      if (/^\d{4}-\d{2}$/.test(s.monthId) && Array.isArray(s.months) && s.values && typeof s.values === "object") out.push(s);
+    } catch {
+      // a broken row is left out
+    }
+  }
+  return out.sort((a, b) => a.monthId.localeCompare(b.monthId));
+}
+
 export const loadBudget = cache(async () => {
-  const rows = await prisma.setting.findMany({ where: { key: { in: [SETTING_APPROVED, SETTING_FORECAST] } } });
+  const [rows, estimates] = await Promise.all([
+    prisma.setting.findMany({ where: { key: { in: [SETTING_APPROVED, SETTING_FORECAST] } } }),
+    loadEstimates(),
+  ]);
   const approved = parseStored(rows.find((r) => r.key === SETTING_APPROVED)?.value);
   const working = parseStored(rows.find((r) => r.key === SETTING_FORECAST)?.value) ?? approved;
   if (!approved || !working) return { empty: true as const };
@@ -82,6 +101,8 @@ export const loadBudget = cache(async () => {
     planCapital: plan ? capitalAnswer(plan, working.inputs) : null,
     /** the forecast's trucks and sales follow the supply plan (else the workbook's own truck rule) */
     supplyFromPlan: supply !== null,
+    /** the estimates kept at the start of each month — what a closed month is compared with */
+    estimates,
     /** does the approved budget's opening match the books at that month-end? */
     openingCheck: booksAtBudgetOpening ? openingDiffs(approved.inputs.opening, booksAtBudgetOpening.opening) : null,
     months: monthRange(BUDGET_ORIGIN, BUDGET_END),

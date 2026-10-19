@@ -1,6 +1,6 @@
 "use client";
 
-// One line on every budget page: which budget and forecast are shown, how far
+// One line on every budget page: which original budget and estimate are shown, how far
 // the actuals go, and whether the budget's opening still matches the books.
 import Link from "next/link";
 import { useT } from "@/lib/locale-context";
@@ -30,11 +30,11 @@ export function BudgetStatus({ info }: { info: BudgetStatusInfo }) {
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-md border border-border bg-surface px-3.5 py-2.5 text-[12.5px]">
       <span>
-        <span className="text-muted">{l({ ru: "Бюджет: ", en: "Budget: " })}</span>
+        <span className="text-muted">{l({ ru: "Исходный бюджет: ", en: "Original budget: " })}</span>
         <b>{info.approvedName}</b> <span className="text-muted">({date(info.approvedAt)})</span>
       </span>
       <span>
-        <span className="text-muted">{l({ ru: "Прогноз: ", en: "Forecast: " })}</span>
+        <span className="text-muted">{l({ ru: "Оценка: ", en: "Estimate: " })}</span>
         <b>{info.forecastName}</b> <span className="text-muted">({date(info.forecastAt)})</span>
       </span>
       <span>
@@ -66,8 +66,8 @@ export function BudgetStatus({ info }: { info: BudgetStatusInfo }) {
       {info.missingBalances.length > 0 && (
         <span className="text-warn">
           {l({
-            ru: `Закрыто, но нет остатков на конец месяца (банк, касса, товар в пути): ${info.missingBalances.map(m).join(", ")} — факт и прогноз идут от последнего месяца с остатками`,
-            en: `Closed without month-end balances (bank, cash, goods in transit): ${info.missingBalances.map(m).join(", ")} — actuals and the forecast run from the last month that has them`,
+            ru: `Закрыто, но нет остатков на конец месяца (банк, касса, товар в пути): ${info.missingBalances.map(m).join(", ")} — факт и оценка идут от последнего месяца с остатками`,
+            en: `Closed without month-end balances (bank, cash, goods in transit): ${info.missingBalances.map(m).join(", ")} — actuals and the estimate run from the last month that has them`,
           })}
         </span>
       )}

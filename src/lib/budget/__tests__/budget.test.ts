@@ -3,7 +3,8 @@ import { channelShares, CHANNEL_KEYS, monthNumber, paymentWeights, runBudget, ty
 import { capitalAnswer } from "../capital";
 import { forecastRun } from "../forecast";
 import { checkInputs, parseStored, shiftMonthly } from "../store";
-import { opexGroupOf } from "../actuals";
+import { opexGroupOf, type ActualMonth } from "../actuals";
+import { BUDGET_STATEMENTS, estimateSourceFor, snapshotFromRun, statementGrid } from "../statements";
 
 // A small business with round numbers: 1,000 units a month at 100 incl. VAT, all sold by TI,
 // trucks of 1,000, HQ price 5 EUR × 10 = 50 a unit, three months from January to March 2027.
@@ -118,6 +119,47 @@ describe("supply from the plan", () => {
     const bad = parseStored(JSON.stringify({ name: "b", savedAt: "2026-10-19T00:00:00Z", savedBy: "x", inputs: full, supply: [1] }));
     expect(bad).not.toBeNull();
     expect(bad?.supply).toBeUndefined();
+  });
+});
+
+describe("estimate and actual", () => {
+  // January closed with an actual net profit of 85; the estimate kept at its start said 70
+  const budget = runBudget(inputs(), { end: "2027-03" });
+  const plan = runBudget(inputs({ baseUnits: 1100 }), { end: "2027-03" });
+  const actualJan = { monthId: "2027-01", units: { ti: 900, fargo: 0 }, pnl: { netProfit: 85 } } as unknown as ActualMonth;
+  const np = BUDGET_STATEMENTS.pnl.filter((l) => l.key === "np");
+  const snapJan = { ...snapshotFromRun(plan, { monthId: "2027-01", takenAt: "2027-01-02T00:00:00Z", takenBy: "x", basedOn: "v", ask: 0 }) };
+  snapJan.values["pnl.np"] = [70, 71, 72];
+  const months = ["2027-01", "2027-02", "2027-03"];
+
+  it("compares a closed month with the estimate kept at its start, else an earlier one, else the original budget", () => {
+    expect(estimateSourceFor("2027-01", [snapJan]).kind).toBe("start");
+    expect(estimateSourceFor("2027-02", [snapJan]).kind).toBe("earlier");
+    expect(estimateSourceFor("2027-01", []).kind).toBe("original");
+    const g = statementGrid(np, "pnl", months, { budget, plan, actuals: [actualJan], estimates: [snapJan] }, "start");
+    const row = g.rows[0];
+    expect(g.columns[0]).toMatchObject({ kind: "actual", source: "start" });
+    expect(row.cells[0]).toEqual({ v: 85, ref: 70 });
+    expect(g.columns[1].kind).toBe("estimate");
+    expect(row.cells[1].v).toBe(plan.pnl.netProfit[1]); // open months: the latest estimate
+    expect(row.cells[1].ref).toBeUndefined();
+    // the year: actual so far + the estimate for the rest, next to the original budget
+    expect(row.cells[3].v).toBeCloseTo(85 + plan.pnl.netProfit[1] + plan.pnl.netProfit[2]);
+    expect(row.cells[3].ref).toBeCloseTo(budget.pnl.netProfit.reduce((t, x) => t + x, 0));
+  });
+
+  it("can compare with the original budget instead", () => {
+    const g = statementGrid(np, "pnl", months, { budget, plan, actuals: [actualJan], estimates: [snapJan] }, "original");
+    expect(g.rows[0].cells[0]).toEqual({ v: 85, ref: budget.pnl.netProfit[0] });
+    expect(g.rows[0].cells[1].ref).toBe(budget.pnl.netProfit[1]);
+    expect(g.columns[0].source).toBe("original");
+  });
+
+  it("keeps every statement line's estimate in a snapshot", () => {
+    const s = snapshotFromRun(plan, { monthId: "2027-01", takenAt: "t", takenBy: "x", basedOn: "v", ask: 1 });
+    expect(s.months).toEqual(months);
+    expect(s.values["cash.close"]).toEqual(plan.cash.close);
+    expect(s.values["stock.arrivals"]).toEqual(plan.stock.arrivals);
   });
 });
 

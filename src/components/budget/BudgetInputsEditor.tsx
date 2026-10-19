@@ -20,7 +20,7 @@ type Kind = "pct" | "num" | "money" | "dec" | "int";
 type ScalarKey = { [K in keyof BudgetInputs]: BudgetInputs[K] extends number ? K : never }[keyof BudgetInputs];
 interface FieldDef { key: ScalarKey | "hqEurPerUnit"; label: Bi; kind: Kind; hint?: Bi }
 // the forecast takes its trucks from the supply plan; these drive only a budget without it
-const PLAN_HINT: Bi = { ru: "в прогнозе не используется: фуры — из плана поставок", en: "not used in the forecast: trucks come from the supply plan" };
+const PLAN_HINT: Bi = { ru: "в оценке не используется: фуры — из плана поставок", en: "not used in the estimate: trucks come from the supply plan" };
 
 const SECTIONS: { title: Bi; fields: FieldDef[] }[] = [
   {
@@ -199,8 +199,8 @@ export default function BudgetInputsEditor({
           <div className="text-[18px] font-semibold tabular-nums">{fmtAnswer(live)}</div>
         </div>
         <div className="text-[12.5px]">
-          <div className="text-muted">{l({ ru: "Сохранённый прогноз", en: "Saved forecast" })}: <b className="tabular-nums">{fmtAnswer(saved)}</b></div>
-          <div className="text-muted">{l({ ru: "Утверждённый бюджет", en: "Approved budget" })}: <b className="tabular-nums">{fmtAnswer(budget)}</b></div>
+          <div className="text-muted">{l({ ru: "Сохранённая оценка", en: "Saved estimate" })}: <b className="tabular-nums">{fmtAnswer(saved)}</b></div>
+          <div className="text-muted">{l({ ru: "Исходный бюджет", en: "Original budget" })}: <b className="tabular-nums">{fmtAnswer(budget)}</b></div>
         </div>
         {live && (
           <div className={`text-[12.5px] ${live.headroom < 0 ? "text-danger" : "text-muted"}`}>
@@ -215,10 +215,10 @@ export default function BudgetInputsEditor({
               {l({ ru: "Отменить правки", en: "Undo edits" })}
             </Button>
           )}
-          <Button variant="secondary" onClick={() => setConfirm("reset")} disabled={busy}>{l({ ru: "Прогноз = бюджет", en: "Reset to budget" })}</Button>
-          <Button variant="secondary" onClick={() => setConfirm("approve")} disabled={busy || dirty}>{l({ ru: "Утвердить как бюджет", en: "Approve as budget" })}</Button>
-          <Button onClick={() => post({ action: "save", inputs }, { ru: "Прогноз сохранён", en: "Forecast saved" })} disabled={busy || !dirty}>
-            {l({ ru: "Сохранить прогноз", en: "Save forecast" })}
+          <Button variant="secondary" onClick={() => setConfirm("reset")} disabled={busy}>{l({ ru: "Вернуть к исходному бюджету", en: "Back to the original budget" })}</Button>
+          <Button variant="secondary" onClick={() => setConfirm("approve")} disabled={busy || dirty}>{l({ ru: "Сделать исходным бюджетом", en: "Make it the original budget" })}</Button>
+          <Button onClick={() => post({ action: "save", inputs }, { ru: "Оценка сохранена", en: "Estimate saved" })} disabled={busy || !dirty}>
+            {l({ ru: "Сохранить оценку", en: "Save the estimate" })}
           </Button>
         </div>
       </div>
@@ -394,16 +394,16 @@ export default function BudgetInputsEditor({
       </Card>
 
       {confirm && (
-        <Modal title={confirm === "approve" ? l({ ru: "Утвердить прогноз как бюджет?", en: "Approve the forecast as the budget?" }) : l({ ru: "Вернуть прогноз к бюджету?", en: "Reset the forecast to the budget?" })} onClose={() => setConfirm(null)}>
+        <Modal title={confirm === "approve" ? l({ ru: "Сделать эту оценку исходным бюджетом?", en: "Make this estimate the original budget?" }) : l({ ru: "Вернуть оценку к исходному бюджету?", en: "Reset the estimate to the original budget?" })} onClose={() => setConfirm(null)}>
           <p className="mb-4 text-[13px] text-muted">
             {confirm === "approve"
-              ? l({ ru: "План и факт будут сравниваться с этим прогнозом. Текущий бюджет сохранится на шаг назад.", en: "Plan vs actual will be measured against this forecast. The current budget is kept one step back." })
-              : l({ ru: "Сохранённые допущения прогноза заменятся допущениями утверждённого бюджета.", en: "The forecast's saved assumptions are replaced by the approved budget's." })}
+              ? l({ ru: "Исходный бюджет — для итогов года; месяцы сравниваются с оценкой на их начало. Вместе с допущениями сохраняется сегодняшний план поставок. Текущий исходный бюджет сохранится на шаг назад.", en: "The original budget is for the year review; months are compared with the estimate at their start. Today's supply plan is kept with the assumptions. The current original budget is kept one step back." })
+              : l({ ru: "Сохранённые допущения оценки заменятся допущениями исходного бюджета.", en: "The estimate's saved assumptions are replaced by the original budget's." })}
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setConfirm(null)}>{l({ ru: "Отмена", en: "Cancel" })}</Button>
-            <Button onClick={() => post({ action: confirm }, confirm === "approve" ? { ru: "Бюджет утверждён", en: "Budget approved" } : { ru: "Прогноз = бюджет", en: "Forecast reset to the budget" })} disabled={busy}>
-              {confirm === "approve" ? l({ ru: "Утвердить", en: "Approve" }) : l({ ru: "Вернуть", en: "Reset" })}
+            <Button onClick={() => post({ action: confirm }, confirm === "approve" ? { ru: "Исходный бюджет обновлён", en: "Original budget updated" } : { ru: "Оценка = исходный бюджет", en: "Estimate reset to the original budget" })} disabled={busy}>
+              {confirm === "approve" ? l({ ru: "Сделать исходным", en: "Make it the original" }) : l({ ru: "Вернуть", en: "Reset" })}
             </Button>
           </div>
         </Modal>

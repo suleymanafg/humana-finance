@@ -1,13 +1,13 @@
-// The budget section's statements: each line knows its plan figure (from a
-// budget run) and, where the books have it, its actual figure for a closed
-// month. Columns are the months October 2026 – December 2027 with totals for
-// the rest of 2026 and for 2027. Pure — no DB imports.
+// The budget section's statements as estimate and actual: each line knows its
+// estimate (from a budget run) and, where the books have it, its actual for a
+// closed month. A closed month is compared with the estimate kept at its start;
+// open months show the latest estimate. Columns are October 2026 – December
+// 2027 with totals for the rest of 2026 and for 2027. Pure — no DB imports.
 import type { ActualMonth } from "./actuals";
 import type { BudgetRun } from "./model";
 
 type Bi = { ru: string; en: string };
 export type BudgetView = "pnl" | "cash" | "balance" | "stock";
-export type Basis = "forecast" | "budget" | "diff";
 
 export interface BudgetLine {
   key: string;
@@ -100,43 +100,109 @@ const STOCK: BudgetLine[] = [
 
 export const BUDGET_STATEMENTS: Record<BudgetView, BudgetLine[]> = { pnl: PNL, cash: CASH, balance: BALANCE, stock: STOCK };
 
-export interface StatementGrid {
-  columns: { key: string; months: string[]; kind: "actual" | "plan" | "period" }[];
-  /** plain data, so a client table can render it */
-  rows: { key: string; label: Bi; kind: BudgetLine["kind"]; units: boolean; decimals: number; values: (number | null)[] }[];
+/**
+ * The estimate as it stood at the start of a month, kept when the month before
+ * closes: every statement line's figure for that month and the months after.
+ * Figures, not inputs — a later change to the model or the assumptions does not
+ * rewrite it.
+ */
+export interface EstimateSnapshot {
+  /** the month it is the estimate at the start of */
+  monthId: string;
+  takenAt: string;
+  takenBy: string;
+  /** the assumptions it was run on */
+  basedOn: string;
+  months: string[];
+  /** `${view}.${line key}` -> one figure per month */
+  values: Record<string, (number | null)[]>;
+  ask: number;
 }
 
+export function snapshotFromRun(run: BudgetRun, meta: { monthId: string; takenAt: string; takenBy: string; basedOn: string; ask: number }): EstimateSnapshot {
+  const values: Record<string, (number | null)[]> = {};
+  for (const [view, lines] of Object.entries(BUDGET_STATEMENTS)) {
+    for (const line of lines) if (line.plan) values[`${view}.${line.key}`] = run.months.map((_, i) => line.plan!(run, i));
+  }
+  return { ...meta, months: run.months, values };
+}
+
+/** Which estimate a closed month is compared with: the one from its start, else the latest before it, else the original budget. */
+export type EstimateSource = { kind: "start"; snap: EstimateSnapshot } | { kind: "earlier"; snap: EstimateSnapshot } | { kind: "original" };
+
+export function estimateSourceFor(monthId: string, estimates: EstimateSnapshot[]): EstimateSource {
+  const own = estimates.find((e) => e.monthId === monthId);
+  if (own) return { kind: "start", snap: own };
+  const earlier = estimates.filter((e) => e.monthId < monthId && e.months.includes(monthId)).sort((a, b) => b.monthId.localeCompare(a.monthId))[0];
+  return earlier ? { kind: "earlier", snap: earlier } : { kind: "original" };
+}
+
+/** Compare closed months with the estimate from their start (default) or with the original budget. */
+export type CompareWith = "start" | "original";
+
+export interface GridCell {
+  /** actual for a closed month, the latest estimate for an open one; periods: actual so far + estimate for the rest */
+  v: number | null;
+  /** what it is compared with (closed months: the estimate; periods: the original budget) */
+  ref?: number | null;
+}
+
+export interface StatementGrid {
+  columns: { key: string; months: string[]; kind: "actual" | "estimate" | "period"; source?: EstimateSource["kind"]; sourceMonth?: string; takenAt?: string }[];
+  /** plain data, so a client table can render it */
+  rows: { key: string; label: Bi; kind: BudgetLine["kind"]; units: boolean; decimals: number; cells: GridCell[] }[];
+}
+
+const periodOf = (line: BudgetLine, vals: (number | null)[]): number | null => {
+  if (line.period === "none") return null;
+  if (line.period === "first") return vals[0];
+  if (line.period === "last") return vals[vals.length - 1];
+  return vals.some((v) => v == null) ? null : vals.reduce((t: number, v) => t + (v ?? 0), 0);
+};
+
 /**
- * The statement as a grid. Forecast: actual for closed months, the plan after.
- * Budget: the approved budget. Difference: forecast − budget.
+ * One statement as a grid of estimate and actual: closed months show the actual
+ * next to the estimate they are compared with, open months the latest estimate,
+ * year columns actual so far + estimate for the rest next to the original budget.
  */
 export function statementGrid(
   lines: BudgetLine[],
+  view: BudgetView,
   months: string[],
-  src: { budget: BudgetRun; plan: BudgetRun | null; actuals: ActualMonth[] },
-  basis: Basis,
+  src: { budget: BudgetRun; plan: BudgetRun | null; actuals: ActualMonth[]; estimates: EstimateSnapshot[] },
+  compareWith: CompareWith,
 ): StatementGrid {
   const actualOf = new Map(src.actuals.map((a) => [a.monthId, a]));
-  const forecastValue = (line: BudgetLine, m: string): number | null => {
+  const fromRun = (run: BudgetRun | null, line: BudgetLine, m: string) => {
+    const i = run ? run.months.indexOf(m) : -1;
+    return i >= 0 && line.plan ? line.plan(run!, i) : null;
+  };
+  const original = (line: BudgetLine, m: string) => fromRun(src.budget, line, m);
+  const fromSnap = (snap: EstimateSnapshot, line: BudgetLine, m: string) => {
+    const i = snap.months.indexOf(m);
+    return i >= 0 ? snap.values[`${view}.${line.key}`]?.[i] ?? null : null;
+  };
+  const sources = new Map(months.filter((m) => actualOf.has(m)).map((m) => [m, estimateSourceFor(m, src.estimates)]));
+  const main = (line: BudgetLine, m: string): number | null => {
     const a = actualOf.get(m);
     if (a) return line.actual ? line.actual(a) : null;
-    const i = src.plan ? src.plan.months.indexOf(m) : -1;
-    return i >= 0 && line.plan ? line.plan(src.plan!, i) : null;
+    return fromRun(src.plan, line, m);
   };
-  const budgetValue = (line: BudgetLine, m: string): number | null => {
-    const i = src.budget.months.indexOf(m);
-    return i >= 0 && line.plan ? line.plan(src.budget, i) : null;
+  const ref = (line: BudgetLine, m: string): number | null | undefined => {
+    if (!actualOf.has(m)) return compareWith === "original" ? original(line, m) : undefined;
+    if (compareWith === "original") return original(line, m);
+    const s = sources.get(m)!;
+    return s.kind === "original" ? original(line, m) : fromSnap(s.snap, line, m);
   };
-  const value = (line: BudgetLine, m: string) => {
-    if (basis === "budget") return budgetValue(line, m);
-    const f = forecastValue(line, m);
-    if (basis === "forecast") return f;
-    const b = budgetValue(line, m);
-    return f == null || b == null ? null : f - b;
-  };
+
   const periods = [...new Set(months.map((m) => m.slice(0, 4)))].map((y) => ({ key: `y${y}`, months: months.filter((m) => m.startsWith(y)), kind: "period" as const }));
-  const columns = [
-    ...months.map((m) => ({ key: m, months: [m], kind: basis !== "budget" && actualOf.has(m) ? ("actual" as const) : ("plan" as const) })),
+  const columns: StatementGrid["columns"] = [
+    ...months.map((m) => {
+      const s = sources.get(m);
+      if (!s) return { key: m, months: [m], kind: "estimate" as const };
+      const shown = compareWith === "original" ? ({ kind: "original" } as const) : s;
+      return { key: m, months: [m], kind: "actual" as const, source: shown.kind, sourceMonth: "snap" in shown ? shown.snap.monthId : undefined, takenAt: "snap" in shown ? shown.snap.takenAt : undefined };
+    }),
     ...periods,
   ];
   const rows = lines.map((line) => ({
@@ -145,14 +211,10 @@ export function statementGrid(
     kind: line.kind,
     units: !!line.units,
     decimals: line.decimals ?? 0,
-    values: columns.map((c) => {
-      if (line.kind === "header") return null;
-      if (c.kind !== "period") return value(line, c.months[0]);
-      const vals = c.months.map((m) => value(line, m));
-      if (line.period === "none") return null;
-      if (line.period === "first") return vals[0];
-      if (line.period === "last") return vals[vals.length - 1];
-      return vals.some((v) => v == null) ? null : vals.reduce((t: number, v) => t + (v ?? 0), 0);
+    cells: columns.map((c): GridCell => {
+      if (line.kind === "header") return { v: null };
+      if (c.kind !== "period") return { v: main(line, c.key), ref: ref(line, c.key) };
+      return { v: periodOf(line, c.months.map((m) => main(line, m))), ref: line.plan ? periodOf(line, c.months.map((m) => original(line, m))) : null };
     }),
   }));
   return { columns, rows };

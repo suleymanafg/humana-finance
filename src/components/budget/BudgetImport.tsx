@@ -60,9 +60,9 @@ export default function BudgetImport({ hasBudget }: { hasBudget: boolean }) {
       <div className="flex flex-wrap items-center gap-3 px-4 py-3 text-[13px]">
         <input type="file" accept=".xlsx" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setSummary(null); }} />
         <Select value={target} onChange={(e) => setTarget(e.target.value)}>
-          <option value="both">{l({ ru: "как бюджет и прогноз", en: "as budget and forecast" })}</option>
-          <option value="forecast">{l({ ru: "только как прогноз", en: "as the forecast only" })}</option>
-          <option value="approved">{l({ ru: "только как утверждённый бюджет", en: "as the approved budget only" })}</option>
+          <option value="both">{l({ ru: "как исходный бюджет и оценку", en: "as the original budget and the estimate" })}</option>
+          <option value="forecast">{l({ ru: "только как оценку", en: "as the estimate only" })}</option>
+          <option value="approved">{l({ ru: "только как исходный бюджет", en: "as the original budget only" })}</option>
         </Select>
         <Button variant="secondary" onClick={() => send(false)} disabled={!file || busy}>{l({ ru: "Проверить", en: "Check" })}</Button>
         <Button onClick={() => send(true)} disabled={!file || busy || !summary || summary.applied}>{l({ ru: "Загрузить", en: "Load" })}</Button>

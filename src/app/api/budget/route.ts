@@ -1,12 +1,14 @@
 // The budget's writes (ADMIN): save the working forecast's assumptions,
 // approve the forecast as the new budget (the old one is kept one step back),
 // or reset the forecast to the approved budget.
-// POST JSON { action: "save", inputs, name? } | { action: "approve" } | { action: "reset" }
+// POST JSON { action: "save", inputs, name? } | { action: "approve" } | { action: "reset" } | { action: "estimate" }
+// "estimate" keeps the estimate as it stands now for the first open month (again, if already kept).
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { checkInputs, parseStored, SETTING_APPROVED, SETTING_FORECAST, SETTING_PREVIOUS, type StoredBudget } from "@/lib/budget/store";
 import { planSupply } from "@/lib/budget/data";
+import { saveEstimate } from "@/lib/budget/estimates";
 import { addMonths } from "@/lib/planning/compute";
 
 const upsert = (key: string, value: string) => prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } });
@@ -48,5 +50,9 @@ export async function POST(request: NextRequest) {
     await prisma.$transaction([upsert(SETTING_FORECAST, JSON.stringify({ ...approved, ...stamp, supply: undefined })), audit("reset forecast", { before: forecast?.inputs ?? null })]);
     return NextResponse.json({ ok: true });
   }
-  return NextResponse.json({ error: "action: save | approve | reset" }, { status: 400 });
+  if (body?.action === "estimate") {
+    const r = await saveEstimate(session.username, { overwrite: true });
+    return r.saved ? NextResponse.json({ ok: true, monthId: r.monthId }) : NextResponse.json({ error: r.reason }, { status: 400 });
+  }
+  return NextResponse.json({ error: "action: save | approve | reset | estimate" }, { status: 400 });
 }
