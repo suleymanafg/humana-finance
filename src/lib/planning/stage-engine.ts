@@ -64,6 +64,8 @@ export interface StageEngineInput {
   shortOverride?: Record<string, Record<string, boolean>>;
   /** owner's own number a month for a product, replacing the engine from the current month on */
   productOverride?: Record<string, number>;
+  /** owner's own sales for a product in one month (the current month: its whole-month figure) — wins over the rest */
+  monthOverride?: Record<string, Record<string, number>>;
   /** owner's own 800 g share for a stage */
   shareOverride?: Partial<Record<Stage, number>>;
   params?: Partial<StageEngineParams>;
@@ -163,10 +165,18 @@ export function runStageEngine(input: StageEngineInput): StageEngineResult {
     const engineAt = (m: string) =>
       pr.stage === null ? expertLevel[pr.id].level : stageForecast[pr.stage][m] * (pr.size800 ? share800[pr.stage] : 1 - share800[pr.stage]);
     const own = input.productOverride?.[pr.id];
-    const forecastAt = (m: string) => own ?? engineAt(m);
+    const ownMonth = input.monthOverride?.[pr.id] ?? {};
+    const forecastAt = (m: string) => ownMonth[m] ?? own ?? engineAt(m);
     demand[pr.id] = {};
     for (const m of months) {
-      demand[pr.id][m] = m <= lastClosed ? sale(pr.id, m) : m === current ? sale(pr.id, m) + (1 - input.monthDone) * forecastAt(m) : forecastAt(m);
+      demand[pr.id][m] =
+        m <= lastClosed
+          ? sale(pr.id, m)
+          : m === current
+            ? ownMonth[m] !== undefined
+              ? Math.max(sale(pr.id, m), ownMonth[m]) // the owner's whole-month figure, never below what is already sold
+              : sale(pr.id, m) + (1 - input.monthDone) * forecastAt(m)
+            : forecastAt(m);
     }
     thisMonth[pr.id] = { forecast: forecastAt(current), runningAt: input.monthDone > 0 ? sale(pr.id, current) / input.monthDone : 0 };
   }

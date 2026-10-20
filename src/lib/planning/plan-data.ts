@@ -109,6 +109,8 @@ export interface PlanData {
   overrides: {
     short: Record<string, Record<string, boolean>>;
     own: Record<string, number>;
+    /** own sales for a product in one month */
+    month: Record<string, Record<string, number>>;
     share: Partial<Record<Stage, number>>;
   };
   rx: Record<string, number>;
@@ -238,6 +240,8 @@ export async function buildPlan(opts: { addTrucks?: WhatIfTruck[] } = {}): Promi
   const shortOverride: Record<string, Record<string, boolean>> = {};
   for (const r of byKind("SHORT")) (shortOverride[r.skuId] ??= {})[r.monthKey] = r.value >= 0.5;
   const productOverride = Object.fromEntries(byKind("OWN_DEMAND").map((r) => [r.skuId, r.value]));
+  const monthOverride: Record<string, Record<string, number>> = {};
+  for (const r of byKind("OWN_MONTH")) (monthOverride[r.skuId] ??= {})[r.monthKey] = r.value;
   const shareOverride = Object.fromEntries(byKind("OWN_SHARE").map((r) => [r.skuId, r.value])) as Partial<Record<Stage, number>>;
   const targets = Object.fromEntries(byKind("TARGET").map((r) => [r.monthKey, r.value]));
 
@@ -251,6 +255,7 @@ export async function buildPlan(opts: { addTrucks?: WhatIfTruck[] } = {}): Promi
     rx: data.recruitment,
     shortOverride,
     productOverride,
+    monthOverride,
     shareOverride,
     params: { tinsPerBaby: settings.tinsPerBaby, rxAhead: settings.rxAhead },
   });
@@ -351,7 +356,7 @@ export async function buildPlan(opts: { addTrucks?: WhatIfTruck[] } = {}): Promi
     frozenThrough,
     extraThrough,
     targets,
-    overrides: { short: shortOverride, own: productOverride, share: shareOverride },
+    overrides: { short: shortOverride, own: productOverride, share: shareOverride, month: monthOverride },
     rx: data.recruitment,
     eurRate: data.eurRate,
     slot: data.slot,

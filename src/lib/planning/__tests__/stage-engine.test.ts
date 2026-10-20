@@ -69,4 +69,14 @@ describe("stage engine", () => {
     expect(r.demand.x["2026-06"]).toBeCloseTo(50 + 0.5 * 80);
     expect(r.demand.x["2026-09"]).toBe(80);
   });
+
+  it("the owner's own number for one month wins there; this month's is its whole-month figure, never below what is sold", () => {
+    const r = runStageEngine({ ...base, productOverride: { x: 80 }, monthOverride: { x: { "2026-06": 120, "2026-09": 95 }, a400: { "2026-06": 10 } } });
+    expect(r.demand.x["2026-06"]).toBe(120);
+    expect(r.thisMonth.x.forecast).toBe(120);
+    expect(r.demand.x["2026-09"]).toBe(95);
+    expect(r.demand.x["2026-10"]).toBe(80); // the flat own number elsewhere
+    expect(r.demand.a400["2026-06"]).toBe(300); // 300 already sold this month
+    expect(r.demand.x["2026-05"]).toBe(50); // closed months stay actual
+  });
 });

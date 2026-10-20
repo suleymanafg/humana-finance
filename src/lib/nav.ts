@@ -115,6 +115,7 @@ export const SECTIONS: NavSection[] = [
     months: "all",
     pages: [
       { href: "/budget", label: { ru: "Капитал", en: "Capital" } },
+      { href: "/budget/sales", label: { ru: "Продажи по товарам", en: "Sales by product" } },
       { href: "/budget/statements", label: { ru: "Отчёты по месяцам", en: "Statements by month" } },
       { href: "/budget/inputs", label: { ru: "Допущения", en: "Assumptions" } },
     ],
