@@ -154,7 +154,7 @@ export default function UzMap({
                 <span className="text-muted">{t("share")}</span>
                 <span className="num font-medium">{fmtPct(hoverStat?.share ?? 0)}</span>
               </div>
-              <div className="pt-0.5 text-[11px] text-muted">{hoverRegion.channels.join(" · ")}</div>
+              {!unitsOnly && <div className="pt-0.5 text-[11px] text-muted">{hoverRegion.channels.join(" · ")}</div>}
             </div>
           )}
         </div>

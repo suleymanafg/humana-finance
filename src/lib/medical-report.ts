@@ -1,9 +1,10 @@
 // A medical rep's own report (Excel), for the medical director to hand out: how
 // the rep's work went over time — month by month their prescriptions, doctors
 // and pay-outs next to the sales of the territories they work in and the tins
-// per prescription there; each territory's sales against the rep's and
-// everyone's prescriptions; the doctors by territory with the rate and
-// prescriptions per month; every foil line. Russian or English (the app's
+// per prescription there (Platin 1 and the special formulas: the only products
+// paid for when prescribed); each territory's sales by product against the
+// rep's and everyone's prescriptions; the doctors by territory with the rate
+// and prescriptions per month; every foil line. Russian or English (the app's
 // language). One rep, or every rep as a zip of workbooks.
 import JSZip from "jszip";
 import { prisma } from "./db";
@@ -26,24 +27,26 @@ const TEXT = {
     made: "сформирован",
     territories: "территории",
     verdict: (n: number) => `Итог за последние ${n} мес. против предыдущих ${n}`,
-    terrSalesCap: "Продажи территорий",
-    perRxCap: "Банок на рецепт",
+    terrSalesCap: "Platin 1 и лечебные на территориях",
+    perRxCap: "Банок Platin 1 и лечебных на рецепт",
     result: "Итог",
     summary: "Итоги",
     month: "Месяц",
     yourRx: "Ваши рецепты",
     doctorsWithRx: "Врачей с рецептами",
     paid: "Выплачено врачам, сум",
-    terrTins: "Продажи территорий, банок",
+    presTins: "Platin 1 и лечебные на территориях, банок",
+    followTins: "Platin 2 и 3 на территориях, банок",
     allRx: "Рецептов всех представителей на территориях",
     share: "Ваша доля рецептов",
-    tinsPerRx: "Банок на рецепт",
+    tinsPerRx: "Банок Platin 1 и лечебных на рецепт",
     total: "Итого",
     terrSheet: "Территории",
     terrTitle: "Продажи территорий и рецепты",
-    terrSub: "продажи дилерам и аптекам по данным 1С, в банках; сети (Korzinka и др.) по территориям не делятся",
-    tinsAll: "Продано, банок",
-    tinsP1: "из них Platin 1",
+    terrSub: "продажи по данным 1С, в банках; рецепты оплачиваются только за Platin 1 и лечебные — Platin 2 и 3 это дети, оставшиеся на смеси; сети (Korzinka и др.) по территориям не делятся",
+    presTotal: "Итого Platin 1 и лечебные",
+    followTotal: "Итого Platin 2 и 3",
+    allTotal: "Всего продано, банок",
     rxYours: "Рецептов — ваши",
     rxAll: "Рецептов — все представители",
     doctors: "Врачи",
@@ -71,24 +74,26 @@ const TEXT = {
     made: "made",
     territories: "territories",
     verdict: (n: number) => `The last ${n} months against the ${n} before`,
-    terrSalesCap: "Territory sales",
-    perRxCap: "Tins per prescription",
+    terrSalesCap: "Platin 1 and special formulas in the territories",
+    perRxCap: "Platin 1 and special tins per prescription",
     result: "Verdict",
     summary: "Summary",
     month: "Month",
     yourRx: "Your prescriptions",
     doctorsWithRx: "Doctors prescribing",
     paid: "Paid to doctors, UZS",
-    terrTins: "Territory sales, tins",
+    presTins: "Platin 1 and special in the territories, tins",
+    followTins: "Platin 2 and 3 in the territories, tins",
     allRx: "Prescriptions of all reps in the territories",
     share: "Your share of prescriptions",
-    tinsPerRx: "Tins per prescription",
+    tinsPerRx: "Platin 1 and special tins per prescription",
     total: "Total",
     terrSheet: "Territories",
     terrTitle: "Territory sales and prescriptions",
-    terrSub: "sales to dealers and pharmacies from 1C, in tins; chains (Korzinka and others) are not split by territory",
-    tinsAll: "Sold, tins",
-    tinsP1: "of which Platin 1",
+    terrSub: "sales from 1C, in tins; prescriptions are paid for Platin 1 and the special formulas only — Platin 2 and 3 are the babies staying on; chains (Korzinka and others) are not split by territory",
+    presTotal: "Platin 1 and special, total",
+    followTotal: "Platin 2 and 3, total",
+    allTotal: "Sold in all, tins",
     rxYours: "Prescriptions — yours",
     rxAll: "Prescriptions — all reps",
     doctors: "Doctors",
@@ -146,7 +151,8 @@ export function workbookFor(rep: string, months: string[], lines: Line[], data: 
   const terrs = [...byTerr.entries()].sort((a, b) => sum(b[1], "foils") - sum(a[1], "foils"));
   const terrKeys = terrs.map(([k]) => k).filter((k): k is string => !!k);
   const allIds = data.products.map((p) => p.id);
-  const p1Ids = data.products.filter((p) => p.group === "P1").map((p) => p.id);
+  const presIds = data.products.filter((p) => p.prescribed).map((p) => p.id);
+  const followIds = data.products.filter((p) => !p.prescribed).map((p) => p.id);
   const tinsIn = (keys: string[], ms: string[], ids = allIds) => keys.reduce((s, k) => s + ids.reduce((u, id) => u + sumMonths(data.sales[k]?.[id], ms), 0), 0);
   const foilsIn = (keys: string[], ms: string[]) => keys.reduce((s, k) => s + sumMonths(data.foils[k], ms), 0);
   const mineIn = (ms: string[]) => mine.filter((l) => ms.includes(l.monthKey));
@@ -156,8 +162,8 @@ export function workbookFor(rep: string, months: string[], lines: Line[], data: 
   const nowMs = months.slice(-n);
   const beforeMs = months.slice(-2 * n, -n);
   const e = effectOf(
-    { tins: tinsIn(terrKeys, nowMs), foils: foilsIn(terrKeys, nowMs), paid: sum(mineIn(nowMs), "amount") },
-    { tins: tinsIn(terrKeys, beforeMs), foils: foilsIn(terrKeys, beforeMs), paid: sum(mineIn(beforeMs), "amount") }
+    { tins: tinsIn(terrKeys, nowMs, presIds), foils: foilsIn(terrKeys, nowMs), paid: sum(mineIn(nowMs), "amount") },
+    { tins: tinsIn(terrKeys, beforeMs, presIds), foils: foilsIn(terrKeys, beforeMs), paid: sum(mineIn(beforeMs), "amount") }
   );
   const v = VERDICTS[e.verdict];
   const period = months.length === 1 ? monthName(months[0]) : `${monthName(months[0])} – ${monthName(months[months.length - 1])}`;
@@ -178,10 +184,10 @@ export function workbookFor(rep: string, months: string[], lines: Line[], data: 
   const monthRow = (label: string, ms: string[]) => {
     const ls = mineIn(ms);
     const yourFoils = sum(ls, "foils");
-    const tins = tinsIn(terrKeys, ms);
+    const pres = tinsIn(terrKeys, ms, presIds);
     const allFoils = foilsIn(terrKeys, ms);
     const yourInTerr = sum(ls.filter((l) => l.territory), "foils");
-    return [label, yourFoils, doctorsOf(ls), sum(ls, "amount"), tins, allFoils, allFoils ? yourInTerr / allFoils : null, allFoils ? tins / allFoils : null];
+    return [label, yourFoils, doctorsOf(ls), sum(ls, "amount"), pres, tinsIn(terrKeys, ms, followIds), allFoils, allFoils ? yourInTerr / allFoils : null, allFoils ? pres / allFoils : null];
   };
   const monthRows = months.map((m) => monthRow(monthName(m), [m]));
   const summary: SheetSpec = {
@@ -193,7 +199,8 @@ export function workbookFor(rep: string, months: string[], lines: Line[], data: 
       { header: t.yourRx, width: 14, numFmt: MONEY },
       { header: t.doctorsWithRx, width: 14, numFmt: MONEY },
       { header: t.paid, width: 18, numFmt: MONEY },
-      { header: t.terrTins, width: 18, numFmt: MONEY },
+      { header: t.presTins, width: 18, numFmt: MONEY },
+      { header: t.followTins, width: 18, numFmt: MONEY },
       { header: t.allRx, width: 22, numFmt: MONEY },
       { header: t.share, width: 14, numFmt: PCT },
       { header: t.tinsPerRx, width: 14, numFmt: MONEY2 },
@@ -203,31 +210,40 @@ export function workbookFor(rep: string, months: string[], lines: Line[], data: 
     sectionRows: verdictRows.length ? [monthRows.length + 2] : [],
   };
 
-  // 2. each territory: its sales and prescriptions by month
+  // 2. each territory: its sales by product and the prescriptions, by month
   const terrRows: SheetSpec["rows"] = [];
   const terrSections: number[] = [];
   const terrBold: number[] = [];
+  const terrRatio: number[] = [];
   for (const [k, ls] of terrs) {
     terrSections.push(terrRows.length);
     terrRows.push([terrName(k), ...months.map(() => null), null]);
     const line = (label: string, f: (ms: string[]) => number | null) => [label, ...months.map((m) => f([m])), f(months)];
     const keys = k ? [k] : [];
-    terrRows.push(line(t.tinsAll, (ms) => (k ? tinsIn(keys, ms) : null)));
-    terrRows.push(line(t.tinsP1, (ms) => (k ? tinsIn(keys, ms, p1Ids) : null)));
+    if (k) {
+      for (const [ids, totalName] of [[presIds, t.presTotal], [followIds, t.followTotal]] as const) {
+        for (const p of data.products.filter((x) => ids.includes(x.id))) terrRows.push(line(p.name, (ms) => tinsIn(keys, ms, [p.id]) || null));
+        terrBold.push(terrRows.length);
+        terrRows.push(line(totalName, (ms) => tinsIn(keys, ms, [...ids])));
+      }
+      terrBold.push(terrRows.length);
+      terrRows.push(line(t.allTotal, (ms) => tinsIn(keys, ms)));
+    }
     terrRows.push(line(t.rxYours, (ms) => sum(ls.filter((l) => ms.includes(l.monthKey)), "foils")));
     terrRows.push(line(t.rxAll, (ms) => (k ? foilsIn(keys, ms) : null)));
-    terrBold.push(terrRows.length);
-    terrRows.push(line(t.tinsPerRx, (ms) => { const f = k ? foilsIn(keys, ms) : 0; return f ? tinsIn(keys, ms) / f : null; }));
+    terrRatio.push(terrRows.length);
+    terrRows.push(line(t.tinsPerRx, (ms) => { const f = k ? foilsIn(keys, ms) : 0; return f ? tinsIn(keys, ms, presIds) / f : null; }));
   }
   const territories: SheetSpec = {
     name: t.terrSheet,
     title: `${t.terrTitle}: ${rep}`,
     subtitle: `${period} · ${t.terrSub}`,
-    columns: [{ header: t.territory, width: 30 }, ...months.map((m) => ({ header: monthName(m), width: 12, numFmt: MONEY })), { header: t.total, width: 12, numFmt: MONEY }],
+    columns: [{ header: t.territory, width: 36 }, ...months.map((m) => ({ header: monthName(m), width: 12, numFmt: MONEY })), { header: t.total, width: 12, numFmt: MONEY }],
     rows: terrRows.length ? terrRows : [[t.none, ...months.map(() => null), null]],
     sectionRows: terrSections,
-    indentRows: terrRows.map((_, i) => i).filter((i) => !terrSections.includes(i)),
-    rowFormats: Object.fromEntries(terrBold.map((i) => [i, MONEY2])),
+    boldRows: terrBold,
+    indentRows: terrRows.map((_, i) => i).filter((i) => !terrSections.includes(i) && !terrBold.includes(i)),
+    rowFormats: Object.fromEntries(terrRatio.map((i) => [i, MONEY2])),
   };
 
   // 3. doctors by territory
