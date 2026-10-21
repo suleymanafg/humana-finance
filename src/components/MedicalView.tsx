@@ -69,11 +69,11 @@ export default function MedicalView({ data }: { data: MedicalData }) {
   const foilsOf = (areaKey: string, m: string) => data.foilsByRegion[areaKey]?.[m] ?? 0;
   const valueOf = (areaKey: string, m: string) => (measure === "sales" ? sold(areaKey, m) : foilsOf(areaKey, m));
 
-  // whole months only: the period ends with the last complete month
-  const lastWhole = addMonths(data.thisMonth, -1);
-  const span = (end: string, n: number) => Array.from({ length: n }, (_, i) => addMonths(end, i - n + 1));
-  const now = span(lastWhole, period);
-  const before = span(addMonths(lastWhole, -period), period);
+  // the period ends with the month chosen at the top
+  const end = data.endMonth;
+  const span = (last: string, n: number) => Array.from({ length: n }, (_, i) => addMonths(last, i - n + 1));
+  const now = span(end, period);
+  const before = span(addMonths(end, -period), period);
   const over = (areaKey: string, ms: string[]) => ms.reduce((t, m) => t + valueOf(areaKey, m), 0);
 
   // the rows of this measure: sales — regions, chains, other; foils — regions (and lines without one)
@@ -112,7 +112,9 @@ export default function MedicalView({ data }: { data: MedicalData }) {
     .slice(0, 30);
 
   const chip = (active: boolean) => `rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${active ? "bg-accent text-white" : "text-muted hover:text-foreground"}`;
-  const periodLabel = now.length === 1 ? mon(now[0], true) : `${mon(now[0])} – ${mon(now[now.length - 1], true)}`;
+  const periodLabel =
+    (now.length === 1 ? mon(now[0], true) : `${mon(now[0])} – ${mon(now[now.length - 1], true)}`) +
+    (end === data.thisMonth ? l({ ru: " (месяц идёт)", en: " (month running)" }) : "");
   const unit = measure === "sales" ? l({ ru: "банок", en: "tins" }) : l({ ru: "фольг", en: "foils" });
 
   return (

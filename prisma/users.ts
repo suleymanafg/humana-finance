@@ -119,6 +119,11 @@ async function add() {
       "\nSTAFF fills in figures (OPEX, stock, AR, shipments, balance inputs) but cannot add or rename\n" +
         "categories, change Settings, or open Health checks / Data requests. They do see the P&L and margins."
     );
+  } else if (roleArg === "MEDICAL") {
+    console.log(
+      "\nMEDICAL sees only «Медицинский отдел»: sales in tins by region, prescriptions (foils) by region,\n" +
+        "rep and doctor with rates and payouts, and the reps' Excel reports. No other section, no AI chat."
+    );
   } else {
     console.log(
       "\nVIEWER sees everything — P&L, margins, unit costs, the balance sheet — but cannot change anything."

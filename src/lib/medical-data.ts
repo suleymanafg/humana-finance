@@ -18,6 +18,8 @@ export type MedGroup = "P1" | "P2" | "P3" | "EXPERT";
 export interface MedicalData {
   months: string[];
   thisMonth: string;
+  /** the month chosen at the top — the last month of the period and of the tables */
+  endMonth: string;
   products: { id: string; name: string; group: MedGroup }[];
   areas: { key: string; nameRu: string; nameEn: string; iso: string | null; kind: "region" | "chains" | "other" }[];
   /** area key -> product id -> month -> tins */
@@ -41,7 +43,8 @@ const groupOf = (name: string): MedGroup => {
   return st ? (`P${st}` as MedGroup) : "EXPERT";
 };
 
-export async function medicalData(): Promise<MedicalData> {
+/** `endMonth` — the month chosen at the top (a later month than this one counts as this one). */
+export async function medicalData(endMonth?: string): Promise<MedicalData> {
   const [ds, recruitment, plan, foilRows] = await Promise.all([
     loadDataset(),
     prisma.planningRecruitment.findMany(),
@@ -51,7 +54,8 @@ export async function medicalData(): Promise<MedicalData> {
       .catch(() => [] as { monthKey: string; date: Date | null; regionIso: string | null; district: string; clinic: string; doctor: string; rep: string; foils: number; rate: number | null; amount: number | null }[]),
   ]);
   const thisMonth = todayInTashkent().slice(0, 7);
-  const months = Array.from({ length: 12 }, (_, i) => addMonths(thisMonth, i - 11));
+  const end = endMonth && endMonth < thisMonth ? endMonth : thisMonth;
+  const months = Array.from({ length: 12 }, (_, i) => addMonths(end, i - 11));
 
   // regular products only; a promo pack is sold as its regular product
   const regularOf = new Map(ds.products.map((p) => [p.id, p.isPromo && p.regularProductId ? p.regularProductId : p.id]));
@@ -130,5 +134,5 @@ export async function medicalData(): Promise<MedicalData> {
       if (ms.length && productIds.has(sku.productId)) short[sku.productId] = ms.sort();
     }
   }
-  return { months, thisMonth, products, areas, qty, rx, paid, foilsByRegion, reps, doctors, short };
+  return { months, thisMonth, endMonth: end, products, areas, qty, rx, paid, foilsByRegion, reps, doctors, short };
 }

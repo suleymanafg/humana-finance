@@ -125,7 +125,6 @@ export const SECTIONS: NavSection[] = [
     label: { ru: "Медицинский отдел", en: "Medical team" },
     group: "main",
     adminOnly: true,
-    months: "all",
     pages: [{ href: "/medical", label: { ru: "Продажи по регионам", en: "Sales by region" } }],
   },
   {
