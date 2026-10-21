@@ -1,6 +1,7 @@
 "use client";
 
-// Interactive choropleth of Uzbekistan (ADM1) colored by monthly revenue.
+// Interactive choropleth of Uzbekistan (ADM1) colored by monthly revenue —
+// or, with `unitsOnly`, by units sold, with no money anywhere (the medical team).
 // Sequential single-hue ramp (dataviz reference palette); hover tooltip;
 // click selects a region (toggles off on second click).
 import { useRef, useState } from "react";
@@ -24,19 +25,23 @@ export default function UzMap({
   statsByIso,
   selectedIso,
   onSelect,
+  unitsOnly = false,
 }: {
   statsByIso: Record<string, RegionStat>;
   selectedIso: string | null;
   onSelect: (iso: string | null) => void;
+  /** colour by units and show no money (share = of units) */
+  unitsOnly?: boolean;
 }) {
   const { t, locale } = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ iso: string; x: number; y: number; width: number } | null>(null);
 
-  const maxRevenue = Math.max(1, ...Object.values(statsByIso).map((s) => s.revenue));
+  const measure = (s: RegionStat | undefined) => (unitsOnly ? s?.qty ?? 0 : s?.revenue ?? 0);
+  const maxRevenue = Math.max(1, ...Object.values(statsByIso).map((s) => measure(s)));
   const fillOf = (r: UzRegion) => {
     if (r.channels.length === 0) return NO_CHANNEL_FILL;
-    const v = statsByIso[r.iso]?.revenue ?? 0;
+    const v = measure(statsByIso[r.iso]);
     if (v <= 0) return RAMP[0];
     const idx = Math.min(RAMP.length - 1, Math.floor((v / maxRevenue) * (RAMP.length - 0.001)));
     return RAMP[idx];
@@ -44,7 +49,7 @@ export default function UzMap({
   // labels must stay readable on dark ramp steps
   const labelColorOf = (r: UzRegion) => {
     if (r.channels.length === 0) return "#98a2b3";
-    const v = statsByIso[r.iso]?.revenue ?? 0;
+    const v = measure(statsByIso[r.iso]);
     return v / maxRevenue > 0.42 ? "rgba(255,255,255,0.92)" : "#3f4a5c";
   };
 
@@ -135,10 +140,12 @@ export default function UzMap({
             <div className="mt-0.5 text-[12px] text-muted">{t("mapNoChannel")}</div>
           ) : (
             <div className="mt-1 space-y-0.5 text-[12px]">
-              <div className="flex justify-between gap-4">
-                <span className="text-muted">{t("revenue")}</span>
-                <span className="num font-medium">{fmtN(hoverStat?.revenue ?? 0)}</span>
-              </div>
+              {!unitsOnly && (
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted">{t("revenue")}</span>
+                  <span className="num font-medium">{fmtN(hoverStat?.revenue ?? 0)}</span>
+                </div>
+              )}
               <div className="flex justify-between gap-4">
                 <span className="text-muted">{t("qty")}</span>
                 <span className="num font-medium">{fmtN(hoverStat?.qty ?? 0)}</span>

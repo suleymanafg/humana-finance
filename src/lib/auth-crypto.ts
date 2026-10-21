@@ -21,8 +21,10 @@ const SECRET = process.env.SESSION_SECRET ?? "humana-dev-secret-change-in-prod";
  * ADMIN  — everything, including structure (categories, products, settings).
  * STAFF  — fills in figures; cannot change structure or see admin-only pages.
  * VIEWER — reads everything, changes nothing.
+ * MEDICAL — the medical team: only «Медицинский отдел» (sales in tins by region,
+ *           prescriptions) — no money, no other section, no AI chat.
  */
-export const ROLES = ["ADMIN", "STAFF", "VIEWER"] as const;
+export const ROLES = ["ADMIN", "STAFF", "VIEWER", "MEDICAL"] as const;
 export type Role = (typeof ROLES)[number];
 
 export interface SessionData {

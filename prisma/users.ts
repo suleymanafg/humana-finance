@@ -3,7 +3,8 @@ import "dotenv/config";
 // how accounts are created, listed, and removed.
 //
 //   npx tsx prisma/users.ts list [--production]
-//   npx tsx prisma/users.ts add <username> <ADMIN|STAFF|VIEWER> [--production]
+//   npx tsx prisma/users.ts add <username> <ADMIN|STAFF|VIEWER|MEDICAL> [--production]
+//   (MEDICAL: the medical team — sees only «Медицинский отдел»)
 //   npx tsx prisma/users.ts reset <username> [--production]
 //   npx tsx prisma/users.ts remove <username> [--production]
 //

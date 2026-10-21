@@ -2,6 +2,9 @@
 // Generated from geoBoundaries (gbOpen UZB ADM1, CC-BY 4.0, www.geoboundaries.org)
 // by scripts in the build session — regenerate with convert-uz-map.ts if needed.
 
+/** Channels that are neither a region on the map nor a retail chain (dealers of other brands, internal, other). */
+export const OTHER_CHANNEL_NAMES = new Set(["Дилеры Бондюэль", "DARVOZA SAVDO", "ТИИН ОПТОМ", "Внутреннее", "Прочие"]);
+
 export const UZ_MAP_VIEWBOX = { width: 960, height: 628 };
 
 export interface UzRegion {

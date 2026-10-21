@@ -13,7 +13,7 @@ import { Delta, MetricStrip, Section, ShareBar, Spark, Th, useSort, type Metric 
 import { ButtonLink } from "./statement";
 import MonthBars from "./MonthBars";
 import UzMap, { type RegionStat } from "./UzMap";
-import { UZ_REGIONS } from "@/lib/uz-map";
+import { OTHER_CHANNEL_NAMES, UZ_REGIONS } from "@/lib/uz-map";
 import { fmtN, fmtPct, toNum } from "@/lib/format";
 import { useT } from "@/lib/locale-context";
 import { shortMonth } from "@/lib/statement-ui";
@@ -32,7 +32,6 @@ type Selection =
 
 // non-territory channels that are not supermarket chains: wholesale, internal,
 // unclassified. Every other channel outside the map regions counts as a chain.
-const OTHER_CHANNEL_NAMES = new Set(["Дилеры Бондюэль", "DARVOZA SAVDO", "ТИИН ОПТОМ", "Внутреннее", "Прочие"]);
 
 function decodeSelection(v: string): Selection {
   if (v === "chains") return { kind: "chains" };

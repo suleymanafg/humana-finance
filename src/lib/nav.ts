@@ -121,6 +121,14 @@ export const SECTIONS: NavSection[] = [
     ],
   },
   {
+    key: "medical",
+    label: { ru: "Медицинский отдел", en: "Medical team" },
+    group: "main",
+    adminOnly: true,
+    months: "all",
+    pages: [{ href: "/medical", label: { ru: "Продажи по регионам", en: "Sales by region" } }],
+  },
+  {
     key: "planning",
     label: { ru: "Планирование закупок", en: "Supply planning" },
     group: "main",
@@ -175,4 +183,4 @@ export function locate(pathname: string): { section: NavSection | null; page: Na
 }
 
 export const visibleSections = (role: Role) =>
-  SECTIONS.filter((s) => !s.adminOnly || role === "ADMIN");
+  role === "MEDICAL" ? SECTIONS.filter((s) => s.key === "medical") : SECTIONS.filter((s) => !s.adminOnly || role === "ADMIN");

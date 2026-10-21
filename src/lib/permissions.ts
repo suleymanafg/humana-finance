@@ -60,7 +60,16 @@ export const canWriteEntity = (role: Role | undefined, entity: string): boolean 
  */
 export const ADMIN_ONLY_PATHS = ["/settings", "/health", "/requests", "/planning", "/transition", "/api/transition", "/budget", "/api/budget"];
 
-export const canAccessPath = (role: Role | undefined, pathname: string): boolean =>
-  ADMIN_ONLY_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))
-    ? canEditStructure(role)
-    : true;
+/** The only pages (and their APIs) a medical login may open; everything else is refused. */
+export const MEDICAL_PATHS = ["/medical", "/change-password"];
+
+const under = (pathname: string, p: string) => pathname === p || pathname.startsWith(p + "/");
+
+export const canAccessPath = (role: Role | undefined, pathname: string): boolean => {
+  if (role === "MEDICAL") return MEDICAL_PATHS.some((p) => under(pathname, p));
+  if (under(pathname, "/medical")) return role === "ADMIN";
+  return ADMIN_ONLY_PATHS.some((p) => under(pathname, p)) ? canEditStructure(role) : true;
+};
+
+/** Where a login lands, and where it is sent back to from a page it may not open. */
+export const homeOf = (role: Role | undefined): string => (role === "MEDICAL" ? "/medical" : "/");

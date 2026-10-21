@@ -181,7 +181,8 @@ export default function AppShell({
           {children}
         </div>
       </main>
-      <ChatWidget configured={aiConfigured} canWrite={role === "ADMIN"} />
+      {/* the assistant reads the finance data — not for the medical team */}
+      {role !== "MEDICAL" && <ChatWidget configured={aiConfigured} canWrite={role === "ADMIN"} />}
     </div>
   );
 }
