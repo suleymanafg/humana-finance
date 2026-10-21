@@ -1,7 +1,8 @@
 // What the medical team sees (/medical): Humana sales in tins — never money —
 // by region and product, month by month, next to the verified prescriptions
-// (foils), with the months a product ran out of stock marked so a stock-out
-// is not read as a weak campaign. Regions come from the sales channels (a
+// (foils) by region, medical rep and doctor (from the foil file's lines; the
+// amounts paid are not loaded here), with the months a product ran out of
+// stock marked so a stock-out is not read as a weak campaign. Regions come from the sales channels (a
 // region's dealer); chains and other channels are their own rows. Promo packs
 // count as their regular product.
 import { prisma } from "./db";
@@ -22,6 +23,12 @@ export interface MedicalData {
   qty: Record<string, Record<string, Record<string, number>>>;
   /** verified prescriptions (foils) by month, the whole country */
   rx: Record<string, number>;
+  /** foils by region (the map's iso; "none" — region not recognised) and month */
+  foilsByRegion: Record<string, Record<string, number>>;
+  /** each medical rep: the regions they work in (most foils first) and foils by month */
+  reps: { name: string; regions: string[]; byMonth: Record<string, number> }[];
+  /** each prescribing doctor (by name and clinic) and their foils by month */
+  doctors: { doctor: string; clinic: string; district: string; regionIso: string | null; rep: string; byMonth: Record<string, number> }[];
   /** product id -> months it ran short of stock */
   short: Record<string, string[]>;
 }
@@ -32,7 +39,15 @@ const groupOf = (name: string): MedGroup => {
 };
 
 export async function medicalData(): Promise<MedicalData> {
-  const [ds, recruitment, plan] = await Promise.all([loadDataset(), prisma.planningRecruitment.findMany(), loadPlan().catch(() => null)]);
+  const [ds, recruitment, plan, foilRows] = await Promise.all([
+    loadDataset(),
+    prisma.planningRecruitment.findMany(),
+    loadPlan().catch(() => null),
+    // counts only — never the rate or the amount paid
+    prisma.medFoil
+      .findMany({ select: { monthKey: true, regionIso: true, district: true, clinic: true, doctor: true, rep: true, foils: true } })
+      .catch(() => [] as { monthKey: string; regionIso: string | null; district: string; clinic: string; doctor: string; rep: string; foils: number }[]),
+  ]);
   const thisMonth = todayInTashkent().slice(0, 7);
   const months = Array.from({ length: 12 }, (_, i) => addMonths(thisMonth, i - 11));
 
@@ -70,7 +85,34 @@ export async function medicalData(): Promise<MedicalData> {
     byProduct[s.monthId] = (byProduct[s.monthId] ?? 0) + s.qty;
   }
 
-  const rx = Object.fromEntries(recruitment.filter((r) => inRange.has(r.monthKey)).map((r) => [r.monthKey, r.babies]));
+  // prescriptions: the file's lines where loaded, else the monthly totals
+  const foilsByRegion: MedicalData["foilsByRegion"] = {};
+  const repMap = new Map<string, { byMonth: Record<string, number>; byRegion: Record<string, number> }>();
+  const docMap = new Map<string, MedicalData["doctors"][number]>();
+  const rxFromLines: Record<string, number> = {};
+  for (const f of foilRows) {
+    if (!inRange.has(f.monthKey)) continue;
+    const iso = f.regionIso ?? "none";
+    const byM = (foilsByRegion[iso] ??= {});
+    byM[f.monthKey] = (byM[f.monthKey] ?? 0) + f.foils;
+    rxFromLines[f.monthKey] = (rxFromLines[f.monthKey] ?? 0) + f.foils;
+    const rname = f.rep || "—";
+    const r = repMap.get(rname) ?? { byMonth: {}, byRegion: {} };
+    r.byMonth[f.monthKey] = (r.byMonth[f.monthKey] ?? 0) + f.foils;
+    r.byRegion[iso] = (r.byRegion[iso] ?? 0) + f.foils;
+    repMap.set(rname, r);
+    const dk = `${f.doctor}|${f.clinic}`;
+    const d = docMap.get(dk) ?? { doctor: f.doctor || "—", clinic: f.clinic, district: f.district, regionIso: f.regionIso, rep: f.rep, byMonth: {} };
+    d.byMonth[f.monthKey] = (d.byMonth[f.monthKey] ?? 0) + f.foils;
+    docMap.set(dk, d);
+  }
+  const reps = [...repMap.entries()]
+    .map(([name, r]) => ({ name, regions: Object.entries(r.byRegion).sort((a, b) => b[1] - a[1]).map(([iso]) => iso), byMonth: r.byMonth }))
+    .sort((a, b) => Object.values(b.byMonth).reduce((t, x) => t + x, 0) - Object.values(a.byMonth).reduce((t, x) => t + x, 0));
+  const doctors = [...docMap.values()];
+  const rx = foilRows.length
+    ? rxFromLines
+    : Object.fromEntries(recruitment.filter((r) => inRange.has(r.monthKey)).map((r) => [r.monthKey, r.babies]));
 
   // stock-outs from the supply plan's marks (the planning SKU is linked to the product)
   const short: MedicalData["short"] = {};
@@ -80,5 +122,5 @@ export async function medicalData(): Promise<MedicalData> {
       if (ms.length && productIds.has(sku.productId)) short[sku.productId] = ms.sort();
     }
   }
-  return { months, thisMonth, products, areas, qty, rx, short };
+  return { months, thisMonth, products, areas, qty, rx, foilsByRegion, reps, doctors, short };
 }

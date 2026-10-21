@@ -54,11 +54,13 @@ async function postJson(url: string, body: unknown): Promise<string | null> {
 }
 
 type FoilLine = { monthKey: string; foils: number; paid: number; now: number | null; closed: boolean };
+type FoilDetail = { lines: number; foils: number; regions: number; reps: number; doctors: number; unmatchedRegions: string[] };
 
 function FoilUpload({ ru }: { ru: boolean }) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [lines, setLines] = useState<FoilLine[] | null>(null);
+  const [detail, setDetail] = useState<FoilDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -74,8 +76,9 @@ function FoilUpload({ ru }: { ru: boolean }) {
     setBusy(false);
     if (!res.ok) return setMsg(body.error ?? (ru ? "Не удалось прочитать файл" : "Could not read the file"));
     setLines(body.lines as FoilLine[]);
+    setDetail((body.detail as FoilDetail) ?? null);
     if (apply) {
-      setMsg(ru ? `Записано месяцев: ${body.written}` : `Months written: ${body.written}`);
+      setMsg(ru ? `Записано: месяцев ${body.written}, строк по врачам ${body.detail?.lines ?? 0}` : `Written: ${body.written} months, ${body.detail?.lines ?? 0} doctor lines`);
       router.refresh();
     }
   }
@@ -88,13 +91,22 @@ function FoilUpload({ ru }: { ru: boolean }) {
         <button type="button" disabled={busy || !file} onClick={() => void send(false)} className="rounded-lg border border-border px-3.5 py-1.5 text-[12.5px] font-bold">
           {busy && !lines ? "…" : ru ? "Проверить" : "Check"}
         </button>
-        {lines && changes.length > 0 && (
+        {lines && (changes.length > 0 || (detail?.lines ?? 0) > 0) && (
           <button type="button" disabled={busy} onClick={() => void send(true)} className="rounded-lg px-3.5 py-1.5 text-[12.5px] font-extrabold text-white" style={{ background: "var(--accent)" }}>
-            {ru ? `Записать ${changes.length} мес.` : `Write ${changes.length} months`}
+            {changes.length
+              ? ru ? `Записать ${changes.length} мес. и детали` : `Write ${changes.length} months and the detail`
+              : ru ? "Записать детали" : "Write the detail"}
           </button>
         )}
         {msg && <span className="text-[12px] font-bold text-muted">{msg}</span>}
       </div>
+      {detail && (
+        <p className="mt-2 text-[12px] font-semibold text-muted">
+          {ru
+            ? `По врачам и регионам: ${detail.lines} строк, ${detail.foils} фольг — ${detail.regions} регионов, ${detail.reps} представителей, ${detail.doctors} врачей${detail.unmatchedRegions.length ? `; регион не распознан: ${detail.unmatchedRegions.join(", ")}` : ""}. Это увидит медицинский отдел.`
+            : `By doctor and region: ${detail.lines} lines, ${detail.foils} foils — ${detail.regions} regions, ${detail.reps} reps, ${detail.doctors} doctors${detail.unmatchedRegions.length ? `; region not recognised: ${detail.unmatchedRegions.join(", ")}` : ""}. The medical team will see this.`}
+        </p>
+      )}
       {lines && (
         <table className="ptable mt-2 text-[12px]">
           <thead>

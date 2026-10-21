@@ -127,6 +127,31 @@ model PlanningRecruitment {
   updatedAt DateTime @updatedAt
 }
 
+// Every line of the foil tracking file (verified prescriptions): who prescribed
+// (doctor, clinic, district, region), which medical rep, how many foils, and
+// what was paid for them. Replaced in full by each foil upload. The medical
+// team sees the counts; rate and amount are for the owner only.
+model MedFoil {
+  id         String    @id @default(cuid())
+  monthKey   String // "2026-09"
+  date       DateTime?
+  regionIso  String? // the map's region (UZ-TK …); null — not recognised
+  regionName String    @default("")
+  district   String    @default("")
+  clinic     String    @default("")
+  doctor     String    @default("")
+  rep        String    @default("")
+  foils      Float
+  rate       Float? // UZS per foil
+  amount     Float? // UZS paid
+  proof      String    @default("") // photo, stub, invoice…
+  source     String    @default("") // the file it came from
+  importedAt DateTime  @default(now())
+
+  @@index([monthKey])
+  @@index([regionIso, monthKey])
+}
+
 // An order placed with Germany (their "contract"): ships in shipMonth,
 // arrives ~a month later. Trucks pick up against it; openQty = not yet shipped.
 model PlanningContract {
