@@ -121,8 +121,9 @@ async function add() {
     );
   } else if (roleArg === "MEDICAL") {
     console.log(
-      "\nMEDICAL sees only «Медицинский отдел»: sales in tins by region, prescriptions (foils) by region,\n" +
-        "rep and doctor with rates and payouts, and the reps' Excel reports. No other section, no AI chat."
+      "\nMEDICAL sees only «Медицинский отдел»: sales in tins and prescriptions (foils) by territory\n" +
+        "(Tashkent by district), reps and doctors with rates and payouts, and the reps' Excel reports.\n" +
+        "No other section, no AI chat."
     );
   } else {
     console.log(
