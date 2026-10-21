@@ -4,7 +4,7 @@ import { visibleSections } from "../nav";
 
 describe("who may open what", () => {
   it("the medical team opens only its page and the password change — nothing with money, no API, no chat", () => {
-    for (const p of ["/medical", "/change-password"]) expect(canAccessPath("MEDICAL", p)).toBe(true);
+    for (const p of ["/medical", "/change-password", "/api/medical/rep-report"]) expect(canAccessPath("MEDICAL", p)).toBe(true);
     for (const p of ["/", "/sales", "/sales/products", "/statements/pnl", "/budget", "/planning", "/goods/stock", "/settings", "/api/chat", "/api/crud/sale", "/api/export/statement", "/api/budget", "/api/planning/inputs"]) {
       expect(canAccessPath("MEDICAL", p)).toBe(false);
     }
@@ -15,6 +15,9 @@ describe("who may open what", () => {
   it("the owner sees the medical page too; staff and viewers do not", () => {
     expect(canAccessPath("ADMIN", "/medical")).toBe(true);
     expect(canAccessPath("STAFF", "/medical")).toBe(false);
+    expect(canAccessPath("STAFF", "/api/medical/rep-report")).toBe(false);
+    expect(canAccessPath("VIEWER", "/api/medical/rep-report")).toBe(false);
+    expect(canAccessPath("ADMIN", "/api/medical/rep-report")).toBe(true);
     expect(canAccessPath("VIEWER", "/medical")).toBe(false);
     expect(homeOf("ADMIN")).toBe("/");
     expect(visibleSections("STAFF").some((s) => s.key === "medical")).toBe(false);

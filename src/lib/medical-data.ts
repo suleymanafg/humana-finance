@@ -1,7 +1,8 @@
 // What the medical team sees (/medical): Humana sales in tins — never money —
 // by region and product, month by month, next to the verified prescriptions
-// (foils) by region, medical rep and doctor (from the foil file's lines; the
-// amounts paid are not loaded here), with the months a product ran out of
+// (foils) by region, medical rep and doctor, with what was paid for them (the
+// foil file's lines — the owner shares them with the medical director), and
+// the months a product ran out of
 // stock marked so a stock-out is not read as a weak campaign. Regions come from the sales channels (a
 // region's dealer); chains and other channels are their own rows. Promo packs
 // count as their regular product.
@@ -25,10 +26,12 @@ export interface MedicalData {
   rx: Record<string, number>;
   /** foils by region (the map's iso; "none" — region not recognised) and month */
   foilsByRegion: Record<string, Record<string, number>>;
-  /** each medical rep: the regions they work in (most foils first) and foils by month */
-  reps: { name: string; regions: string[]; byMonth: Record<string, number> }[];
-  /** each prescribing doctor (by name and clinic) and their foils by month */
-  doctors: { doctor: string; clinic: string; district: string; regionIso: string | null; rep: string; byMonth: Record<string, number> }[];
+  /** paid for foils (UZS) by month, the whole country */
+  paid: Record<string, number>;
+  /** each medical rep: the regions they work in (most foils first), foils and paid by month */
+  reps: { name: string; regions: string[]; byMonth: Record<string, number>; paidByMonth: Record<string, number> }[];
+  /** each prescribing doctor (by name and clinic): foils and paid by month, the latest rate per foil */
+  doctors: { doctor: string; clinic: string; district: string; regionIso: string | null; rep: string; rate: number | null; byMonth: Record<string, number>; paidByMonth: Record<string, number> }[];
   /** product id -> months it ran short of stock */
   short: Record<string, string[]>;
 }
@@ -43,10 +46,9 @@ export async function medicalData(): Promise<MedicalData> {
     loadDataset(),
     prisma.planningRecruitment.findMany(),
     loadPlan().catch(() => null),
-    // counts only — never the rate or the amount paid
     prisma.medFoil
-      .findMany({ select: { monthKey: true, regionIso: true, district: true, clinic: true, doctor: true, rep: true, foils: true } })
-      .catch(() => [] as { monthKey: string; regionIso: string | null; district: string; clinic: string; doctor: string; rep: string; foils: number }[]),
+      .findMany({ select: { monthKey: true, date: true, regionIso: true, district: true, clinic: true, doctor: true, rep: true, foils: true, rate: true, amount: true }, orderBy: { date: "asc" } })
+      .catch(() => [] as { monthKey: string; date: Date | null; regionIso: string | null; district: string; clinic: string; doctor: string; rep: string; foils: number; rate: number | null; amount: number | null }[]),
   ]);
   const thisMonth = todayInTashkent().slice(0, 7);
   const months = Array.from({ length: 12 }, (_, i) => addMonths(thisMonth, i - 11));
@@ -87,7 +89,8 @@ export async function medicalData(): Promise<MedicalData> {
 
   // prescriptions: the file's lines where loaded, else the monthly totals
   const foilsByRegion: MedicalData["foilsByRegion"] = {};
-  const repMap = new Map<string, { byMonth: Record<string, number>; byRegion: Record<string, number> }>();
+  const repMap = new Map<string, { byMonth: Record<string, number>; paidByMonth: Record<string, number>; byRegion: Record<string, number> }>();
+  const paid: Record<string, number> = {};
   const docMap = new Map<string, MedicalData["doctors"][number]>();
   const rxFromLines: Record<string, number> = {};
   for (const f of foilRows) {
@@ -96,18 +99,23 @@ export async function medicalData(): Promise<MedicalData> {
     const byM = (foilsByRegion[iso] ??= {});
     byM[f.monthKey] = (byM[f.monthKey] ?? 0) + f.foils;
     rxFromLines[f.monthKey] = (rxFromLines[f.monthKey] ?? 0) + f.foils;
+    const amt = f.amount ?? 0;
+    paid[f.monthKey] = (paid[f.monthKey] ?? 0) + amt;
     const rname = f.rep || "—";
-    const r = repMap.get(rname) ?? { byMonth: {}, byRegion: {} };
+    const r = repMap.get(rname) ?? { byMonth: {}, paidByMonth: {}, byRegion: {} };
     r.byMonth[f.monthKey] = (r.byMonth[f.monthKey] ?? 0) + f.foils;
+    r.paidByMonth[f.monthKey] = (r.paidByMonth[f.monthKey] ?? 0) + amt;
     r.byRegion[iso] = (r.byRegion[iso] ?? 0) + f.foils;
     repMap.set(rname, r);
     const dk = `${f.doctor}|${f.clinic}`;
-    const d = docMap.get(dk) ?? { doctor: f.doctor || "—", clinic: f.clinic, district: f.district, regionIso: f.regionIso, rep: f.rep, byMonth: {} };
+    const d = docMap.get(dk) ?? { doctor: f.doctor || "—", clinic: f.clinic, district: f.district, regionIso: f.regionIso, rep: f.rep, rate: null, byMonth: {}, paidByMonth: {} };
     d.byMonth[f.monthKey] = (d.byMonth[f.monthKey] ?? 0) + f.foils;
+    d.paidByMonth[f.monthKey] = (d.paidByMonth[f.monthKey] ?? 0) + amt;
+    if (f.rate) d.rate = f.rate; // lines come by date: the latest rate stays
     docMap.set(dk, d);
   }
   const reps = [...repMap.entries()]
-    .map(([name, r]) => ({ name, regions: Object.entries(r.byRegion).sort((a, b) => b[1] - a[1]).map(([iso]) => iso), byMonth: r.byMonth }))
+    .map(([name, r]) => ({ name, regions: Object.entries(r.byRegion).sort((a, b) => b[1] - a[1]).map(([iso]) => iso), byMonth: r.byMonth, paidByMonth: r.paidByMonth }))
     .sort((a, b) => Object.values(b.byMonth).reduce((t, x) => t + x, 0) - Object.values(a.byMonth).reduce((t, x) => t + x, 0));
   const doctors = [...docMap.values()];
   const rx = foilRows.length
@@ -122,5 +130,5 @@ export async function medicalData(): Promise<MedicalData> {
       if (ms.length && productIds.has(sku.productId)) short[sku.productId] = ms.sort();
     }
   }
-  return { months, thisMonth, products, areas, qty, rx, foilsByRegion, reps, doctors, short };
+  return { months, thisMonth, products, areas, qty, rx, paid, foilsByRegion, reps, doctors, short };
 }

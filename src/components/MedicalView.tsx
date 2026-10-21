@@ -5,7 +5,9 @@
 // medical rep and doctor. A map and regions for the period with the change
 // against the period before, regions month by month, prescriptions next to
 // Platin 1 for the country or a chosen region, reps and the doctors behind
-// them. Months a product ran out of stock are marked. No money anywhere.
+// them, with the rates and amounts paid for foils, and each rep's own report
+// (Excel) to download. Months a product ran out of stock are marked. Sales are
+// in tins only.
 import { useState } from "react";
 import { useT } from "@/lib/locale-context";
 import { addMonths } from "@/lib/planning/compute";
@@ -48,6 +50,7 @@ export default function MedicalView({ data }: { data: MedicalData }) {
   const [rep, setRep] = useState<string | null>(null);
 
   const tins = (v: number) => Math.round(v).toLocaleString(ru ? "ru-RU" : "en-US");
+  const mln = (v: number) => (v / 1e6).toFixed(1).replace(".", ru ? "," : ".");
   const mon = (id: string, long = false) => {
     const [y, m] = id.split("-").map(Number);
     return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(ru ? "ru-RU" : "en-GB", { month: long ? "long" : "short", year: long ? "numeric" : undefined, timeZone: "UTC" }).replace(".", "");
@@ -93,15 +96,17 @@ export default function MedicalView({ data }: { data: MedicalData }) {
   const salesAreas = data.areas.map((a) => a.key);
   const rxNow = sumIn(data.rx, now);
   const rxPrev = sumIn(data.rx, before);
+  const paidNow = sumIn(data.paid, now);
+  const report = (q: string) => `/api/medical/rep-report?${q}&from=${now[0]}&to=${now[now.length - 1]}`;
 
   // reps and doctors, narrowed by the chosen region and rep
   const repRows = data.reps
     .filter((r) => !selected?.iso || r.regions.includes(selected.iso))
-    .map((r) => ({ ...r, cur: sumIn(r.byMonth, now), prev: sumIn(r.byMonth, before) }));
+    .map((r) => ({ ...r, cur: sumIn(r.byMonth, now), prev: sumIn(r.byMonth, before), paidCur: sumIn(r.paidByMonth, now) }));
   const doctorsActive = (name: string) => data.doctors.filter((d) => d.rep === name && sumIn(d.byMonth, now) > 0).length;
   const docRows = data.doctors
     .filter((d) => (!selected?.iso || d.regionIso === selected.iso) && (!rep || d.rep === rep))
-    .map((d) => ({ ...d, cur: sumIn(d.byMonth, now), prev: sumIn(d.byMonth, before) }))
+    .map((d) => ({ ...d, cur: sumIn(d.byMonth, now), prev: sumIn(d.byMonth, before), paidCur: sumIn(d.paidByMonth, now) }))
     .filter((d) => d.cur > 0 || d.prev > 0)
     .sort((a, b) => b.cur - a.cur || b.prev - a.prev)
     .slice(0, 30);
@@ -160,7 +165,10 @@ export default function MedicalView({ data }: { data: MedicalData }) {
         <div className="rounded-xl border border-border bg-surface px-5 py-4">
           <div className="text-[12.5px] text-muted">{l({ ru: "Рецептов (фольг)", en: "Prescriptions (foils)" })} · {periodLabel}</div>
           <div className="figure-num mt-1.5 text-[26px] font-semibold leading-none">{tins(rxNow)}</div>
-          <div className="mt-1.5 text-[12.5px] text-muted">{l({ ru: "к прошлому периоду", en: "vs the period before" })} <Change v={change(rxNow, rxPrev)} /></div>
+          <div className="mt-1.5 text-[12.5px] text-muted">
+            {l({ ru: "к прошлому периоду", en: "vs the period before" })} <Change v={change(rxNow, rxPrev)} />
+            {paidNow > 0 && <span> · {l({ ru: `выплачено ${mln(paidNow)} млн сум`, en: `paid ${mln(paidNow)} mln UZS` })}</span>}
+          </div>
         </div>
         <div className="rounded-xl border border-border bg-surface px-5 py-4">
           <div className="text-[12.5px] text-muted">{measure === "sales" ? l({ ru: "Продажи выросли сильнее всего", en: "Sales grew the most" }) : l({ ru: "Рецепты выросли сильнее всего", en: "Prescriptions grew the most" })}</div>
@@ -289,27 +297,36 @@ export default function MedicalView({ data }: { data: MedicalData }) {
         <div className="grid gap-6 xl:grid-cols-2">
           {/* medical reps */}
           <section className="rounded-xl border border-border bg-surface p-6">
-            <h2 className="text-[15px] font-semibold">
-              {l({ ru: "Медицинские представители", en: "Medical reps" })}
-              {selected?.iso && <span className="font-normal text-muted"> — {selected.name}</span>}
-            </h2>
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 className="text-[15px] font-semibold">
+                {l({ ru: "Медицинские представители", en: "Medical reps" })}
+                {selected?.iso && <span className="font-normal text-muted"> — {selected.name}</span>}
+              </h2>
+              <a href={report("all=1")} className="rounded-lg border border-border px-3 py-1.5 text-[12.5px] font-medium hover:bg-surface-low">
+                {l({ ru: `Отчёты всех представителей · ${periodLabel} (ZIP)`, en: `Every rep's report · ${periodLabel} (ZIP)` })}
+              </a>
+            </div>
             <div className="mt-3 text-[13px]">
               <div className="flex justify-between border-b border-border pb-2 text-[12px] text-muted">
                 <span>{l({ ru: "Представитель · регионы", en: "Rep · regions" })}</span>
-                <span className="flex gap-5"><span className="w-16 text-right">{l({ ru: "фольг", en: "foils" })}</span><span className="w-12 text-right">{l({ ru: "рост", en: "change" })}</span><span className="w-14 text-right">{l({ ru: "врачей", en: "doctors" })}</span></span>
+                <span className="flex gap-4"><span className="w-14 text-right">{l({ ru: "фольг", en: "foils" })}</span><span className="w-11 text-right">{l({ ru: "рост", en: "change" })}</span><span className="w-12 text-right">{l({ ru: "врачей", en: "doctors" })}</span><span className="w-16 text-right">{l({ ru: "млн сум", en: "mln UZS" })}</span><span className="w-12" /></span>
               </div>
               {repRows.map((r) => (
-                <button key={r.name} type="button" onClick={() => setRep(rep === r.name ? null : r.name)} className={`flex w-full items-baseline justify-between gap-3 rounded px-1 py-1.5 text-left ${rep === r.name ? "bg-accent-soft-bg" : "hover:bg-surface-low"}`}>
-                  <span>
+                <div key={r.name} className={`flex w-full items-baseline justify-between gap-3 rounded px-1 py-1.5 ${rep === r.name ? "bg-accent-soft-bg" : "hover:bg-surface-low"}`}>
+                  <button type="button" onClick={() => setRep(rep === r.name ? null : r.name)} className="min-w-0 flex-1 text-left">
                     <span className="font-medium">{r.name}</span>
                     <span className="ml-2 text-[12px] text-muted">{r.regions.slice(0, 2).map(regionName).join(", ")}{r.regions.length > 2 ? "…" : ""}</span>
+                  </button>
+                  <span className="flex items-baseline gap-4">
+                    <span className="figure-num w-14 text-right">{tins(r.cur)}</span>
+                    <span className="w-11 text-right"><Change v={change(r.cur, r.prev)} /></span>
+                    <span className="figure-num w-12 text-right text-muted">{doctorsActive(r.name)}</span>
+                    <span className="figure-num w-16 text-right text-muted">{mln(r.paidCur)}</span>
+                    <a href={report(`rep=${encodeURIComponent(r.name)}`)} title={l({ ru: `Отчёт ${r.name} за ${periodLabel}`, en: `${r.name}'s report, ${periodLabel}` })} className="w-12 text-right text-[12px] font-medium text-accent hover:underline">
+                      Excel
+                    </a>
                   </span>
-                  <span className="flex gap-5">
-                    <span className="figure-num w-16 text-right">{tins(r.cur)}</span>
-                    <span className="w-12 text-right"><Change v={change(r.cur, r.prev)} /></span>
-                    <span className="figure-num w-14 text-right text-muted">{doctorsActive(r.name)}</span>
-                  </span>
-                </button>
+                </div>
               ))}
             </div>
           </section>
@@ -326,7 +343,7 @@ export default function MedicalView({ data }: { data: MedicalData }) {
             <div className="mt-3 text-[13px]">
               <div className="flex justify-between border-b border-border pb-2 text-[12px] text-muted">
                 <span>{l({ ru: "Врач · учреждение", en: "Doctor · clinic" })}</span>
-                <span className="flex gap-5"><span className="w-16 text-right">{l({ ru: "фольг", en: "foils" })}</span><span className="w-12 text-right">{l({ ru: "рост", en: "change" })}</span></span>
+                <span className="flex gap-4"><span className="w-16 text-right">{l({ ru: "ставка", en: "rate" })}</span><span className="w-12 text-right">{l({ ru: "фольг", en: "foils" })}</span><span className="w-11 text-right">{l({ ru: "рост", en: "change" })}</span><span className="w-14 text-right">{l({ ru: "млн сум", en: "mln UZS" })}</span></span>
               </div>
               {docRows.length === 0 && <div className="py-3 text-muted">{l({ ru: "За период рецептов нет", en: "No prescriptions in the period" })}</div>}
               {docRows.map((d) => (
@@ -335,9 +352,11 @@ export default function MedicalView({ data }: { data: MedicalData }) {
                     <span className="font-medium">{d.doctor}</span>
                     <span className="ml-2 text-[12px] text-muted">{[d.clinic, d.district].filter(Boolean).join(", ")}{!rep && d.rep ? ` · ${d.rep}` : ""}</span>
                   </span>
-                  <span className="flex shrink-0 gap-5">
-                    <span className="figure-num w-16 text-right">{tins(d.cur)}</span>
-                    <span className="w-12 text-right"><Change v={change(d.cur, d.prev)} /></span>
+                  <span className="flex shrink-0 gap-4">
+                    <span className="figure-num w-16 text-right text-muted">{d.rate ? tins(d.rate) : "—"}</span>
+                    <span className="figure-num w-12 text-right">{tins(d.cur)}</span>
+                    <span className="w-11 text-right"><Change v={change(d.cur, d.prev)} /></span>
+                    <span className="figure-num w-14 text-right text-muted">{mln(d.paidCur)}</span>
                   </span>
                 </div>
               ))}
