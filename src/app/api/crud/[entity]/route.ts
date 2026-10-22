@@ -426,7 +426,23 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ entity
       result = await delegate.create({ data });
     } else if (body.action === "update") {
       if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
+      // a truck moved to another month (marked arrived, arrival date changed)
+      // takes its import costs along: they carry the truck's month, and the
+      // import VAT counts in TI's VAT by that month
+      const movedFrom =
+        entity === "shipment" && typeof data.monthId === "string"
+          ? (await prisma.shipment.findUnique({ where: { id: body.id }, select: { monthId: true } }))?.monthId
+          : undefined;
       result = await delegate.update({ where: { id: body.id }, data });
+      if (movedFrom && movedFrom !== data.monthId) {
+        const costs = await prisma.importExpense.findMany({ where: { shipmentId: body.id, monthId: movedFrom, deletedAt: null }, select: { id: true } });
+        if (costs.length) {
+          await prisma.importExpense.updateMany({ where: { id: { in: costs.map((c) => c.id) } }, data: { monthId: data.monthId as string } });
+          await prisma.auditLog.create({
+            data: { entity: "importExpense", entityId: costs.map((c) => c.id).join(","), action: "UPDATE", data: JSON.stringify({ monthId: data.monthId, from: movedFrom, withShipment: body.id }), username: session.username },
+          });
+        }
+      }
     } else if (body.action === "upsert" && config.upsertWhere) {
       result = await delegate.upsert({
         where: config.upsertWhere(data),
