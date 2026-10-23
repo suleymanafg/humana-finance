@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import { crud } from "@/lib/crud-client";
@@ -85,6 +85,8 @@ export default function InvoicesView({
   const router = useRouter();
   const pathname = usePathname();
   const [editing, setEditing] = useState<InvoiceRow | "new" | null>(null);
+  /** the invoice opened as a document (date|number) */
+  const [open, setOpen] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<Prefill | null>(null);
   const [reading, setReading] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
@@ -103,6 +105,7 @@ export default function InvoicesView({
     }
     return [...groups.entries()].map(([key, lines]) => ({ key, date: lines[0].date, number: lines[0].number, lines }));
   }, [rows]);
+  const openInvoice = invoices.find((x) => x.key === open) ?? null;
 
   const sum = (pick: (r: InvoiceRow) => number) => rows.reduce((s, r) => s + pick(r), 0);
   const amount = sum((r) => r.amount);
@@ -254,85 +257,81 @@ export default function InvoicesView({
         <table className="stmt">
           <thead>
             <tr>
-              <th>{l({ ru: "Товар", en: "Product" })}</th>
+              <th>{l({ ru: "Счёт-фактура", en: "Invoice" })}</th>
+              <th>{l({ ru: "Дата", en: "Date" })}</th>
+              <th>{l({ ru: "Строк", en: "Lines" })}</th>
               <th>{l({ ru: "Кол-во", en: "Qty" })}</th>
-              <th>{l({ ru: "Цена без НДС", en: "Price ex-VAT" })}</th>
-              <th>{l({ ru: "Сумма без НДС", en: "Amount ex-VAT" })}</th>
+              <th>{l({ ru: "Без НДС", en: "Ex-VAT" })}</th>
               <th>{l({ ru: "НДС", en: "VAT" })}</th>
+              <th>{l({ ru: "С НДС", en: "Incl. VAT" })}</th>
               <th>{l({ ru: "Себестоимость TI", en: "TI cost" })}</th>
               <th>{l({ ru: "Маржа", en: "Margin" })}</th>
-              {!readOnly && <th className="w-16" />}
             </tr>
           </thead>
           <tbody>
             {invoices.length === 0 && (
               <tr>
-                <td colSpan={8} className="!py-8 !text-center text-muted">
+                <td colSpan={9} className="!py-8 !text-center text-muted">
                   {l({ ru: "В этом месяце счетов-фактур нет", en: "No invoices this month" })}
                 </td>
               </tr>
             )}
-            {invoices.map((inv) => (
-              <Fragment key={inv.key}>
-                <tr className="is-header">
-                  <td colSpan={readOnly ? 7 : 8} className="!normal-case !tracking-normal">
-                    <span className="text-[12.5px] font-semibold text-foreground">
-                      {l({ ru: "Счёт-фактура", en: "Invoice" })} № {inv.number}
-                    </span>
-                    <span className="ml-2 text-[12px] font-normal text-muted">{fmtDate(inv.date)}</span>
+            {invoices.map((inv) => {
+              const s = (pick: (r: InvoiceRow) => number) => inv.lines.reduce((t, r) => t + pick(r), 0);
+              return (
+                <tr key={inv.key} onClick={() => setOpen(inv.key)} className="cursor-pointer hover:bg-surface-low">
+                  <td>
+                    <span className="font-medium text-accent">№ {inv.number}</span>
                   </td>
+                  <td>{fmtDate(inv.date)}</td>
+                  <td>{inv.lines.length}</td>
+                  <td>{fmtN(s((r) => r.qty))}</td>
+                  <td>{fmtN(s((r) => r.amount))}</td>
+                  <td>{fmtN(s((r) => r.vat))}</td>
+                  <td>{fmtN(s((r) => r.amount + r.vat))}</td>
+                  <td>{fmtN(s((r) => r.tiCost))}</td>
+                  <td className={s((r) => r.amount - r.tiCost) < 0 ? "text-danger" : ""}>{fmtN(s((r) => r.amount - r.tiCost))}</td>
                 </tr>
-                {inv.lines.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <span className="pl-4">{productName(r.productId)}</span>
-                      {r.ownUnitCost != null && (
-                        <span className="ml-2 text-[11.5px] text-muted">
-                          {l({ ru: "вне FIFO, своя себестоимость", en: "outside FIFO, own cost" })}
-                        </span>
-                      )}
-                    </td>
-                    <td>{fmtN(r.qty)}</td>
-                    <td>{fmtN(r.price, 2)}</td>
-                    <td>{fmtN(r.amount)}</td>
-                    <td>{fmtN(r.vat)}</td>
-                    <td>{fmtN(r.tiCost)}</td>
-                    <td className={r.amount - r.tiCost < 0 ? "text-danger" : ""}>{fmtN(r.amount - r.tiCost)}</td>
-                    {!readOnly && (
-                      <td>
-                        <div className="flex justify-end gap-2">
-                          <button onClick={() => setEditing(r)} className="text-[12px] text-muted hover:text-accent">
-                            {l({ ru: "Изм.", en: "Edit" })}
-                          </button>
-                          <button
-                            onClick={() => remove(r.id)}
-                            className="text-muted hover:text-danger"
-                            aria-label={l({ ru: "Удалить", en: "Delete" })}
-                          >
-                            <IconTrash size={13} />
-                          </button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </Fragment>
-            ))}
+              );
+            })}
             {rows.length > 0 && (
               <tr className="is-subtotal">
                 <td>{l({ ru: "Итого за месяц", en: "Month total" })}</td>
-                <td>{fmtN(sum((r) => r.qty))}</td>
                 <td />
+                <td>{rows.length}</td>
+                <td>{fmtN(sum((r) => r.qty))}</td>
                 <td>{fmtN(amount)}</td>
                 <td>{fmtN(vat)}</td>
+                <td>{fmtN(amount + vat)}</td>
                 <td>{fmtN(cost)}</td>
                 <td>{fmtN(amount - cost)}</td>
-                {!readOnly && <td />}
               </tr>
             )}
           </tbody>
         </table>
       </div>
+      {invoices.length > 0 && (
+        <p className="mt-2 text-[12px] text-muted">{l({ ru: "Нажмите на счёт-фактуру — откроется документ со всеми строками и выгрузкой в Excel.", en: "Click an invoice to open the document with every line and an Excel download." })}</p>
+      )}
+
+      {openInvoice && (
+        <InvoiceDocument
+          invoice={openInvoice}
+          productName={productName}
+          fmtDate={fmtDate}
+          locale={locale}
+          readOnly={readOnly}
+          onClose={() => setOpen(null)}
+          onEdit={(r) => {
+            setOpen(null);
+            setEditing(r);
+          }}
+          onRemove={(id) => {
+            setOpen(null);
+            void remove(id);
+          }}
+        />
+      )}
 
       <SectionTitle>{l({ ru: "По месяцам", en: "By month" })}</SectionTitle>
       <MonthTotals
@@ -371,6 +370,133 @@ export default function InvoicesView({
         />
       )}
     </>
+  );
+}
+
+/** One invoice as a document: every line as printed, the totals, TI's cost and margin, an Excel download. */
+function InvoiceDocument({
+  invoice,
+  productName,
+  fmtDate,
+  locale,
+  readOnly,
+  onClose,
+  onEdit,
+  onRemove,
+}: {
+  invoice: { date: string; number: string; lines: InvoiceRow[] };
+  productName: (id: string) => string;
+  fmtDate: (d: string) => string;
+  locale: "ru" | "en";
+  readOnly: boolean;
+  onClose: () => void;
+  onEdit: (r: InvoiceRow) => void;
+  onRemove: (id: string) => void;
+}) {
+  const ru = locale === "ru";
+  const s = (pick: (r: InvoiceRow) => number) => invoice.lines.reduce((t, r) => t + pick(r), 0);
+  const amount = s((r) => r.amount);
+  const margin = s((r) => r.amount - r.tiCost);
+  const href = `/api/export/invoice?number=${encodeURIComponent(invoice.number)}&date=${invoice.date}&locale=${locale}`;
+  return (
+    <Modal title={`${ru ? "Счёт-фактура" : "Invoice"} № ${invoice.number} ${ru ? "от" : "of"} ${fmtDate(invoice.date)}`} onClose={onClose} wide="xl">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[13px] text-muted">
+          {ru ? "Поставщик" : "Seller"}: <span className="text-foreground">Turbo Impex</span> · {ru ? "Покупатель" : "Buyer"}: <span className="text-foreground">Fargo</span>
+        </div>
+        <a href={href} className="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-[12.5px] text-foreground transition-colors hover:bg-surface-low">
+          {ru ? "Скачать Excel" : "Download Excel"}
+        </a>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="stmt is-compact">
+          <thead>
+            <tr>
+              <th>№</th>
+              <th>{ru ? "Товар" : "Product"}</th>
+              <th>{ru ? "Кол-во, шт" : "Qty, pcs"}</th>
+              <th>{ru ? "Цена без НДС" : "Price ex-VAT"}</th>
+              <th>{ru ? "Стоимость без НДС" : "Value ex-VAT"}</th>
+              <th>{ru ? "Ставка" : "Rate"}</th>
+              <th>{ru ? "НДС" : "VAT"}</th>
+              <th>{ru ? "С НДС" : "Incl. VAT"}</th>
+              {!readOnly && <th className="w-16" />}
+            </tr>
+          </thead>
+          <tbody>
+            {invoice.lines.map((r, i) => (
+              <tr key={r.id}>
+                <td>{i + 1}</td>
+                <td>
+                  {productName(r.productId)}
+                  {r.ownUnitCost != null && <span className="ml-2 text-[11.5px] text-muted">{ru ? "вне FIFO, своя себестоимость" : "outside FIFO, own cost"}</span>}
+                </td>
+                <td>{fmtN(r.qty)}</td>
+                <td>{fmtN(r.price, 2)}</td>
+                <td>{fmtN(r.amount, 2)}</td>
+                <td>{r.amount ? fmtPct(r.vat / r.amount) : "—"}</td>
+                <td>{fmtN(r.vat, 2)}</td>
+                <td>{fmtN(r.amount + r.vat, 2)}</td>
+                {!readOnly && (
+                  <td>
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => onEdit(r)} className="text-[12px] text-muted hover:text-accent">
+                        {ru ? "Изм." : "Edit"}
+                      </button>
+                      <button onClick={() => onRemove(r.id)} className="text-muted hover:text-danger" aria-label={ru ? "Удалить" : "Delete"}>
+                        <IconTrash size={13} />
+                      </button>
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+            <tr className="is-subtotal">
+              <td />
+              <td>{ru ? "Итого" : "Total"}</td>
+              <td>{fmtN(s((r) => r.qty))}</td>
+              <td />
+              <td>{fmtN(amount, 2)}</td>
+              <td />
+              <td>{fmtN(s((r) => r.vat), 2)}</td>
+              <td>{fmtN(amount + s((r) => r.vat), 2)}</td>
+              {!readOnly && <td />}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-5 text-[12.5px] font-semibold">{ru ? "Себестоимость и маржа TI (для учёта, не часть документа)" : "TI cost and margin (for TI's records, not part of the document)"}</div>
+      <table className="stmt is-compact mt-2">
+        <thead>
+          <tr>
+            <th>{ru ? "Товар" : "Product"}</th>
+            <th>{ru ? "Себест., шт" : "Unit cost"}</th>
+            <th>{ru ? "Себестоимость TI" : "TI cost"}</th>
+            <th>{ru ? "Маржа" : "Margin"}</th>
+            <th>%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {invoice.lines.map((r) => (
+            <tr key={r.id}>
+              <td>{productName(r.productId)}</td>
+              <td>{r.qty ? fmtN(r.tiCost / r.qty) : "—"}</td>
+              <td>{fmtN(r.tiCost)}</td>
+              <td className={r.amount - r.tiCost < 0 ? "text-danger" : ""}>{fmtN(r.amount - r.tiCost)}</td>
+              <td>{r.amount ? fmtPct((r.amount - r.tiCost) / r.amount) : "—"}</td>
+            </tr>
+          ))}
+          <tr className="is-subtotal">
+            <td>{ru ? "Итого" : "Total"}</td>
+            <td />
+            <td>{fmtN(s((r) => r.tiCost))}</td>
+            <td className={margin < 0 ? "text-danger" : ""}>{fmtN(margin)}</td>
+            <td>{amount ? fmtPct(margin / amount) : "—"}</td>
+          </tr>
+        </tbody>
+      </table>
+    </Modal>
   );
 }
 

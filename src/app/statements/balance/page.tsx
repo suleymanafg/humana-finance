@@ -27,9 +27,12 @@ export default async function BalancePage({ searchParams }: { searchParams: Sear
         <Segmented param="entity" value={entity} options={ENTITY_OPTIONS} />
         <Segmented param="view" value={view} options={VIEW_OPTIONS} />
         <Segmented param="units" value={String(scale)} options={SCALE_OPTIONS} />
-        <div className="ml-auto">
+        <div className="ml-auto flex gap-2">
           <ButtonLink href={`/api/export/statement?kind=balance&entity=${entity}&month=${ctx.monthId}&locale=${ctx.locale}`}>
             {ctx.l({ ru: "Скачать Excel", en: "Download Excel" })}
+          </ButtonLink>
+          <ButtonLink href={`/api/export/full?month=${ctx.monthId}&locale=${ctx.locale}`}>
+            {ctx.l({ ru: "Вся модель в Excel", en: "Whole model in Excel" })}
           </ButtonLink>
         </div>
       </Toolbar>
