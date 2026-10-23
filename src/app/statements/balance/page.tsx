@@ -31,7 +31,7 @@ export default async function BalancePage({ searchParams }: { searchParams: Sear
           <ButtonLink href={`/api/export/statement?kind=balance&entity=${entity}&month=${ctx.monthId}&locale=${ctx.locale}`}>
             {ctx.l({ ru: "Скачать Excel", en: "Download Excel" })}
           </ButtonLink>
-          <ButtonLink href={`/api/export/full?month=${ctx.monthId}&locale=${ctx.locale}`}>
+          <ButtonLink href={`/api/export/model?month=${ctx.monthId}&locale=${ctx.locale}`}>
             {ctx.l({ ru: "Вся модель в Excel", en: "Whole model in Excel" })}
           </ButtonLink>
         </div>

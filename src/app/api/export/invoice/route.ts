@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getComputed } from "@/lib/data";
 import { buildWorkbook, workbookResponse } from "@/lib/excel";
-import { invoiceSheets } from "@/lib/full-export";
+import { invoiceSheets } from "@/lib/invoice-export";
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
