@@ -7,6 +7,7 @@ import {
   projectSku,
   recommendQty,
   runRate,
+  truckShipMonth,
   truckStats,
   DEFAULT_SETTINGS,
   type PlanningSkuIn,
@@ -114,6 +115,12 @@ describe("open orders", () => {
     expect(openOrdersAt(ordered, collected, "2026-03")).toBe(9000);
     expect(openOrdersAt(ordered, collected, "2026-10")).toBe(3000); // November not yet due
     expect(openOrdersAt(undefined, { "2026-05": 100 }, "2026-06")).toBe(-100);
+  });
+
+  it("counts a truck in its ship month, even when it leaves DMK later", () => {
+    expect(truckShipMonth({ shipMonth: "2026-10", dispatchMonth: "2026-11", monthId: "2026-10" })).toBe("2026-10");
+    expect(truckShipMonth({ shipMonth: null, dispatchMonth: "2026-11", monthId: "2026-10" })).toBe("2026-11");
+    expect(truckShipMonth({ shipMonth: null, dispatchMonth: null, monthId: "2026-10" })).toBe("2026-10");
   });
 });
 

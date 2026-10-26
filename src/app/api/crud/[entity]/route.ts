@@ -20,7 +20,7 @@ interface EntityConfig {
 const registry: Record<string, EntityConfig> = {
   shipment: {
     delegate: () => prisma.shipment,
-    fields: ["code", "monthId", "notes", "status", "etaDate", "dispatchDate"],
+    fields: ["code", "monthId", "notes", "status", "etaDate", "dispatchDate", "shipMonth"],
     dateFields: ["etaDate", "dispatchDate"],
     requiredFields: ["dispatchDate"],
     softDelete: true,
@@ -408,6 +408,13 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ entity
   }
   if (entity === "trTiSale" && "monthId" in data && !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(data.monthId ?? ""))) {
     return NextResponse.json({ error: "monthId: формат ГГГГ-ММ / format YYYY-MM" }, { status: 400 });
+  }
+  // a truck's ship (order) month: YYYY-MM, or empty = its dispatch month
+  if (entity === "shipment" && "shipMonth" in data) {
+    if (data.shipMonth === "") data.shipMonth = null;
+    if (data.shipMonth !== null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(data.shipMonth))) {
+      return NextResponse.json({ error: "shipMonth: формат ГГГГ-ММ / format YYYY-MM" }, { status: 400 });
+    }
   }
 
   try {

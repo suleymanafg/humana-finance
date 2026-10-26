@@ -54,6 +54,8 @@ export async function POST(request: NextRequest) {
         monthId,
         status: "PLANNED",
         dispatchDate: new Date(`${dispatch}T00:00:00Z`),
+        // the load of this ship month, even if the truck later leaves DMK in another month
+        shipMonth: dispatchMonth,
         etaDate: eta,
         notes: `Planned from the supply plan (${dispatchMonth})`,
         lines: { create: lines.map((l) => l!) },

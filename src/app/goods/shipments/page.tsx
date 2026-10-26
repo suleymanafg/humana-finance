@@ -52,6 +52,8 @@ export default async function ShipmentsPage({ searchParams }: { searchParams: Se
         code: s.code,
         status: s.status,
         etaDate: day(s.etaDate),
+        dispatchDate: day(s.dispatchDate),
+        shipMonth: s.shipMonth,
         totalUnits: s.lines.reduce((sum, l) => sum + l.qty, 0),
       }))}
       statusById={Object.fromEntries(

@@ -351,8 +351,20 @@ function ArrivalDate({
 const arrivalValid = (months: MonthIn[], date: string) =>
   date !== "" && date <= today() && months.some((m) => m.id === date.slice(0, 7));
 
-/** One truck in the «Не прибыли» strip: its status, the expected sellable
- *  date and the arrived action. */
+interface TransitTruck {
+  id: string;
+  code: string;
+  status: string;
+  etaDate: string | null;
+  dispatchDate: string | null;
+  /** order (IBP ship) month, YYYY-MM; null = the dispatch month */
+  shipMonth: string | null;
+  totalUnits: number;
+}
+
+/** One truck in the «Не прибыли» strip: its status, the dispatch date and the
+ *  order (IBP ship) month it belongs to, the expected sellable date and the
+ *  arrived action. */
 function TransitRow({
   shipment,
   months,
@@ -360,14 +372,31 @@ function TransitRow({
   ru,
   onSaved,
 }: {
-  shipment: { id: string; code: string; status: string; etaDate: string | null; totalUnits: number };
+  shipment: TransitTruck;
   months: MonthIn[];
   readOnly: boolean;
   ru: boolean;
   onSaved: () => void;
 }) {
   const [eta, setEta] = useState(shipment.etaDate ?? "");
+  const [disp, setDisp] = useState(shipment.dispatchDate ?? "");
+  const [ship, setShip] = useState(shipment.shipMonth ?? "");
   const [busy, setBusy] = useState(false);
+  const datesChanged = (disp !== (shipment.dispatchDate ?? "") && disp !== "") || ship !== (shipment.shipMonth ?? "");
+
+  async function saveDates() {
+    if (busy) return;
+    setBusy(true);
+    const data: Record<string, string | null> = { shipMonth: ship || null };
+    if (disp !== "") data.dispatchDate = disp;
+    const res = await crud("shipment", "update", { id: shipment.id, data });
+    setBusy(false);
+    if (res.error) {
+      alert(res.error);
+      return;
+    }
+    onSaved();
+  }
   // marking arrival asks for the day the goods were in the warehouse
   const [arrival, setArrival] = useState<string | null>(null);
 
@@ -431,6 +460,29 @@ function TransitRow({
         <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
           <IconTrash size={13} /> {ru ? "Убрать" : "Remove"}
         </Button>
+      )}
+      {!readOnly && (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11.5px] text-muted">{ru ? "отгрузка из DMK" : "leaves DMK"}</span>
+          <Input type="date" value={disp} onChange={(e) => setDisp(e.target.value)} className="w-36" />
+          <span className="text-[11.5px] text-muted">{ru ? "заказ месяца (IBP)" : "order of (IBP)"}</span>
+          <Input
+            type="month"
+            value={ship}
+            onChange={(e) => setShip(e.target.value)}
+            className="w-36"
+            title={
+              ru
+                ? "Месяц заказа, к которому относится фура. Пусто — месяц отгрузки. Укажите, если заказ уезжает из DMK позже (например, октябрьский заказ отгружен 3 ноября)."
+                : "The order month this truck belongs to. Empty means its dispatch month. Set it when an order leaves DMK in a later month (e.g. the October order dispatched on 3 November)."
+            }
+          />
+          {datesChanged && (
+            <Button variant="secondary" disabled={busy} onClick={() => void saveDates()}>
+              {busy ? "…" : ru ? "Сохранить" : "Save"}
+            </Button>
+          )}
+        </span>
       )}
       <span className="flex items-center gap-1.5">
         <span className="text-[11.5px] text-muted">{ru ? "в продаже ~" : "sellable ~"}</span>
@@ -1186,7 +1238,7 @@ export default function ShipmentsView({
   expenses: ExpenseRow[];
   importCategories: Array<{ id: string; name: string }>;
   /** trucks not arrived yet (planned … at customs) — planning-only until marked arrived */
-  transit: Array<{ id: string; code: string; status: string; etaDate: string | null; totalUnits: number }>;
+  transit: TransitTruck[];
   /** shipmentId -> live status/eta for every non-deleted shipment */
   statusById: Record<string, { status: string; etaDate: string | null; dispatchDate: string | null }>;
   readOnly: boolean;

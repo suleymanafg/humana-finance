@@ -341,9 +341,13 @@ model Shipment {
   status       String    @default("ARRIVED") // PLANNED | ORDERED | TRANSIT | CUSTOMS | ARRIVED
   etaDate      DateTime? // expected date it becomes sellable; the actual date once ARRIVED
   // invoice/dispatch date — when the truck loaded at DMK. Partner Purchase
-  // and Open Orders count the pickup in THIS month; when absent the engine
-  // assumes dispatch = arrival − 1 month.
+  // and Open Orders count the pickup in THIS month unless shipMonth is set;
+  // when absent the engine assumes dispatch = arrival − 1 month.
   dispatchDate DateTime?
+  // the order (IBP ship) month the truck belongs to, "YYYY-MM", when it leaves
+  // DMK in a later month (October's order dispatched 3 Nov); null = its
+  // dispatch month. Planning counts the load and the pickup in this month.
+  shipMonth    String?
   notes        String?
   deletedAt    DateTime?
   createdAt    DateTime  @default(now())

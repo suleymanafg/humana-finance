@@ -13,6 +13,7 @@ import {
   monthKeyOf,
   nextOrderSlot,
   openOrdersAt,
+  truckShipMonth,
   type OrderSlot,
   type PlanningSettings,
   type PlanningSkuIn,
@@ -43,8 +44,8 @@ export interface PlanningData {
   recruitment: Record<string, number>; // monthKey -> verified prescriptions
   purchases: Record<string, Record<string, number>>; // skuId -> shipMonth -> IBP order
   model: DemandModelResult;
-  /** units picked up at DMK per SKU per DISPATCH month — real dispatchDate
-   *  when entered, else assumed arrival − 1 (ETA − 1 for transit) */
+  /** units picked up at DMK per SKU per SHIP month — the truck's shipMonth when
+   *  set, else its real dispatchDate, else assumed arrival − 1 (ETA − 1 for transit) */
   pickups: Record<string, Record<string, number>>;
   /** trucks currently on the road — planning-only until marked ARRIVED */
   transit: TransitShipment[];
@@ -171,7 +172,8 @@ export async function loadPlanning(): Promise<PlanningData> {
   for (const p of purchases) (purchasesBySku[p.skuId] ??= {})[p.shipMonth] = p.qty;
 
   // trucks: TRANSIT ones are supply on the way; every truck is a pickup at its
-  // dispatch month, which is what Open Orders subtract
+  // ship month (its dispatch month unless its order leaves later), which is
+  // what Open Orders subtract
   const pickups: Record<string, Record<string, number>> = {};
   const transit: TransitShipment[] = [];
   const leads: number[] = [];
@@ -184,6 +186,7 @@ export async function loadPlanning(): Promise<PlanningData> {
     const dispatchMonth = sh.dispatchDate
       ? monthKeyOf(sh.dispatchDate)
       : addMonths(sh.status === "TRANSIT" ? etaMonth : sh.monthId, -1);
+    const pickupMonth = truckShipMonth({ shipMonth: sh.shipMonth, dispatchMonth, monthId: sh.monthId });
     const t: TransitShipment | null =
       sh.status === "TRANSIT"
         ? {
@@ -198,7 +201,7 @@ export async function loadPlanning(): Promise<PlanningData> {
     for (const l of sh.lines) {
       const skuId = skuByProduct.get(regularOf.get(l.productId) ?? l.productId);
       if (!skuId) continue;
-      (pickups[skuId] ??= {})[dispatchMonth] = (pickups[skuId][dispatchMonth] ?? 0) + l.qty;
+      (pickups[skuId] ??= {})[pickupMonth] = (pickups[skuId][pickupMonth] ?? 0) + l.qty;
       if (t) {
         t.units[skuId] = (t.units[skuId] ?? 0) + l.qty;
         t.totalUnits += l.qty;

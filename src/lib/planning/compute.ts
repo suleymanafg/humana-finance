@@ -88,10 +88,19 @@ export function nextOrderSlot(today: Date, s: PlanningSettings = DEFAULT_SETTING
 export const BACKLOG_EPOCH = "2026-01";
 
 /**
+ * The month a truck's load and pickup count in: its ship month when set (an
+ * order dispatched in a later month, e.g. October's order leaving on 3 Nov),
+ * else its dispatch month, else its month.
+ */
+export function truckShipMonth(t: { shipMonth?: string | null; dispatchMonth?: string | null; monthId: string }): string {
+  return t.shipMonth || t.dispatchMonth || t.monthId;
+}
+
+/**
  * Open Orders at the end of `month` — ONE rule for every month (the owner's
  * ruling): everything ordered (committed purchases by ship month) minus
- * everything collected (pickups by dispatch month) since the epoch. Positive =
- * ordered but not collected; negative = collected beyond orders.
+ * everything collected (pickups by ship month — see truckShipMonth) since the
+ * epoch. Positive = ordered but not collected; negative = collected beyond orders.
  */
 export function openOrdersAt(
   purchases: Record<string, number> | undefined,

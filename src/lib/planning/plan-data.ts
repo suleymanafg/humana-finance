@@ -11,7 +11,7 @@ import { cache } from "react";
 import { prisma } from "@/lib/db";
 import { getComputed } from "@/lib/data";
 import { loadPlanning, type PlanningData } from "./data";
-import { addMonths, monthKeyOf } from "./compute";
+import { addMonths, monthKeyOf, truckShipMonth } from "./compute";
 import { runStageEngine, type EngineProduct, type Stage, type StageEngineResult } from "./stage-engine";
 import { planOrders, type KnownLoad, type OrderPlan } from "./order-planner";
 
@@ -260,10 +260,11 @@ export async function buildPlan(opts: { addTrucks?: WhatIfTruck[] } = {}): Promi
     params: { tinsPerBaby: settings.tinsPerBaby, rxAhead: settings.rxAhead },
   });
 
-  // trucks on their way or agreed: sellable from their expected date, else dispatch + lead days
+  // trucks on their way or agreed: sellable from their expected date, else dispatch + lead days;
+  // a truck belongs to its ship month's load even when it leaves DMK later
   const pipeline: PipelineTruck[] = shipments.map((sh) => {
     const dispatchDate = sh.dispatchDate ? isoDay(sh.dispatchDate) : null;
-    const shipMonth = dispatchDate ? dispatchDate.slice(0, 7) : sh.monthId;
+    const shipMonth = truckShipMonth({ shipMonth: sh.shipMonth, dispatchMonth: dispatchDate?.slice(0, 7), monthId: sh.monthId });
     let sellDate = sh.etaDate ? isoDay(sh.etaDate) : addDays(dispatchDate ?? `${shipMonth}-${String(settings.dispatchDay).padStart(2, "0")}`, settings.leadDays);
     if (sellDate < today) sellDate = today; // overdue: any day now
     const units: Record<string, number> = {};
