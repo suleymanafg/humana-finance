@@ -40,6 +40,21 @@ describe("model workbook", () => {
     expect(tiNet[202509]).toBeCloseTo(c.ti[1].netProfit, 6);
   });
 
+  it("works out each company's VAT on its own tab, as the engine does", () => {
+    const wb = modelWorkbook(ds, c, "2025-10", "en");
+    expect(wb.worksheets[0].name).toBe("Contents");
+    const credit = line(wb, "VAT Fargo", /^VAT CREDIT AT MONTH-END/);
+    const paid = line(wb, "VAT Fargo", /^VAT paid to the state/);
+    // ExcelJS keeps no stored result for a zero, so a missing one reads as 0
+    const at = (rec: Record<number, unknown>, m: string) => Number(rec[Number(m.replace("-", ""))] ?? 0);
+    c.fargo.forEach((f) => {
+      expect(at(credit, f.monthId)).toBeCloseTo(f.vat.creditOut, 6);
+      expect(at(paid, f.monthId)).toBeCloseTo(f.vat.paid, 6);
+    });
+    const ours = line(wb, "VAT TI", /^OURS \(the joint work\)/);
+    c.ti.forEach((x) => expect(at(ours, x.monthId)).toBeCloseTo(x.vat.jvPosition, 6));
+  });
+
   it("stops at the report month", () => {
     const wb = modelWorkbook(ds, c, "2025-09", "en");
     expect(Object.keys(line(wb, "P&L Fargo", /^Revenue$/))).toEqual(["202508", "202509"]);

@@ -34,6 +34,7 @@ export const SECTIONS: NavSection[] = [
     pages: [
       { href: "/statements/pnl", label: { ru: "Прибыли и убытки", en: "Profit and loss" } },
       { href: "/statements/balance", label: { ru: "Баланс", en: "Balance sheet" } },
+      { href: "/statements/model", label: { ru: "Модель в Excel", en: "Model in Excel" } },
     ],
   },
   {

@@ -8,8 +8,10 @@
 // trucks → TI's FIFO by truck (invoices and free samples in date order) →
 // Fargo's FIFO by invoice (each month's sales, then its write-offs, then what
 // the latest count found missing) → P&L, VAT, settlement, balance sheets.
-// A last tab, «App check», sets the workbook's key figures against the app's.
-// Russian or English.
+// A first tab, «Contents», says what each tab holds and links to it; the VAT of
+// each company has its own tab (how it arises, the credit carried, what is
+// paid); a last tab, «App check», sets the workbook's key figures against the
+// app's. Russian or English.
 import ExcelJS from "exceljs";
 import type { Computed, Dataset } from "./engine/types";
 import { arrivedInOrder, invoicesInOrder, isImportVat } from "./engine/costing";
@@ -18,6 +20,7 @@ import { FARGO_GROUPS, FARGO_WRITEOFF_GROUP, GROUP_LABELS, TI_GROUPS } from "./g
 type Locale = "ru" | "en";
 
 const SHEETS = {
+  contents: ["Содержание", "Contents"],
   settings: ["Настройки", "Settings"],
   plTi: ["ОПиУ TI", "P&L TI"],
   plFg: ["ОПиУ Fargo", "P&L Fargo"],
@@ -26,7 +29,11 @@ const SHEETS = {
   bsFg: ["Баланс Fargo", "BS Fargo"],
   bsGr: ["Баланс консолид.", "BS Consolidated"],
   settle: ["Расчёты с Fargo", "Settlement"],
+  vatTi: ["НДС TI — расчёт", "VAT TI"],
+  vatFg: ["НДС Fargo — расчёт", "VAT Fargo"],
   ship: ["Поставки", "Shipments"],
+  skuCost: ["Себестоимость по SKU", "Cost by SKU"],
+  cashExp: ["Наличные расходы по фурам", "Cash expenses by truck"],
   cogs: ["Себестоимость FIFO", "COGS"],
   stock: ["Остатки товара", "Stock"],
   sales: ["Продажи", "Sales"],
@@ -50,7 +57,7 @@ const SHEETS = {
   lists: ["Справочники", "Lists"],
   check: ["Сверка с приложением", "App check"],
 } as const;
-type SheetKey = keyof typeof SHEETS;
+export type SheetKey = keyof typeof SHEETS;
 
 const MONEY = "#,##0;-#,##0";
 const UNITS = "#,##0;-#,##0";
@@ -160,7 +167,23 @@ interface Line {
   fmt?: string;
 }
 
-export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, locale: Locale): ExcelJS.Workbook {
+/**
+ * `formalUnitCost` — the accountant's (1C) cost per unit of each truck line, by line id: goods at the book euro
+ * rate plus the documented import costs. Given, TI's cost of goods is shown both ways (formal and actual) through
+ * the same FIFO; net profit stays on the actual cost. `officialExpense` — the part of each import expense row
+ * (by id) that is on the accountant's cost calculation; the rest is shown as paid in cash (without documents).
+ */
+export function modelWorkbook(
+  ds: Dataset,
+  c: Computed,
+  reportMonth: string,
+  locale: Locale,
+  options: { formalUnitCost?: Record<string, number>; officialExpense?: Record<string, number>; formalGoodsUnit?: Record<string, number> } = {}
+): ExcelJS.Workbook {
+  const formal = options.formalUnitCost && Object.keys(options.formalUnitCost).length ? options.formalUnitCost : null;
+  const official = options.officialExpense && Object.keys(options.officialExpense).length ? options.officialExpense : null;
+  /** the goods part of the accountant's cost per tin, by line id (the invoice value at the book euro rate) */
+  const formalGoods = options.formalGoodsUnit ?? {};
   const ru = locale === "ru";
   const t = (r: string, e: string) => (ru ? r : e);
   const N = (k: SheetKey) => SHEETS[k][ru ? 0 : 1];
@@ -211,7 +234,8 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
   wb.creator = "Humana Finance";
   wb.calcProperties.fullCalcOnLoad = true;
   const S = {} as Record<SheetKey, Sheet>;
-  for (const k of Object.keys(SHEETS) as SheetKey[]) S[k] = new Sheet(wb, N(k));
+  // the cost-by-SKU and cash-expenses tabs only exist when the formal costs and official amounts are given
+  for (const k of Object.keys(SHEETS) as SheetKey[]) if ((k !== "cashExp" && k !== "skuCost") || (formal && official)) S[k] = new Sheet(wb, N(k));
 
   // ═══════════════════════ data tabs ═══════════════════════
   /** the previous owner's VAT before the first month — a formula cell, so referenced directly (not by name) */
@@ -329,7 +353,9 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
       // column N is written with the FIFO tab (it points at the line's row there)
       s.f(r, 15, `F${r}*N${r}`, MONEY);
     });
-    s.widths([7, 11, 9, 9, 22, 9, 12, 16, 14, 16, 9, 11, 22, 12, 16]);
+    // column P too — the same line at the accountant's cost
+    if (formal) s.header(3, [t("СЕБЕСТОИМОСТЬ TI ПО УЧЁТУ (1С)", "TI COST — FORMAL (1C)"), ...(official ? [t("в т.ч. наличные расходы на импорт", "of which cash import costs")] : [])], 16);
+    s.widths([7, 11, 9, 9, 22, 9, 12, 16, 14, 16, 9, 11, 22, 12, 16, 16]);
     s.freeze(0, 3);
   }
 
@@ -443,20 +469,35 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
     s.title(t("Расходы на импорт по поставкам", "Import expenses per truck"), t("НДС на таможне (отметка 1) — не часть себестоимости.", "Import VAT at customs (flag 1) is not part of the landed cost."));
     s.header(3, [t("Поставка", "Truck"), t("Месяц", "Month"), t("Статья", "Category"), t("Сумма, сум", "Amount, UZS"), t("Оплачено в месяце (если позже)", "Paid in month (if later)"), t("Примечание", "Note"), t("НДС на таможне (1/0)", "Import VAT (1/0)")]);
     const ids = new Set(shipments.map((x) => x.shipmentId));
-    ds.importExpenses
+    const rows = ds.importExpenses
       .filter((e) => ids.has(e.shipmentId))
-      .sort((a, b) => shipOrder.findIndex((x) => x.shipmentId === a.shipmentId) - shipOrder.findIndex((x) => x.shipmentId === b.shipmentId))
-      .forEach((e, i) => {
-        const r = 4 + i;
-        s.v(r, 1, truckCode.get(e.shipmentId) ?? e.shipmentId);
-        s.v(r, 2, ym(e.monthId), MONTHFMT);
-        s.v(r, 3, e.categoryName);
-        s.v(r, 4, e.amount, MONEY);
-        s.v(r, 5, e.paidMonthId ? ym(e.paidMonthId) : null, MONTHFMT);
-        s.v(r, 6, e.notes ?? null);
-        s.v(r, 7, isImportVat(e.categoryName) ? 1 : 0);
-      });
-    s.widths([14, 9, 24, 15, 14, 30, 10]);
+      .sort((a, b) => shipOrder.findIndex((x) => x.shipmentId === a.shipmentId) - shipOrder.findIndex((x) => x.shipmentId === b.shipmentId));
+    rows.forEach((e, i) => {
+      const r = 4 + i;
+      s.v(r, 1, truckCode.get(e.shipmentId) ?? e.shipmentId);
+      s.v(r, 2, ym(e.monthId), MONTHFMT);
+      s.v(r, 3, e.categoryName);
+      s.v(r, 4, e.amount, MONEY);
+      s.v(r, 5, e.paidMonthId ? ym(e.paidMonthId) : null, MONTHFMT);
+      s.v(r, 6, e.notes ?? null);
+      s.v(r, 7, isImportVat(e.categoryName) ? 1 : 0);
+      // the part on the accountant's cost calculation, and the rest — paid in cash (the customs VAT is all on the declaration)
+      if (official) {
+        if (isImportVat(e.categoryName)) {
+          s.f(r, 8, `D${r}`, MONEY);
+          s.v(r, 9, 0, MONEY);
+        } else if (official[e.id] !== undefined) {
+          s.v(r, 8, Math.round(official[e.id] * 100) / 100, MONEY);
+          s.f(r, 9, `D${r}-H${r}`, MONEY);
+        }
+      }
+    });
+    if (official) {
+      s.header(3, [t("В учёте (1С)", "In the accounting (1C)"), t("Наличные, не в учёте (сумма − в учёте)", "Cash, not in the accounting (amount − in the accounting)")], 8);
+      s.ws.autoFilter = `A3:I${Math.max(4, 3 + rows.length)}`;
+      s.freeze(0, 3);
+    }
+    s.widths([14, 9, 24, 15, 14, 30, 10, 18, 22]);
   }
 
   // Money tabs
@@ -647,7 +688,16 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
       s.f(r, 8, `SUMIFS(${LR("O")},${LR("A")},A${r})`, MONEY);
       s.f(r, 9, `IF(E${r}-H${r}>0,(E${r}+F${r}-G${r})/(E${r}-H${r}),1)`, "0.0000");
       s.f(r, 10, `E${r}+F${r}`, MONEY);
+      if (formal) s.f(r, 11, `SUMIFS(${LR("R")},${LR("A")},A${r})`, MONEY);
+      // the gap between the actual and the formal cost: import costs without documents; the rest is the euro rate
+      // (on the goods and on transport paid in euros)
+      if (formal && official) {
+        s.f(r, 13, `F${r}-SUMIFS(${SE}$H:$H,${SE}$A:$A,A${r},${SE}$G:$G,0)`, MONEY);
+        s.f(r, 12, `J${r}-K${r}-M${r}`, MONEY);
+      }
     });
+    if (formal) s.header(3, [t("СЕБЕСТОИМОСТЬ ПО УЧЁТУ (1С)", "FORMAL COST (accountant, 1C)")], 11);
+    if (formal && official) s.header(3, [t("Разница: курс евро (товар и транспорт, оплаченный в евро)", "Gap: euro rate (goods and transport paid in euros)"), t("Разница: наличные расходы, не в учёте", "Gap: cash costs, not in the accounting")], 12);
     s.v(linesHead - 1, 1, t("2. СТРОКИ ФУР", "2. TRUCK LINES")).font = { bold: true };
     s.header(linesHead, [t("Фура", "Truck"), t("Месяц прибытия", "Arrival month"), t("Статус", "Status"), t("Товар", "Product"), t("Кол-во", "Qty"), t("Цена, EUR", "Price, EUR"), t("Курс, сум/EUR", "Rate, UZS/EUR"), t("Цена, сум", "Price, UZS"), t("Закупка, сум", "Purchase, UZS"), t("Своя себест., шт", "Fixed unit cost (own cost)"), t("Коэффициент", "Load factor"), t("Себест., шт", "Landed unit cost"), t("СЕБЕСТОИМОСТЬ", "LANDED VALUE"), t("Своя: сумма", "Fixed: landed"), t("Своя: закупка", "Fixed: purchase"), t("Себестоимость как", "Cost product")]);
     allLines.forEach(({ sh, l }, i) => {
@@ -669,12 +719,165 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
       s.f(r, 14, `IF(J${r}<>"",E${r}*J${r},0)`, MONEY);
       s.f(r, 15, `IF(J${r}<>"",I${r},0)`, MONEY);
       s.f(r, 16, `IFERROR(INDEX(${LI}$E:$E,MATCH(D${r},${LI}$A:$A,0)),D${r})`);
+      // the accountant's cost per unit (1C); a line without one keeps its landed cost
+      if (formal) {
+        s.v(r, 17, formal[l.id] ?? null, UNIT2);
+        s.f(r, 18, `IF(Q${r}="",M${r},E${r}*Q${r})`, MONEY);
+      }
+      // its import costs paid in cash (a line without the accountant's cost has formal = actual, so none)
+      if (formal && official) s.f(r, 19, `IF(Q${r}="",0,(M${r}-I${r})*(1-IFERROR(SUMIFS(${SE}$H:$H,${SE}$A:$A,A${r},${SE}$G:$G,0)/SUMIFS(${SE}$D:$D,${SE}$A:$A,A${r},${SE}$G:$G,0),1)))`, MONEY);
     });
-    s.widths([14, 11, 11, 22, 9, 9, 12, 12, 16, 12, 10, 12, 16, 12, 12, 22]);
+    if (formal) s.header(linesHead, [t("Себест. по учёту (1С), шт", "Formal unit cost (1C)"), t("СЕБЕСТОИМОСТЬ ПО УЧЁТУ", "FORMAL VALUE")], 17);
+    if (formal && official) s.header(linesHead, [t("Наличные расходы в строке (не в учёте)", "Cash import costs in the line (not in the accounting)")], 19);
+    s.widths([14, 11, 11, 22, 9, 9, 12, 12, 16, 12, 16, 12, 16, 12, 12, 22, 14, 16, 16]);
     SHIP.truckFirst = truckFirst;
     SHIP.truckLast = Math.max(truckFirst, truckLast);
     SHIP.lineFirst = lineFirst;
     SHIP.lineLast = lineLast;
+  }
+
+  // Cost by SKU — each truck's products: what one tin and the whole line cost, actual and formal, step by step.
+  // Actual = the goods at the rate TI paid + the line's share of the truck's import costs (by value, as the engine
+  // spreads them), split into documented and cash in the truck's proportion; formal = the goods at the accountant's
+  // euro rate + the rest of 1C's cost of the line (its documented costs).
+  if (formal && official) {
+    const s = S.skuCost;
+    const SE = Q("shipExp");
+    const SP = Q("ship");
+    s.title(
+      t("Себестоимость по SKU — из чего она складывается", "Cost by SKU — what it is made of"),
+      t("Фактическая = товар по курсу, по которому TI платил, + расходы на импорт (в учёте и наличными, доля строки по стоимости). По учёту = расчёт себестоимости 1С: товар по учётному курсу + расходы в учёте. Обе — те же банки, разница на банку разложена справа.", "Actual = the goods at the rate TI paid + import costs (in the accounting and in cash, the line's share by value). Formal = 1C's cost calculation: the goods at the book rate + the import costs in the accounting. Both are the same tins; the difference per tin is split on the right.")
+    );
+    const groups: Array<[number, number, string]> = [
+      [2, 3, t("ТОВАР", "GOODS")],
+      [4, 10, t("ФАКТИЧЕСКАЯ СЕБЕСТОИМОСТЬ (что заплатил TI)", "ACTUAL COST (what TI paid)")],
+      [11, 15, t("ПО УЧЁТУ (1С)", "FORMAL (1C)")],
+      [16, 18, t("РАЗНИЦА НА БАНКУ", "DIFFERENCE PER TIN")],
+    ];
+    for (const [c1, c2, label] of groups) {
+      s.ws.mergeCells(4, c1, 4, c2);
+      const cell = s.v(4, c1, label);
+      cell.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      for (let c = c1; c <= c2; c++) s.cell(4, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F3864" } };
+    }
+    s.header(5, [
+      t("Фура / товар", "Truck / product"), t("Банок", "Tins"), t("Цена, €", "Price, €"),
+      t("Товар, €", "Goods, €"), t("Курс, по которому платил TI", "Rate TI paid"), t("Товар, сум", "Goods, UZS"), t("+ Расходы в учёте", "+ Import costs in the accounting"), t("+ Расходы наличными", "+ Import costs in cash"), t("= СЕБЕСТОИМОСТЬ", "= ACTUAL COST"), t("За банку", "Per tin"),
+      t("Учётный курс", "Book rate"), t("Товар по учётному курсу", "Goods at the book rate"), t("+ Расходы в учёте (1С)", "+ Import costs in the accounting (1C)"), t("= СЕБЕСТОИМОСТЬ ПО УЧЁТУ", "= FORMAL COST"), t("За банку", "Per tin"),
+      t("Фактическая − по учёту", "Actual − formal"), t("в т.ч. наличные", "of which cash"), t("в т.ч. курс евро и распределение", "of which euro rate and spreading"),
+    ]);
+    s.ws.getRow(5).height = 42;
+    const trucks = shipOrder.filter((sh) => sh.lines.some((l) => formal[l.id] !== undefined));
+    const BOLD = { bold: true };
+    let r = 7; // row 6: all trucks
+    const totalRows: number[] = [];
+    for (const sh of trucks) {
+      const code = truckCode.get(sh.shipmentId)!;
+      // the truck's line: the share of its import costs in the accounting (VAT at customs is not a cost)
+      const head = r++;
+      s.v(head, 1, `${code} — ${t("прибыла", "arrived")} ${sh.monthId}`).font = BOLD;
+      for (let c = 1; c <= 18; c++) s.cell(head, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: FILL_SECTION } };
+      s.f(head, 20, `IFERROR(SUMIFS(${SE}$H:$H,${SE}$A:$A,${str(code)},${SE}$G:$G,0)/SUMIFS(${SE}$D:$D,${SE}$A:$A,${str(code)},${SE}$G:$G,0),1)`, "0.0000");
+      const first = r;
+      for (const l of sh.lines) {
+        const lr = shipLineRow.get(l.id);
+        if (!lr || formal[l.id] === undefined) continue;
+        s.v(r, 1, key(l.productId));
+        s.cell(r, 1).alignment = { indent: 1 };
+        s.f(r, 2, `${SP}E${lr}`, UNITS);
+        s.f(r, 3, `${SP}F${lr}`, "#,##0.0000");
+        s.f(r, 4, `B${r}*C${r}`, "#,##0.00");
+        s.f(r, 5, `${SP}G${lr}`, UNIT2);
+        s.f(r, 6, `${SP}I${lr}`, MONEY);
+        s.f(r, 7, `(${SP}M${lr}-F${r})*$T$${head}`, MONEY);
+        s.f(r, 8, `${SP}M${lr}-F${r}-G${r}`, MONEY);
+        s.f(r, 9, `F${r}+G${r}+H${r}`, MONEY);
+        s.f(r, 10, `IFERROR(I${r}/B${r},0)`, UNIT2);
+        s.v(r, 12, formalGoods[l.id] !== undefined ? Math.round(l.qty * formalGoods[l.id] * 100) / 100 : null, MONEY);
+        s.f(r, 11, `IFERROR(L${r}/D${r},0)`, UNIT2);
+        s.f(r, 14, `${SP}R${lr}`, MONEY);
+        s.f(r, 13, `N${r}-L${r}`, MONEY);
+        s.f(r, 15, `IFERROR(N${r}/B${r},0)`, UNIT2);
+        s.f(r, 16, `J${r}-O${r}`, UNIT2);
+        s.f(r, 17, `IFERROR(H${r}/B${r},0)`, UNIT2);
+        s.f(r, 18, `P${r}-Q${r}`, UNIT2);
+        r++;
+      }
+      const last = r - 1;
+      const tr = r++;
+      s.v(tr, 1, t(`Итого ${code}`, `Total ${code}`));
+      for (const c of [2, 4, 6, 7, 8, 9, 12, 13, 14]) s.f(tr, c, `SUM(${L(c)}${first}:${L(c)}${last})`, c === 2 ? UNITS : c === 4 ? "#,##0.00" : MONEY);
+      s.f(tr, 5, `IFERROR(F${tr}/D${tr},0)`, UNIT2);
+      s.f(tr, 10, `IFERROR(I${tr}/B${tr},0)`, UNIT2);
+      s.f(tr, 11, `IFERROR(L${tr}/D${tr},0)`, UNIT2);
+      s.f(tr, 15, `IFERROR(N${tr}/B${tr},0)`, UNIT2);
+      s.f(tr, 16, `J${tr}-O${tr}`, UNIT2);
+      s.f(tr, 17, `IFERROR(H${tr}/B${tr},0)`, UNIT2);
+      s.f(tr, 18, `P${tr}-Q${tr}`, UNIT2);
+      s.v(tr, 21, "T");
+      s.bold(tr, 18);
+      totalRows.push(tr);
+      r++;
+    }
+    // all trucks, up top
+    s.v(6, 1, t("ВСЕ ФУРЫ", "ALL TRUCKS")).font = BOLD;
+    const sumT = (c: number) => `SUMIFS(${L(c)}$7:${L(c)}$${r},$U$7:$U$${r},"T")`;
+    for (const c of [2, 4, 6, 7, 8, 9, 12, 13, 14]) s.f(6, c, sumT(c), c === 2 ? UNITS : c === 4 ? "#,##0.00" : MONEY);
+    s.f(6, 5, `IFERROR(F6/D6,0)`, UNIT2);
+    s.f(6, 10, `IFERROR(I6/B6,0)`, UNIT2);
+    s.f(6, 11, `IFERROR(L6/D6,0)`, UNIT2);
+    s.f(6, 15, `IFERROR(N6/B6,0)`, UNIT2);
+    s.f(6, 16, `J6-O6`, UNIT2);
+    s.f(6, 17, `IFERROR(H6/B6,0)`, UNIT2);
+    s.f(6, 18, `P6-Q6`, UNIT2);
+    for (let c = 1; c <= 18; c++) {
+      const cell = s.cell(6, c);
+      cell.font = BOLD;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF4D6" } };
+      cell.border = { bottom: { style: "medium", color: { argb: "FF1F3864" } } };
+    }
+    // helper columns: the truck's documented share, the total-row marker
+    s.ws.getColumn(20).hidden = true;
+    s.ws.getColumn(21).hidden = true;
+    s.widths([30, 9, 9, 13, 11, 16, 15, 14, 16, 11, 11, 16, 15, 16, 11, 11, 11, 13]);
+    s.freeze(1, 5);
+  }
+
+  // Cash expenses by truck — each truck's import costs: in our records, on 1C's cost calculation, and the rest by category
+  if (formal && official) {
+    const s = S.cashExp;
+    const SE = Q("shipExp");
+    s.title(
+      t("Расходы на импорт: в учёте (1С) и наличными — по фурам", "Import expenses: in the accounting (1C) and in cash — by truck"),
+      t("Наличные = сумма в наших записях − сумма в учёте (расчёт себестоимости 1С). Минус — в документах больше, чем в наших записях. Построчно — лист «Расходы на импорт» (фильтр по фуре).", "Cash = the amount in our records − the amount in the accounting (1C's cost calculation). A minus means the documents show more than our records. Row by row: the «Shipment expenses» tab (filter by truck).")
+    );
+    const CAT_EN: Record<string, string> = { "Транспорт": "Transport", "Сертификат": "Certificate", "Маркировка": "Marking", "Стикер": "Stickers", "Декларант": "Customs broker", "Хранение": "Storage", "Таможенный сбор": "Customs fee" };
+    const trucks = shipOrder.filter((sh) => ds.importExpenses.some((e) => e.shipmentId === sh.shipmentId && official[e.id] !== undefined));
+    const rowsOfTrucks = ds.importExpenses.filter((e) => !isImportVat(e.categoryName) && trucks.some((sh) => sh.shipmentId === e.shipmentId));
+    const order = Object.keys(CAT_EN);
+    const cats = [...new Set(rowsOfTrucks.map((e) => e.categoryName))]
+      .filter((cat) => rowsOfTrucks.some((e) => e.categoryName === cat && (e.amount !== 0 || (official[e.id] ?? 0) !== 0)))
+      .sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+    s.header(4, [t("Фура", "Truck"), t("В наших записях", "Our records"), t("В учёте (1С)", "In the accounting (1C)"), t("НАЛИЧНЫЕ, итого", "CASH, total"), ...cats.map((cat) => `${t("Наличные", "Cash")}: ${ru ? cat.toLowerCase() : (CAT_EN[cat] ?? cat).toLowerCase()}`)]);
+    s.ws.getRow(4).height = 30;
+    const first = 5;
+    trucks.forEach((sh, i) => {
+      const r = first + i;
+      s.v(r, 1, truckCode.get(sh.shipmentId)!);
+      s.f(r, 2, `SUMIFS(${SE}$D:$D,${SE}$A:$A,A${r},${SE}$G:$G,0)`, MONEY);
+      s.f(r, 3, `SUMIFS(${SE}$H:$H,${SE}$A:$A,A${r},${SE}$G:$G,0)`, MONEY);
+      s.f(r, 4, `B${r}-C${r}`, MONEY);
+      cats.forEach((cat, k) => s.f(r, 5 + k, `SUMIFS(${SE}$I:$I,${SE}$A:$A,$A${r},${SE}$C:$C,${str(cat)})`, MONEY));
+    });
+    const last = first + trucks.length - 1;
+    const tr = last + 1;
+    s.v(tr, 1, t("Итого", "Total"));
+    for (let col = 2; col <= 4 + cats.length; col++) s.f(tr, col, `SUM(${L(col)}${first}:${L(col)}${last})`, MONEY);
+    s.bold(tr, 4 + cats.length);
+    for (let r = first; r <= tr; r++) s.cell(r, 4).font = { bold: true };
+    s.widths([16, 16, 16, 16, ...cats.map(() => 15)]);
+    s.freeze(1, 4);
   }
   const SH = Q("ship");
   const SHL = (col: string) => `${SH}$${col}$${SHIP.lineFirst}:$${col}$${SHIP.lineLast}`;
@@ -792,6 +995,8 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
       [14, t("Товар у Fargo на конец месяца (цены счетов TI)", "Fargo stock at month-end (TI invoice prices)"), (x) => `SUMIFS(${MR("Z")},${MR("A")},${x}$3)`],
       [15, t("Товар у Fargo на конец месяца (себестоимость TI)", "Fargo stock at month-end (TI landed cost)"), (x) => `SUMIFS(${MR("AA")},${MR("A")},${x}$3)`],
     ];
+    if (formal && official) summary.push([16, t("TI: наличные расходы на импорт в поставленном Fargo (не в учёте)", "TI: cash import costs in the goods delivered to Fargo (not in the accounting)"), (x) => `SUMIFS(${IV}$Q:$Q,${IV}$C:$C,${x}$3)`]);
+    if (formal) summary.push([12, t("TI: себестоимость поставленного Fargo — по учёту (1С, тот же FIFO)", "TI: cost of goods delivered to Fargo — formal (1C, the same FIFO)"), (x) => `SUMIFS(${IV}$P:$P,${IV}$C:$C,${x}$3)`]);
     for (const [r, label, fn] of summary) {
       s.v(r, 1, label);
       months.forEach((_, i) => s.f(r, 3 + i, fn(mcol(i)), MONEY));
@@ -828,11 +1033,36 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
           s.f(r, 7, `G${r - 1}+D${r - 1}`, UNITS);
           s.f(r, 8, `H${r - 1}+E${r - 1}`, MONEY);
         }
+        // the same batch at the accountant's cost
+        if (formal) {
+          s.f(r, 9, `${SH}R${lr}`, MONEY);
+          s.f(r, 10, `IFERROR(I${r}/D${r},0)`, UNIT2);
+          if (k === 0) s.v(r, 11, 0);
+          else s.f(r, 11, `K${r - 1}+I${r - 1}`, MONEY);
+        }
+        // and its import costs paid in cash
+        if (formal && official) {
+          s.f(r, 12, `${SH}S${lr}`, MONEY);
+          s.f(r, 13, `IFERROR(L${r}/D${r},0)`, UNIT2);
+          if (k === 0) s.v(r, 14, 0);
+          else s.f(r, 14, `N${r - 1}+L${r - 1}`, MONEY);
+        }
         r++;
       });
       const bLast = r - 1;
+      if (formal) {
+        const labels = [t("По учёту (1С)", "Formal value (1C)"), t("По учёту за шт", "Formal unit cost"), t("По учёту до", "Cum formal before"), ...(official ? [t("Наличные расходы", "Cash import costs"), t("Наличные за шт", "Cash per unit"), t("Наличные до", "Cum cash before")] : [])];
+        labels.forEach((label, j) => {
+          const cell = s.v(bFirst - 1, 9 + j, label);
+          cell.font = { bold: true, size: 10 };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: FILL_HEAD } };
+          cell.alignment = { vertical: "middle", wrapText: true };
+        });
+      }
       // one batch: every unit at its cost (also beyond it, as the engine continues at the last batch)
       const tiCurve = (x: string) => (batches.length === 0 ? "0" : batches.length === 1 ? `${x}*$F${bFirst}` : curve(x, `$F${bFirst}:$F${bLast}`, `$G${bFirst}:$G${bLast}`, `$H${bFirst}:$H${bLast}`));
+      const cashCurve = (x: string) => (batches.length === 0 ? "0" : batches.length === 1 ? `${x}*$M${bFirst}` : curve(x, `$M${bFirst}:$M${bLast}`, `$G${bFirst}:$G${bLast}`, `$N${bFirst}:$N${bLast}`));
+      const formalCurve = (x: string) => (batches.length === 0 ? "0" : batches.length === 1 ? `${x}*$J${bFirst}` : curve(x, `$J${bFirst}:$J${bLast}`, `$G${bFirst}:$G${bLast}`, `$K${bFirst}:$K${bLast}`));
       r++;
       // 2) deliveries to Fargo
       s.v(r++, 1, t("2) Поставки Fargo — строки счетов TI по порядку (себестоимость TI по FIFO; партии Fargo)", "2) Deliveries to Fargo — TI invoice lines in order (TI cost by FIFO; Fargo's batches)")).font = { italic: true };
@@ -864,9 +1094,26 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
           s.f(r, 15, `O${r - 1}+I${r - 1}`, MONEY);
         }
         S.inv.f(ir, 14, `${Q("cogs")}J${r}`, UNIT2);
+        if (formal) {
+          s.f(r, 16, `IF(E${r}=1,D${r}*F${r},${formalCurve(`H${r}`)}-${formalCurve(`G${r}`)})`, MONEY);
+          S.inv.f(ir, 16, `${Q("cogs")}P${r}`, MONEY);
+        }
+        if (formal && official) {
+          s.f(r, 17, `IF(E${r}=1,0,${cashCurve(`H${r}`)}-${cashCurve(`G${r}`)})`, MONEY);
+          S.inv.f(ir, 17, `${Q("cogs")}Q${r}`, MONEY);
+        }
         r++;
       });
       const dLast = r - 1;
+      if (formal) {
+        const labels = [t("СЕБЕСТ. TI ПО УЧЁТУ (1С)", "TI COST — FORMAL (1C)"), ...(official ? [t("в т.ч. наличные расходы", "of which cash import costs")] : [])];
+        labels.forEach((label, j) => {
+          const cell = s.v(dFirst - 1, 16 + j, label);
+          cell.font = { bold: true, size: 10 };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: FILL_HEAD } };
+          cell.alignment = { vertical: "middle", wrapText: true };
+        });
+      }
       const fargoAt = (x: string, unitCol: "L" | "J", cumCol: "N" | "O") =>
         lines.length === 0 ? "0" : lines.length === 1 ? `${x}*${unitCol}${dFirst}` : curve(x, `${unitCol}${dFirst}:${unitCol}${dLast}`, `$M${dFirst}:$M${dLast}`, `${cumCol}${dFirst}:${cumCol}${dLast}`);
       r++;
@@ -943,7 +1190,7 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
   }
 
   // ═══════════════════════ statements ═══════════════════════
-  const rowsOf = {} as Record<"plTi" | "plFg" | "plGr" | "bsTi" | "bsFg" | "bsGr", Record<string, number>>;
+  const rowsOf = {} as Record<"plTi" | "plFg" | "plGr" | "bsTi" | "bsFg" | "bsGr" | "vatTi" | "vatFg", Record<string, number>>;
   const R = (sheet: keyof typeof rowsOf, id: string) => {
     const r = rowsOf[sheet]?.[id];
     if (!r) throw new Error(`no row ${sheet}.${id}`);
@@ -969,7 +1216,8 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
     lines: Array<Line & { row: number }>,
     ms: string[],
     position: boolean,
-    val: Record<string, (i: number) => number>
+    val: Record<string, (i: number) => number>,
+    note?: string
   ) => {
     const s = S[sheetKey];
     const last = L(2 + ms.length);
@@ -981,7 +1229,7 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
       return ms.reduce((sum, m) => sum + val[l.id!](ei(m)), 0);
     };
     const ratio = (a: number | undefined, b: number | undefined) => (a === undefined || b === undefined ? undefined : b ? a / b : 0);
-    s.title(title);
+    s.title(title, note);
     s.f(3, 2, position ? `${str(t("На ", "At "))}&TEXT(REPORT_TO,"0000-00")` : `${str(t("Итого по ", "Total to "))}&TEXT(REPORT_TO,"0000-00")`, undefined, `${position ? t("На ", "At ") : t("Итого по ", "Total to ")}${reportMonth}`);
     s.cell(3, 2).font = { bold: true };
     ms.forEach((m, i) => {
@@ -1024,10 +1272,31 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
     { kind: "head", label: t("ВЫРУЧКА (без НДС)", "REVENUE (ex-VAT)") },
     { id: "rev", kind: "line", label: t("Продажи Fargo (счета-фактуры, без НДС)", "Sales to Fargo (invoices, ex-VAT)"), f: (x) => `SUMIFS(${IV}$H:$H,${IV}$C:$C,${x}$3)` },
     { id: "units", kind: "memo", label: t("Отгружено, шт.", "Units delivered"), f: (x) => `SUMIFS(${IV}$F:$F,${IV}$C:$C,${x}$3)`, fmt: UNITS },
-    { id: "cogs", kind: "line", label: t("− Себестоимость (FIFO по фурам)", "− Cost of goods (FIFO by truck)"), f: (x) => `${CG}${x}4` },
-    { id: "samples", kind: "line", label: t("− Товар, переданный бесплатно (образцы и лаборатория)", "− Goods given away (samples and laboratory)"), f: (x) => `${CG}${x}5` },
-    { id: "gross", kind: "sub", label: t("ВАЛОВАЯ ПРИБЫЛЬ", "GROSS PROFIT"), f: (x) => `${x}${R("plTi", "rev")}-${x}${R("plTi", "cogs")}-${x}${R("plTi", "samples")}` },
-    { kind: "ratio", label: t("валовая маржа", "gross margin"), f: (x) => `IFERROR(${x}${R("plTi", "gross")}/${x}${R("plTi", "rev")},0)`, ratio: ["gross", "rev"] },
+    ...(formal
+      ? ([
+          // two costs of the same tins (same FIFO): the accountant's and the actual; net profit follows the actual one
+          { kind: "head", label: t("СЕБЕСТОИМОСТЬ — ДВА ВАРИАНТА", "COST OF GOODS — TWO VERSIONS") },
+          { id: "cogsF", kind: "line", label: t("Себестоимость по учёту (1С: товар по учётному курсу + расходы на импорт в учёте)", "Cost of goods — formal (1C: goods at the book euro rate + import costs in the accounting)"), f: (x) => `${CG}${x}12` },
+          ...((official
+            ? [
+                { id: "cogsCash", kind: "line", label: t("+ Наличные расходы на импорт (не в учёте)", "+ Cash import costs (not in the accounting)"), f: (x: string) => `${CG}${x}16` },
+                { id: "cogsRate", kind: "line", label: t("+ Курс евро: TI покупал евро дороже учётного курса", "+ Euro rate: TI bought its euros above the accountant's rate"), f: (x: string) => `${x}${R("plTi", "cogs")}-${x}${R("plTi", "cogsF")}-${x}${R("plTi", "cogsCash")}` },
+              ]
+            : [{ id: "cogsDiff", kind: "line", label: t("+ Разница до фактической (курс евро и наличные расходы)", "+ Difference to the actual (euro rate and cash costs)"), f: (x: string) => `${x}${R("plTi", "cogs")}-${x}${R("plTi", "cogsF")}` }]) as Line[]),
+          { id: "cogs", kind: "sub", label: t("Себестоимость фактическая (FIFO по фурам)", "Cost of goods — actual (FIFO by truck)"), f: (x) => `${CG}${x}4` },
+          { id: "samples", kind: "line", label: t("Товар, переданный бесплатно (образцы и лаборатория)", "Goods given away (samples and laboratory)"), f: (x) => `${CG}${x}5` },
+          { kind: "head", label: t("ВАЛОВАЯ ПРИБЫЛЬ", "GROSS PROFIT") },
+          { id: "grossF", kind: "sub", label: t("ВАЛОВАЯ ПРИБЫЛЬ ПО УЧЁТУ (выручка − себестоимость по учёту − образцы)", "GROSS PROFIT — FORMAL (revenue − formal cost − samples)"), f: (x) => `${x}${R("plTi", "rev")}-${x}${R("plTi", "cogsF")}-${x}${R("plTi", "samples")}` },
+          { kind: "ratio", label: t("валовая маржа по учёту", "formal gross margin"), f: (x) => `IFERROR(${x}${R("plTi", "grossF")}/${x}${R("plTi", "rev")},0)`, ratio: ["grossF", "rev"] },
+          { id: "gross", kind: "sub", label: t("ВАЛОВАЯ ПРИБЫЛЬ ФАКТИЧЕСКАЯ (выручка − фактическая себестоимость − образцы)", "GROSS PROFIT — ACTUAL (revenue − actual cost − samples)"), f: (x) => `${x}${R("plTi", "rev")}-${x}${R("plTi", "cogs")}-${x}${R("plTi", "samples")}` },
+          { kind: "ratio", label: t("валовая маржа фактическая", "actual gross margin"), f: (x) => `IFERROR(${x}${R("plTi", "gross")}/${x}${R("plTi", "rev")},0)`, ratio: ["gross", "rev"] },
+        ] as Line[])
+      : ([
+          { id: "cogs", kind: "line", label: t("− Себестоимость (FIFO по фурам)", "− Cost of goods (FIFO by truck)"), f: (x) => `${CG}${x}4` },
+          { id: "samples", kind: "line", label: t("− Товар, переданный бесплатно (образцы и лаборатория)", "− Goods given away (samples and laboratory)"), f: (x) => `${CG}${x}5` },
+          { id: "gross", kind: "sub", label: t("ВАЛОВАЯ ПРИБЫЛЬ", "GROSS PROFIT"), f: (x) => `${x}${R("plTi", "rev")}-${x}${R("plTi", "cogs")}-${x}${R("plTi", "samples")}` },
+          { kind: "ratio", label: t("валовая маржа", "gross margin"), f: (x) => `IFERROR(${x}${R("plTi", "gross")}/${x}${R("plTi", "rev")},0)`, ratio: ["gross", "rev"] },
+        ] as Line[])),
     { kind: "head", label: t("ОПЕРАЦИОННЫЕ РАСХОДЫ", "OPERATING EXPENSES") },
     ...TI_GROUPS.map((g, gi): Line => ({ id: `g${gi}`, kind: "line", label: GROUP_LABELS[g][locale], f: (x) => `SUMIFS(${OT}$F:$F,${OT}$A:$A,${x}$3,${OT}$C:$C,${str(group(g))})` })),
     { id: "gx", kind: "line", label: t("⚠ Не попало в группы выше", "⚠ Not in the groups above"), f: (x) => `SUMIFS(${OT}$F:$F,${OT}$A:$A,${x}$3)-SUM(${x}${R("plTi", "g0")}:${x}${R("plTi", `g${TI_GROUPS.length - 1}`)})` },
@@ -1064,14 +1333,26 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
     { id: "tax", kind: "line", label: t("Налог (1,9% от оборота по ценам покупателям)", "Turnover tax (1.9% of sales at customer prices)"), f: (x) => `SUMIFS(${SA}$P:$P,${SA}$A:$A,${x}$3)` },
     { id: "net", kind: "total", label: t("ЧИСТАЯ ПРИБЫЛЬ — FARGO (Humana)", "NET PROFIT — FARGO (Humana)"), f: (x) => `${x}${R("plFg", "ebitda")}-${x}${R("plFg", "tax")}` },
     { kind: "ratio", label: t("чистая маржа", "net margin"), f: (x) => `IFERROR(${x}${R("plFg", "net")}/${x}${R("plFg", "rev")},0)`, ratio: ["net", "rev"] },
-    { kind: "head", label: t("НДС — FARGO", "VAT — FARGO") },
-    { id: "vin", kind: "line", label: t("НДС к зачёту — полученные счета TI", "Input VAT — TI invoices received"), f: (x) => `SUMIFS(${IV}$I:$I,${IV}$C:$C,${x}$3)` },
-    { id: "vbank", kind: "line", label: t("Начисленный НДС — перечисление (12/112 от цены)", "Output VAT — bank (12/112 of the price)"), f: (x) => `SUMIFS(${SA}$N:$N,${SA}$A:$A,${x}$3)` },
-    { id: "vcash", kind: "line", label: t("Начисленный НДС — наличные (12% от декларируемых продаж)", "Output VAT — cash (12% of declared sales)"), f: (x) => `SUMIFS(${SA}$O:$O,${SA}$A:$A,${x}$3)` },
-    { id: "vnet", kind: "sub", label: t("НДС за месяц (начислено − зачёт)", "VAT for the month (output − input)"), f: (x) => `${x}${R("plFg", "vbank")}+${x}${R("plFg", "vcash")}-${x}${R("plFg", "vin")}` },
-    { id: "vpaid", kind: "line", label: t("НДС уплачен в бюджет (после переноса переплаты)", "VAT paid to the budget (after the credit carried)"), f: (x, i) => `MAX(0,${x}${R("plFg", "vnet")}-${i === 0 ? "0" : `${L(2 + i)}${R("plFg", "vcredit")}`})` },
-    { id: "vcredit", kind: "line", label: t("Переплата НДС на конец месяца", "VAT credit at month-end"), b: "last", f: (x, i) => `MAX(0,${i === 0 ? "0" : `${L(2 + i)}${R("plFg", "vcredit")}`}-${x}${R("plFg", "vnet")})` },
   ]);
+
+  // VAT Fargo — output VAT on its sales, input VAT on TI's invoices, the credit carried and what is paid
+  const vatFg = layout("vatFg", [
+    { kind: "head", label: t("1. НДС С ПРОДАЖ FARGO (начисленный)", "1. VAT ON FARGO'S SALES (output)") },
+    { id: "bankSales", kind: "memo", label: t("Продажи по перечислению, по ценам покупателям (с НДС)", "Bank sales at customer prices (VAT included)"), f: (x) => `SUMIFS(${SA}$J:$J,${SA}$A:$A,${x}$3)` },
+    { id: "vbank", kind: "line", label: t("НДС в продажах по перечислению (12/112 от цены)", "VAT inside the bank sales (12/112 of the price)"), f: (x) => `SUMIFS(${SA}$N:$N,${SA}$A:$A,${x}$3)` },
+    { id: "cashSales", kind: "memo", label: t("Продажи за наличные, по ценам покупателям", "Cash sales at customer prices"), f: (x) => `SUMIFS(${SA}$I:$I,${SA}$A:$A,${x}$3)` },
+    { id: "declared", kind: "memo", label: t("Декларируемая стоимость наличных продаж (себестоимость Fargo × (1 + наценка))", "Declared value of the cash sales (Fargo cost × (1 + deemed margin))"), f: (x) => `SUMIFS(${SA}$M:$M,${SA}$A:$A,${x}$3)` },
+    { id: "vcash", kind: "line", label: t("НДС с наличных продаж (12% от декларируемой стоимости)", "VAT on the cash sales (12% of the declared value)"), f: (x) => `SUMIFS(${SA}$O:$O,${SA}$A:$A,${x}$3)` },
+    { id: "vout", kind: "sub", label: t("Начисленный НДС за месяц", "Output VAT for the month"), f: (x) => `${x}${R("vatFg", "vbank")}+${x}${R("vatFg", "vcash")}` },
+    { kind: "head", label: t("2. НДС К ЗАЧЁТУ", "2. VAT TO OFFSET (input)") },
+    { id: "vin", kind: "line", label: t("НДС в счетах-фактурах TI, полученных в месяце", "VAT on the TI invoices received in the month"), f: (x) => `SUMIFS(${IV}$I:$I,${IV}$C:$C,${x}$3)` },
+    { kind: "head", label: t("3. РАСЧЁТ С БЮДЖЕТОМ", "3. WITH THE STATE") },
+    { id: "vnet", kind: "sub", label: t("НДС за месяц: начислено − к зачёту (минус — переплата)", "VAT for the month: output − input (minus = overpaid)"), f: (x) => `${x}${R("vatFg", "vout")}-${x}${R("vatFg", "vin")}` },
+    { id: "vcredIn", kind: "line", label: t("Переплата с прошлого месяца", "Credit brought forward from last month"), b: null, f: (x, i) => (i === 0 ? "0" : `${L(2 + i)}${R("vatFg", "vcredit")}`) },
+    { id: "vpaid", kind: "line", label: t("НДС к уплате в бюджет (после зачёта переплаты)", "VAT paid to the state (after using the credit)"), f: (x) => `MAX(0,${x}${R("vatFg", "vnet")}-${x}${R("vatFg", "vcredIn")})` },
+    { id: "vcredit", kind: "total", label: t("ПЕРЕПЛАТА НДС НА КОНЕЦ МЕСЯЦА (актив Fargo, переходит дальше)", "VAT CREDIT AT MONTH-END (Fargo's asset, carried forward)"), b: "last", f: (x) => `MAX(0,${x}${R("vatFg", "vcredIn")}-${x}${R("vatFg", "vnet")})` },
+  ]);
+  const VF = Q("vatFg");
 
   // P&L Consolidated
   const PF = Q("plFg");
@@ -1150,10 +1431,10 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
   const bsFg = layout("bsFg", [
     { kind: "head", label: t("АКТИВЫ", "ASSETS") },
     { id: "stock", kind: "line", label: t("Товар у Fargo (по ценам счетов TI, без НДС)", "Stock at Fargo (TI invoice prices, ex-VAT)"), f: (x) => atMonth(CG, 14, x) },
-    { id: "vat", kind: "line", label: t("НДС к зачёту, перенесённый — Fargo", "VAT credit carried forward — Fargo"), f: (x) => atMonth(PF, R("plFg", "vcredit"), x) },
+    { id: "vat", kind: "line", label: t("Переплата НДС Fargo (лист «НДС Fargo»)", "Fargo VAT credit (VAT Fargo tab)"), f: (x) => atMonth(VF, R("vatFg", "vcredit"), x) },
     { id: "ar", kind: "line", label: t("Дебиторская задолженность покупателей", "Customer receivables"), f: (x) => `SUMIFS(${AR}$C:$C,${AR}$A:$A,${x}$3)` },
     { id: "cashHeld", kind: "line", label: t("Деньги Humana у Fargo (собрано − расходы и налоги Fargo − оплачено TI)", "Humana money held by Fargo (collected − Fargo's costs and taxes − paid to TI)"), f: (x) =>
-      `SUMIFS(${SA}$G:$G,${SA}$A:$A,"<="&${x}$3)-${x}${R("bsFg", "ar")}-(SUMIFS(${OF}$D:$D,${OF}$A:$A,"<="&${x}$3)-SUMIFS(${OF}$D:$D,${OF}$A:$A,"<="&${x}$3,${OF}$C:$C,${str(woLabel)}))-${toMonth(PF, R("plFg", "vpaid"), x)}-SUMIFS(${SA}$P:$P,${SA}$A:$A,"<="&${x}$3)-SUMIFS(${TRF}$E:$E,${TRF}$B:$B,"<="&${x}$3)` },
+      `SUMIFS(${SA}$G:$G,${SA}$A:$A,"<="&${x}$3)-${x}${R("bsFg", "ar")}-(SUMIFS(${OF}$D:$D,${OF}$A:$A,"<="&${x}$3)-SUMIFS(${OF}$D:$D,${OF}$A:$A,"<="&${x}$3,${OF}$C:$C,${str(woLabel)}))-${toMonth(VF, R("vatFg", "vpaid"), x)}-SUMIFS(${SA}$P:$P,${SA}$A:$A,"<="&${x}$3)-SUMIFS(${TRF}$E:$E,${TRF}$B:$B,"<="&${x}$3)` },
     { id: "assets", kind: "sub", label: t("ИТОГО АКТИВЫ", "TOTAL ASSETS"), f: (x) => `SUM(${x}${R("bsFg", "stock")}:${x}${R("bsFg", "cashHeld")})` },
     { kind: "head", label: t("ОБЯЗАТЕЛЬСТВА", "LIABILITIES") },
     { id: "toTi", kind: "line", label: t("Задолженность перед TI (счета с НДС − оплаты)", "Payable to TI (invoices incl. VAT − payments)"), f: recvFromFargo },
@@ -1171,7 +1452,7 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
     { id: "atTi", kind: "memo", label: t("в т.ч. у TI", "of which held by TI"), f: (x) => `${BT}${x}${R("bsTi", "stock")}` },
     { id: "atFg", kind: "memo", label: t("в т.ч. у Fargo", "of which at Fargo"), f: (x) => atMonth(CG, 15, x) },
     { id: "transit", kind: "line", label: t("Товары в пути (предоплата в Германию)", "Goods in transit (prepaid to Germany)"), f: (x) => `${BT}${x}${R("bsTi", "transit")}` },
-    { id: "vat", kind: "line", label: t("НДС: переплата TI (лицевой счёт) + зачёт Fargo", "VAT: TI overpayment (tax account) + Fargo credit"), f: (x) => `${BT}${x}${R("bsTi", "vatOver")}+${atMonth(PF, R("plFg", "vcredit"), x)}` },
+    { id: "vat", kind: "line", label: t("НДС: переплата TI (лицевой счёт) + зачёт Fargo", "VAT: TI overpayment (tax account) + Fargo credit"), f: (x) => `${BT}${x}${R("bsTi", "vatOver")}+${atMonth(VF, R("vatFg", "vcredit"), x)}` },
     { id: "ar", kind: "line", label: t("Дебиторская задолженность покупателей", "Customer receivables"), f: (x) => `SUMIFS(${AR}$C:$C,${AR}$A:$A,${x}$3)` },
     { id: "cash", kind: "line", label: t("Денежные средства TI (банк + касса)", "TI cash (bank + on hand)"), f: (x) => `${BT}${x}${R("bsTi", "bank")}+${BT}${x}${R("bsTi", "cash")}` },
     { id: "held", kind: "line", label: t("Деньги Humana у Fargo (расчёт)", "Humana money held by Fargo (derived)"), f: (x) => atMonth(BF, R("bsFg", "cashHeld"), x) },
@@ -1187,6 +1468,27 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
     { id: "unrec", kind: "total", label: t("НЕСВЕРЕННАЯ СУММА (активы − обязательства − капитал)", "UNRECONCILED (assets − liabilities − equity)"), f: (x) => `${x}${R("bsGr", "assets")}-${x}${R("bsGr", "liab")}-${x}${R("bsGr", "equity")}` },
   ]);
 
+  // VAT TI — how it arises in our records, the tax account (my.soliq.uz), and whose overpayment it is
+  const sumVa = (col: string, x: string) => `SUMIFS(${VA}$${col}:$${col},${VA}$A:$A,${x}$3)`;
+  const vatTi = layout("vatTi", [
+    { kind: "head", label: t("1. ПО НАШИМ ДАННЫМ", "1. FROM OUR RECORDS") },
+    { id: "imp", kind: "line", label: t("НДС, уплаченный на таможне (к зачёту)", "VAT paid at customs (to offset)"), f: (x) => `SUMIFS(${SE}$D:$D,${SE}$B:$B,${x}$3,${SE}$G:$G,1)` },
+    { id: "out", kind: "line", label: t("НДС в счетах-фактурах TI для Fargo (начислен)", "VAT on TI's invoices to Fargo (output)"), f: (x) => `SUMIFS(${IV}$I:$I,${IV}$C:$C,${x}$3)` },
+    { id: "other", kind: "line", label: t("Прочий начисленный НДС (вне счетов Fargo)", "Other VAT charged (outside the Fargo invoices)"), f: (x) => `SUMIFS(${VC}$C:$C,${VC}$A:$A,${x}$3)` },
+    { id: "net", kind: "sub", label: t("НДС за месяц: начислено − к зачёту (минус — переплата)", "VAT for the month: output − input (minus = overpaid)"), f: (x) => `${x}${R("vatTi", "out")}+${x}${R("vatTi", "other")}-${x}${R("vatTi", "imp")}` },
+    { kind: "head", label: t("2. ПО ЛИЦЕВОМУ СЧЁТУ В НАЛОГОВОЙ (my.soliq.uz)", "2. PER THE TAX ACCOUNT (my.soliq.uz)") },
+    { id: "charged", kind: "line", label: t("Начислено", "Charged"), f: (x) => sumVa("D", x) },
+    { id: "reduced", kind: "line", label: t("Уменьшено (зачёт)", "Reduced (offset)"), f: (x) => sumVa("E", x) },
+    { id: "perAccount", kind: "sub", label: t("НДС за месяц по лицевому счёту (начислено − уменьшено)", "VAT for the month per the account (charged − reduced)"), f: (x) => `${x}${R("vatTi", "charged")}-${x}${R("vatTi", "reduced")}` },
+    { id: "diff", kind: "memo", label: t("Разница: наши данные − лицевой счёт (сроки и прочие проводки)", "Difference: our records − the account (timing and other entries)"), f: (x) => `${x}${R("vatTi", "net")}-${x}${R("vatTi", "perAccount")}` },
+    { id: "paid", kind: "line", label: t("Уплачено в бюджет / входящее сальдо", "Paid to the state / opening balance"), f: (x) => sumVa("F", x) },
+    { id: "refunded", kind: "line", label: t("Возвращено из бюджета", "Refunded by the state"), f: (x) => sumVa("G", x) },
+    { id: "balance", kind: "total", label: t("ОСТАТОК НА КОНЕЦ МЕСЯЦА: + переплата, − долг", "BALANCE AT MONTH-END: + overpaid, − owed"), b: "last", f: (x) => vatBal(x) },
+    { kind: "head", label: t("3. ЧЬЯ ЭТО ПЕРЕПЛАТА", "3. WHOSE OVERPAYMENT IT IS") },
+    { id: "prior", kind: "line", label: t("Прежнего владельца (до совместной работы, за вычетом его начислений)", "The previous owner's (from before the joint work, less their charges)"), b: "last", f: (x) => `${priorVatCell}-SUMIFS(${VC}$C:$C,${VC}$A:$A,"<="&${x}$3,${VC}$D:$D,"PRIOR_OWNER")` },
+    { id: "jv", kind: "total", label: t("НАША (совместная работа): + ждёт зачёта, − к уплате", "OURS (the joint work): + waiting to be offset, − owed"), b: "last", f: (x) => `${x}${R("vatTi", "balance")}-${x}${R("vatTi", "prior")}` },
+  ]);
+
   const opexOf = (rec: Record<string, number>, g: string) => rec[g] ?? 0;
   const groupVals = (groups: readonly string[], rec: (i: number) => Record<string, number>, total: (i: number) => number) => ({
     ...Object.fromEntries(groups.map((g, gi) => [`g${gi}`, (i: number) => opexOf(rec(i), g)])),
@@ -1200,14 +1502,24 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
     rev: (i) => T(i).revenue, units: (i) => T(i).units, cogs: (i) => T(i).cogs, samples: (i) => T(i).giveaways, gross: (i) => T(i).grossProfit,
     ...groupVals(TI_GROUPS, (i) => T(i).opexByGroup, (i) => T(i).opex),
     opex: (i) => T(i).opex, ebitda: (i) => T(i).ebitda, ptax: (i) => T(i).profitTax, vatcost: (i) => T(i).vatCost, net: (i) => T(i).netProfit,
-  });
+  }, formal ? t("Себестоимость по учёту — расчёты себестоимости поступлений из 1С: товар по учётному курсу и расходы на импорт в учёте. Фактическая — курс, по которому TI платил, и все расходы, включая оплаченные наличными. Обе считаются по одним и тем же банкам (FIFO), поэтому разница — только эти расходы и курс. Чистая прибыль — от фактической.", "Formal cost: 1C's cost calculation of each receipt — goods at the book euro rate and the import costs in the accounting. Actual: the euro rate TI paid and every cost, including those paid in cash. Both follow the same tins (FIFO), so the gap is only those costs and the rate. Net profit follows the actual cost.") : undefined);
   writeStatement("plFg", "plFg", t("Отчёт о прибылях и убытках — Fargo (только Humana)", "Profit and loss — Fargo (Humana only)"), plFg, months, false, {
     bank: (i) => F(i).bankRevenue, cash: (i) => F(i).cashRevenue, rev: (i) => F(i).revenue, atPrice: (i) => F(i).salesAtPrice, units: (i) => F(i).units,
     cogs: (i) => F(i).cogs, wo: (i) => F(i).writeOffLoss, loss: (i) => F(i).stockLoss, woRec: (i) => F(i).writeOffsRecorded, gross: (i) => F(i).grossProfit,
     ...groupVals(FARGO_GROUPS, (i) => F(i).opexByGroup, (i) => F(i).opex),
     opex: (i) => F(i).opex, ebitda: (i) => F(i).ebitda, tax: (i) => F(i).incomeTax, net: (i) => F(i).netProfit,
-    vin: (i) => F(i).vat.input, vbank: (i) => F(i).vat.outputBank, vcash: (i) => F(i).vat.outputCash, vnet: (i) => F(i).vat.net, vpaid: (i) => F(i).vat.paid, vcredit: (i) => F(i).vat.creditOut,
   });
+  writeStatement("vatFg", "vatFg", t("НДС Fargo — как он считается (только Humana)", "Fargo VAT — how it is worked out (Humana only)"), vatFg, months, false, {
+    bankSales: (i) => F(i).bankSales, vbank: (i) => F(i).vat.outputBank, cashSales: (i) => F(i).cashSales, declared: (i) => F(i).cashDeclared, vcash: (i) => F(i).vat.outputCash,
+    vout: (i) => F(i).vat.outputBank + F(i).vat.outputCash, vin: (i) => F(i).vat.input, vnet: (i) => F(i).vat.net, vcredIn: (i) => F(i).vat.creditIn, vpaid: (i) => F(i).vat.paid, vcredit: (i) => F(i).vat.creditOut,
+  }, t("Fargo начисляет НДС на свои продажи и вычитает НДС из счетов TI. Если вычет больше — переплата переходит на следующий месяц; если меньше — разница уплачивается в бюджет. Строки продаж — лист «Продажи».", "Fargo charges VAT on its sales and offsets the VAT on TI's invoices. If the offset is bigger, the credit carries to the next month; if smaller, the difference is paid to the state. Sales lines: the Sales tab."));
+  const vaMonth = (m: string, pick: (e: Dataset["vatAccount"][number]) => number) => ds.vatAccount.filter((e) => e.period === m).reduce((sum, e) => sum + pick(e), 0);
+  writeStatement("vatTi", "vatTi", t("НДС Turbo Impex — как он считается", "Turbo Impex VAT — how it is worked out"), vatTi, months, false, {
+    imp: (i) => T(i).vat.importVat, out: (i) => T(i).vat.outputInvoices, other: (i) => T(i).vat.outputOther, net: (i) => T(i).vat.netModel,
+    charged: (i) => vaMonth(c.monthIds[i], (e) => e.charged), reduced: (i) => vaMonth(c.monthIds[i], (e) => e.reduced), perAccount: (i) => T(i).vat.perAccount, diff: (i) => T(i).vat.difference,
+    paid: (i) => vaMonth(c.monthIds[i], (e) => e.paid), refunded: (i) => vaMonth(c.monthIds[i], (e) => e.refunded),
+    balance: (i) => T(i).vat.accountBalance, prior: (i) => T(i).vat.priorOwnerPart, jv: (i) => T(i).vat.jvPosition,
+  }, t("НДС, уплаченный на таможне, TI зачитывает против НДС в своих счетах для Fargo. Это не расход и не уменьшает прибыль: переплата — актив TI (лист «Баланс TI»).", "TI offsets the VAT paid at customs against the VAT on its invoices to Fargo. It is not an expense and does not reduce profit: an overpayment is TI's asset (BS TI tab)."));
   writeStatement("plGr", "plGr", t("Отчёт о прибылях и убытках — Humana консолидированный (TI + Fargo)", "Profit and loss — Humana consolidated (TI + Fargo)"), plGr, months, false, {
     bank: (i) => G(i).bankRevenue, cash: (i) => G(i).cashRevenue, rev: (i) => G(i).revenue, units: (i) => G(i).units, cogs: (i) => G(i).cogs, samples: (i) => G(i).giveaways,
     wo: (i) => G(i).fargoWriteOffs, loss: (i) => G(i).stockLoss, gross: (i) => G(i).grossProfit, opexTi: (i) => G(i).opexTi, opexFg: (i) => G(i).opexFargo, opex: (i) => G(i).opex,
@@ -1282,7 +1594,7 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
     const sold = line(t("Причитается за уже проданный товар", "Due for the goods sold"), `B${inv}+B${stock}`, `C${inv}+C${stock}`, "sub", [st.invoicesInclVatCum + stockB, st.invoicesInclVatCum + stockC]);
     const plus = line(t("+ Чистая прибыль по проданному товару (раздел 1)", "+ Net profit on goods sold (section 1)"), `B${net}`, null, "line", [netV]);
     const ar = line(t("− Покупатели ещё должны Fargo", "− Customers still owe Fargo"), `-SUMIFS(${AR}$C:$C,${AR}$A:$A,REPORT_TO)`, null, "line", [-st.receivables]);
-    const vat = line(t("− НДС к зачёту у Fargo, ещё не возмещённый", "− Fargo VAT credit not yet recovered"), `-${atReport(PF, R("plFg", "vcredit"))}`, null, "line", [-st.vatCredit]);
+    const vat = line(t("− НДС к зачёту у Fargo, ещё не возмещённый", "− Fargo VAT credit not yet recovered"), `-${atReport(VF, R("vatFg", "vcredit"))}`, null, "line", [-st.vatCredit]);
     const ded = line(t("− Списания, вычитаемые Fargo (если так договорено)", "− Write-offs deducted by Fargo (if agreed)"), `-WRITEOFF_DEDUCT*SUMIFS(${OF}$D:$D,${OF}$A:$A,"<="&REPORT_TO,${OF}$C:$C,${str(woLabel)})`, null, "line", [-st.writeOffsDeductedCum]);
     const due = line(t("Причитается TI на отчётную дату", "Due to TI at the report date"), `B${sold}+B${plus}+B${ar}+B${vat}+B${ded}`, `C${sold}+C${plus}+C${ar}+C${vat}+C${ded}`, "total", [dueB, dueC]);
     r++;
@@ -1354,12 +1666,98 @@ export function modelWorkbook(ds: Dataset, c: Computed, reportMonth: string, loc
       (i) => c.balance[i].ti.unreconciled,
       bsMonths
     );
+    const VT = Q("vatTi");
+    add(t("Fargo: переплата НДС на конец месяца", "Fargo: VAT credit at month-end"), plAt(VF, R("vatFg", "vcredit")), (i) => c.fargo[i].vat.creditOut);
+    add(t("Fargo: НДС уплачен в бюджет", "Fargo: VAT paid to the state"), plAt(VF, R("vatFg", "vpaid")), (i) => c.fargo[i].vat.paid);
+    add(t("TI: НДС за месяц по нашим данным", "TI: VAT for the month from our records"), plAt(VT, R("vatTi", "net")), (i) => c.ti[i].vat.netModel);
+    add(t("TI: остаток лицевого счёта НДС", "TI: VAT tax account balance"), plAt(VT, R("vatTi", "balance")), (i) => c.ti[i].vat.accountBalance);
+    add(t("TI: наша переплата НДС (без прежнего владельца)", "TI: our VAT position (without the previous owner)"), plAt(VT, R("vatTi", "jv")), (i) => c.ti[i].vat.jvPosition);
     s.widths([44, 2, ...months.map(() => 15)]);
     s.freeze(2, 3);
   }
 
+  // Contents — what each tab holds, grouped, with a link to it; the tabs coloured by group
+  {
+    const s = S.contents;
+    s.title(t("Модель Humana — содержание", "Humana model — contents"), t(`Turbo Impex и Fargo, по ${reportMonth}. Все цифры на листах отчётов — формулы из листов данных; лист «Сверка с приложением» показывает, что они совпадают с приложением.`, `Turbo Impex and Fargo, to ${reportMonth}. Every figure on the statement tabs is a formula over the data tabs; the «App check» tab shows they equal the app.`));
+    const groups = modelContents(!!(formal && official));
+    s.header(4, [t("Раздел", "Section"), t("Лист", "Tab"), t("Что на листе", "What it shows")]);
+    let r = 5;
+    for (const g of groups) {
+      g.tabs.forEach(([k, ruText, enText], i) => {
+        if (i === 0) {
+          const cell = s.v(r, 1, g.name[ru ? 0 : 1]);
+          cell.font = { bold: true };
+        }
+        const link = s.cell(r, 2);
+        link.value = { text: N(k), hyperlink: `#'${N(k).replace(/'/g, "''")}'!A1` };
+        link.font = { color: { argb: "FF1D4ED8" }, underline: true };
+        s.v(r, 3, t(ruText, enText)).alignment = { wrapText: true, vertical: "top" };
+        S[k].ws.properties.tabColor = { argb: g.color };
+        r++;
+      });
+      r++;
+    }
+    s.ws.properties.tabColor = { argb: "FF1F3864" };
+    s.widths([22, 30, 100]);
+  }
+
   return wb;
 }
+
+/** The workbook's tabs, grouped as on its «Contents» tab: [tab, what it shows (ru), (en)]. `withFormal` adds the
+ * Excel-only views of the accountant's cost (cost by SKU, cash expenses). */
+export function modelContents(withFormal: boolean): Array<{ name: [string, string]; color: string; tabs: Array<[SheetKey, string, string]> }> {
+  return [
+    { name: ["Отчёты", "Statements"], color: "FF1F3864", tabs: [
+      ["plTi", withFormal ? "Прибыль и убытки Turbo Impex по месяцам: продажи Fargo, себестоимость в двух вариантах (по учёту и фактическая), расходы, налог на прибыль." : "Прибыль и убытки Turbo Impex по месяцам: продажи Fargo, себестоимость, расходы, налог на прибыль.", withFormal ? "Turbo Impex profit and loss by month: sales to Fargo, cost of goods two ways (formal and actual), expenses, profit tax." : "Turbo Impex profit and loss by month: sales to Fargo, cost of goods, expenses, profit tax."],
+      ["plFg", "Прибыль и убытки Fargo по Humana: продажи покупателям, себестоимость по ценам TI, расходы, оборотный налог.", "Fargo's profit and loss on Humana: sales to customers, cost at TI's prices, expenses, turnover tax."],
+      ["plGr", "Обе компании как одна: внешние продажи по себестоимости TI, внутренние счета исключены.", "Both companies as one: outside sales at TI's landed cost, the internal invoices removed."],
+      ["bsTi", "Что у TI есть и что TI должен на конец каждого месяца.", "What TI owns and owes at each month-end."],
+      ["bsFg", "Товар, деньги и долги Fargo по Humana на конец каждого месяца.", "Fargo's Humana stock, money and debts at each month-end."],
+      ["bsGr", "Баланс обеих компаний вместе.", "Both companies' balance sheet together."],
+      ["settle", "Сколько Fargo должен TI на отчётную дату и из чего это складывается.", "How much Fargo owes TI at the report date, step by step."],
+    ] },
+    { name: ["НДС", "VAT"], color: "FF0E7490", tabs: [
+      ["vatTi", "НДС TI: таможня против счетов для Fargo, лицевой счёт в налоговой, чья это переплата.", "TI's VAT: customs against the invoices to Fargo, the tax account, whose overpayment it is."],
+      ["vatFg", "НДС Fargo: с продаж (перечисление и наличные), к зачёту по счетам TI, переплата и уплата в бюджет.", "Fargo's VAT: on its sales (bank and cash), offset by TI's invoices, the credit carried and what is paid."],
+    ] },
+    { name: ["Расчёты", "Workings"], color: "FFB45309", tabs: [
+      ["ship", withFormal ? "Фуры: закупка, расходы на импорт, себестоимость каждой строки — фактическая и по учёту (1С)." : "Фуры: закупка, расходы на импорт, себестоимость каждой строки.", withFormal ? "Trucks: purchase, import costs, the cost of each line — actual and formal (1C)." : "Trucks: purchase, import costs, the landed cost of each line."],
+      ...(withFormal ? ([["skuCost", "Из чего складывается себестоимость каждого товара в каждой фуре: фактическая и по учёту, на банку и всего.", "What each product in each truck cost: actual and formal, per tin and in total."], ["cashExp", "Расходы на импорт по каждой фуре: в учёте (1С) и наличными, по статьям.", "Import costs per truck: in the accounting (1C) and in cash, by category."]] as Array<[SheetKey, string, string]>) : []),
+      ["cogs", "Себестоимость FIFO: партии фур у TI, счета TI у Fargo.", "FIFO cost: truck batches at TI, TI's invoices at Fargo."],
+      ["stock", "Остатки товара в штуках на конец месяца — у TI и у Fargo.", "Stock in units at each month-end, at TI and at Fargo."],
+    ] },
+    { name: ["Данные", "Data"], color: "FF94A3B8", tabs: [
+      ["sales", "Продажи Fargo из 1С: кол-во, цены, наличные и перечисление, НДС по строке.", "Fargo's sales from 1C: quantity, price, cash and bank, VAT per line."],
+      ["inv", "Счета-фактуры TI для Fargo: кол-во, цена, НДС.", "TI's invoices to Fargo: quantity, price, VAT."],
+      ["shipExp", withFormal ? "Расходы на импорт по фурам, включая НДС на таможне; у каждой строки — сколько в учёте (1С) и сколько наличными." : "Расходы на импорт по фурам, включая НДС на таможне.", withFormal ? "Import costs per truck, including the VAT paid at customs; each row split into in the accounting (1C) and cash." : "Import costs per truck, including the VAT paid at customs."],
+      ["vat", "Лицевой счёт TI по НДС в налоговой, строка за строкой.", "TI's VAT tax account, line by line."],
+      ["vatCh", "НДС, начисленный TI вне счетов для Fargo.", "VAT charged to TI outside the Fargo invoices."],
+      ["tax", "Декларации TI по налогу на прибыль.", "TI's profit tax returns."],
+      ["opexTi", "Расходы TI.", "TI's expenses."],
+      ["opexFg", "Расходы Fargo по Humana.", "Fargo's expenses on Humana."],
+      ["tiWo", "Образцы и лабораторные пробы TI.", "TI's samples and laboratory tins."],
+      ["fgWo", "Списания Fargo: просрочка, брак.", "Fargo's write-offs: expired, damaged."],
+      ["counts", "Инвентаризации склада Fargo на конец месяца.", "Fargo's month-end stock counts."],
+      ["tr", "Платежи Fargo в TI: наличные и перечисление.", "Fargo's payments to TI: cash and bank."],
+      ["cap", "Взносы капитала.", "Capital contributions."],
+      ["loans", "Займы.", "Loans."],
+      ["prior", "Деньги прежнего владельца, прошедшие через TI.", "The previous owner's money passing through TI."],
+      ["other", "Деньги других покупателей.", "Other customers' money."],
+      ["ar", "Долги покупателей перед Fargo на конец месяца.", "What customers owe Fargo at each month-end."],
+      ["mb", "Банк, касса и товары в пути TI на конец месяца.", "TI's bank, cash and goods in transit at each month-end."],
+      ["lists", "Товары с ценами и каналы продаж с долей наличных.", "Products with prices, sales channels with their cash share."],
+    ] },
+    { name: ["Настройки и проверка", "Settings and check"], color: "FF15803D", tabs: [
+      ["settings", "Ставки и отчётный месяц, которые используют формулы.", "The rates and the report month the formulas use."],
+      ["check", "Ключевые цифры книги против приложения: разница должна быть 0.", "The workbook's key figures against the app: the difference should be 0."],
+    ] },
+  ];
+}
+
+/** a tab's name in the workbook */
+export const modelSheetName = (k: SheetKey, locale: Locale): string => SHEETS[k][locale === "ru" ? 0 : 1];
 
 /** the FIFO tab's cost-per-unit table starts here (summary rows above it) */
 const COGS_UNIT_FIRST = 18;
