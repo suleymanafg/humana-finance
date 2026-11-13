@@ -17,6 +17,10 @@ export default async function ProfitTaxPage({ searchParams }: { searchParams: Se
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Figure label={ctx.l({ ru: "Налог на прибыль TI, начислено с начала", en: "TI profit tax booked to date" })} value={fmtN(booked)} />
         <Figure label={ctx.l({ ru: "К оплате на конец месяца", en: "Payable at month-end" })} value={fmtN(b?.ti.profitTaxPayable ?? 0)} />
+        <Figure
+          label={ctx.l({ ru: "Переплата на конец месяца (к возврату)", en: "Overpaid at month-end (to come back)" })}
+          value={fmtN(b?.ti.profitTaxOverpaid ?? 0)}
+        />
         <Figure label={ctx.l({ ru: "Оборотный налог Fargo с начала", en: "Fargo turnover tax to date" })} value={fmtN(turnover)} />
       </div>
       <SectionTitle>{ctx.l({ ru: "Декларации Turbo Impex по налогу на прибыль", en: "Turbo Impex profit tax returns" })}</SectionTitle>
@@ -40,6 +44,30 @@ export default async function ProfitTaxPage({ searchParams }: { searchParams: Se
             },
           ]}
           emptyLabel={ctx.l({ ru: "Деклараций нет", en: "No returns" })}
+        />
+      </div>
+      <SectionTitle>{ctx.l({ ru: "Переплата налога на прибыль", en: "Profit tax overpaid" })}</SectionTitle>
+      <p className="mb-3 max-w-3xl text-[12.5px] text-muted">
+        {ctx.l({
+          ru: "Деньги у налоговой сверх начисленного налога: оплачено по расчёту, который потом отменили, или пени, которые потом сняли. Это не расход: остаток стоит в балансе TI как актив, пока деньги не вернутся на счёт или не уйдут в зачёт другого налога — это колонка «Вернулось или зачтено».",
+          en: "Money the tax office holds beyond the tax charged: paid against a return that was later cancelled, or penalties later removed. Not a cost: the balance sits in TI's balance sheet as an asset until it comes back to the bank or covers another tax — that is the «Came back or offset» column.",
+        })}
+      </p>
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
+        <EntryGrid
+          entity="taxOverpayment"
+          rows={(dataset.taxOverpayments ?? []).map((o) => ({ ...o, notes: o.notes ?? "" }))}
+          readOnly={!ctx.canEditAny}
+          defaults={{ monthId }}
+          sumFields={["paid", "returned"]}
+          cols={[
+            { field: "monthId", label: ctx.l({ ru: "Месяц", en: "Month" }), type: "select", options: monthOptions, width: "170px" },
+            { field: "description", label: ctx.l({ ru: "Что", en: "What" }), type: "text" },
+            { field: "paid", label: ctx.l({ ru: "Оплачено сверх налога", en: "Paid beyond the tax" }), type: "number", width: "170px" },
+            { field: "returned", label: ctx.l({ ru: "Вернулось или зачтено", en: "Came back or offset" }), type: "number", width: "170px" },
+            { field: "notes", label: ctx.l({ ru: "Примечание", en: "Notes" }), type: "text" },
+          ]}
+          emptyLabel={ctx.l({ ru: "Переплаты нет", en: "No overpayment" })}
         />
       </div>
       <SectionTitle>{ctx.l({ ru: "Оборотный налог Fargo по месяцам", en: "Fargo turnover tax by month" })}</SectionTitle>

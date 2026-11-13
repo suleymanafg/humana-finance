@@ -434,6 +434,19 @@ model TiTaxFiling {
   deletedAt        DateTime?
 }
 
+// Profit tax money the tax office holds beyond the tax charged (paid against a return later cancelled, penalties
+// later cancelled), and what came back: refunded to the bank or used for another tax or penalty. Not a cost —
+// the balance is a TI asset until it comes back. Charged tax stays in TiTaxFiling.
+model TiTaxOverpayment {
+  id          String    @id @default(cuid())
+  monthId     String // month the money left (paid) or came back (returned)
+  description String
+  paid        Float     @default(0) // paid beyond the tax charged
+  returned    Float     @default(0) // refunded to the bank, or used for another tax or penalty
+  notes       String?
+  deletedAt   DateTime?
+}
+
 model CapitalContribution {
   id          String    @id @default(cuid())
   date        DateTime

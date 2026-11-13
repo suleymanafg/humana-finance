@@ -359,6 +359,13 @@ export async function runAiTool(
           paidIn: f.paidMonthId ?? null,
           declaredExpenses: r(f.declaredExpenses),
         })),
+        // money the tax office holds beyond the profit tax charged (a TI asset), and what came back or was offset
+        tiProfitTaxOverpaid: (dataset.taxOverpayments ?? []).map((o) => ({
+          month: o.monthId,
+          what: o.description,
+          paid: r(o.paid),
+          returned: r(o.returned),
+        })),
       };
     }
 

@@ -85,6 +85,7 @@ export default async function TiVatPage({ searchParams }: { searchParams: Search
               options: [
                 { value: "TI", label: ctx.l({ ru: "Turbo Impex (расход)", en: "Turbo Impex (a cost)" }) },
                 { value: "PRIOR_OWNER", label: ctx.l({ ru: "Прежний владелец", en: "Previous owner" }) },
+                { value: "NONE", label: ctx.l({ ru: "Никто: НДС к зачёту, не расход", en: "No one: VAT to offset, not a cost" }) },
               ],
             },
           ]}

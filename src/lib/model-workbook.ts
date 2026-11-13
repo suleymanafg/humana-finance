@@ -54,6 +54,7 @@ const SHEETS = {
   vat: ["НДС TI — лицевой счёт", "TI VAT account"],
   vatCh: ["НДС — прочие начисления", "VAT charges"],
   tax: ["Налог на прибыль TI", "TI tax filings"],
+  taxOver: ["Налог на прибыль — переплата", "TI profit tax overpaid"],
   lists: ["Справочники", "Lists"],
   check: ["Сверка с приложением", "App check"],
 } as const;
@@ -631,7 +632,7 @@ export function modelWorkbook(
   }
   {
     const s = S.vatCh;
-    s.title(t("НДС, начисленный TI вне счетов-фактур Fargo", "VAT charged to TI outside the Fargo invoices"), t("TI — расход TI; PRIOR_OWNER — за счёт переплаты прежнего владельца.", "TI — a TI cost; PRIOR_OWNER — paid from the previous owner's overpayment."));
+    s.title(t("НДС, начисленный TI вне счетов-фактур Fargo", "VAT charged to TI outside the Fargo invoices"), t("TI — расход TI; PRIOR_OWNER — за счёт переплаты прежнего владельца; NONE — только движение НДС, не расход (минус — НДС к зачёту, например НДС налогового агента).", "TI — a TI cost; PRIOR_OWNER — paid from the previous owner's overpayment; NONE — a VAT movement only, not a cost (minus — VAT to offset, e.g. tax-agent VAT)."));
     s.header(3, [t("Месяц", "Month"), t("Что", "What"), t("Сумма", "Amount"), t("За чей счёт", "Borne by")]);
     ds.vatCharges
       .filter((x) => inRange(x.monthId))
@@ -658,6 +659,22 @@ export function modelWorkbook(
         s.v(4 + i, 5, x.paidMonthId ? ym(x.paidMonthId) : null, MONTHFMT);
       });
     s.widths([36, 14, 16, 16, 14]);
+  }
+  {
+    const s = S.taxOver;
+    s.title(t("Налог на прибыль TI — переплата (к возврату)", "TI profit tax overpaid (to come back)"), t("Деньги у налоговой сверх начисленного налога. Не расход: остаток — актив TI (лист «Баланс TI»), пока не вернётся на счёт или не уйдёт в зачёт другого налога.", "Money the tax office holds beyond the tax charged. Not a cost: the balance is TI's asset (BS TI tab) until it comes back to the bank or covers another tax."));
+    s.header(3, [t("Месяц", "Month"), t("Что", "What"), t("Оплачено сверх налога", "Paid beyond the tax"), t("Вернулось или зачтено", "Came back or offset"), t("Примечание", "Notes")]);
+    (ds.taxOverpayments ?? [])
+      .filter((x) => inRange(x.monthId))
+      .sort((a, b) => a.monthId.localeCompare(b.monthId))
+      .forEach((x, i) => {
+        s.v(4 + i, 1, ym(x.monthId), MONTHFMT);
+        s.v(4 + i, 2, x.description);
+        s.v(4 + i, 3, x.paid, UNIT2);
+        s.v(4 + i, 4, x.returned, UNIT2);
+        s.v(4 + i, 5, x.notes ?? null);
+      });
+    s.widths([9, 60, 18, 18, 40]);
   }
 
   // Shipments — trucks, then their lines
@@ -1263,6 +1280,10 @@ export function modelWorkbook(
   const OT = Q("opexTi");
   const OF = Q("opexFg");
   const TX = Q("tax");
+  const TO = Q("taxOver");
+  /** profit tax at the month-end: booked − paid against the returns − held by the tax office beyond the tax; + owed, − overpaid */
+  const ptaxPos = (x: string) =>
+    `(SUMIFS(${TX}$C:$C,${TX}$B:$B,"<="&${x}$3)-SUMIFS(${TX}$C:$C,${TX}$E:$E,"<="&${x}$3)-SUMIFS(${TO}$C:$C,${TO}$A:$A,"<="&${x}$3)+SUMIFS(${TO}$D:$D,${TO}$A:$A,"<="&${x}$3))`;
   const VC = Q("vatCh");
   const CG = Q("cogs");
   const woLabel = group(FARGO_WRITEOFF_GROUP);
@@ -1409,7 +1430,8 @@ export function modelWorkbook(
     { id: "stock", kind: "line", label: t("Товар у TI (FIFO: неизрасходованные партии фур)", "Stock held by TI (FIFO: unused truck batches)"), f: (x) => atMonth(CG, 13, x) },
     { id: "transit", kind: "line", label: t("Товары в пути (предоплата в Германию)", "Goods in transit (prepaid to Germany)"), f: (x) => `SUMIFS(${MB}$D:$D,${MB}$A:$A,${x}$3)` },
     { id: "vatOver", kind: "line", label: t("Переплата НДС в бюджет — лицевой счёт", "VAT overpaid — tax account"), f: (x) => `MAX(0,${vatBal(x)})` },
-    { id: "assets", kind: "sub", label: t("ИТОГО АКТИВЫ", "TOTAL ASSETS"), f: (x) => `SUM(${x}${R("bsTi", "bank")}:${x}${R("bsTi", "vatOver")})` },
+    { id: "ptaxOver", kind: "line", label: t("Переплата налога на прибыль (к возврату)", "Profit tax overpaid (to come back)"), f: (x) => `MAX(0,-${ptaxPos(x)})` },
+    { id: "assets", kind: "sub", label: t("ИТОГО АКТИВЫ", "TOTAL ASSETS"), f: (x) => `SUM(${x}${R("bsTi", "bank")}:${x}${R("bsTi", "ptaxOver")})` },
     { kind: "head", label: t("ОБЯЗАТЕЛЬСТВА", "LIABILITIES") },
     { id: "vatDebt", kind: "line", label: t("Долг по НДС в бюджет — лицевой счёт", "VAT owed — tax account"), f: (x) => `MAX(0,-${vatBal(x)})` },
     { id: "priorVat", kind: "line", label: t("Прежнему владельцу — его переплата НДС (за вычетом его начислений)", "Previous owner — their VAT overpayment (less their charges)"), f: (x) => `${priorVatCell}-SUMIFS(${VC}$C:$C,${VC}$A:$A,"<="&${x}$3,${VC}$D:$D,"PRIOR_OWNER")` },
@@ -1417,7 +1439,7 @@ export function modelWorkbook(
     { id: "loans", kind: "line", label: t("Займы и финансовая помощь", "Loans and financial assistance"), f: (x) => `SUMIFS(${LO}$C:$C,${LO}$A:$A,"<="&${x}$3)-SUMIFS(${LO}$D:$D,${LO}$A:$A,"<="&${x}$3)` },
     { id: "other", kind: "line", label: t("Деньги других покупателей", "Other customers' money"), f: (x) => `SUMIFS(${OR}$D:$D,${OR}$B:$B,"<="&${x}$3)` },
     { id: "importUnpaid", kind: "line", label: t("Неоплаченные импортные услуги (оплата в следующем месяце)", "Import services unpaid (paid in a later month)"), f: (x) => `SUMIFS(${SE}$D:$D,${SE}$B:$B,"<="&${x}$3,${SE}$E:$E,">"&${x}$3,${SE}$G:$G,0)` },
-    { id: "ptax", kind: "line", label: t("Налог на прибыль к уплате (начислен, не оплачен)", "Profit tax payable (booked, not paid)"), f: (x) => `SUMIFS(${TX}$C:$C,${TX}$B:$B,"<="&${x}$3)-SUMIFS(${TX}$C:$C,${TX}$E:$E,"<="&${x}$3)` },
+    { id: "ptax", kind: "line", label: t("Налог на прибыль к уплате (начислен, не оплачен)", "Profit tax payable (booked, not paid)"), f: (x) => `MAX(0,${ptaxPos(x)})` },
     { id: "liab", kind: "sub", label: t("ИТОГО ОБЯЗАТЕЛЬСТВА", "TOTAL LIABILITIES"), f: (x) => `SUM(${x}${R("bsTi", "vatDebt")}:${x}${R("bsTi", "ptax")})` },
     { kind: "head", label: t("КАПИТАЛ", "EQUITY") },
     { id: "capTi", kind: "line", label: t("Капитал — Turbo Impex", "Capital — Turbo Impex"), f: (x) => `SUMIFS(${CP}$C:$C,${CP}$B:$B,"<="&${x}$3)` },
@@ -1453,6 +1475,7 @@ export function modelWorkbook(
     { id: "atFg", kind: "memo", label: t("в т.ч. у Fargo", "of which at Fargo"), f: (x) => atMonth(CG, 15, x) },
     { id: "transit", kind: "line", label: t("Товары в пути (предоплата в Германию)", "Goods in transit (prepaid to Germany)"), f: (x) => `${BT}${x}${R("bsTi", "transit")}` },
     { id: "vat", kind: "line", label: t("НДС: переплата TI (лицевой счёт) + зачёт Fargo", "VAT: TI overpayment (tax account) + Fargo credit"), f: (x) => `${BT}${x}${R("bsTi", "vatOver")}+${atMonth(VF, R("vatFg", "vcredit"), x)}` },
+    { id: "taxOver", kind: "line", label: t("Переплата налога на прибыль TI (к возврату)", "TI profit tax overpaid (to come back)"), f: (x) => `${BT}${x}${R("bsTi", "ptaxOver")}` },
     { id: "ar", kind: "line", label: t("Дебиторская задолженность покупателей", "Customer receivables"), f: (x) => `SUMIFS(${AR}$C:$C,${AR}$A:$A,${x}$3)` },
     { id: "cash", kind: "line", label: t("Денежные средства TI (банк + касса)", "TI cash (bank + on hand)"), f: (x) => `${BT}${x}${R("bsTi", "bank")}+${BT}${x}${R("bsTi", "cash")}` },
     { id: "held", kind: "line", label: t("Деньги Humana у Fargo (расчёт)", "Humana money held by Fargo (derived)"), f: (x) => atMonth(BF, R("bsFg", "cashHeld"), x) },
@@ -1526,7 +1549,7 @@ export function modelWorkbook(
     ebitda: (i) => G(i).ebitda, tFg: (i) => G(i).fargoIncomeTax, tTi: (i) => G(i).tiProfitTax, tVat: (i) => G(i).tiVatCost, taxes: (i) => G(i).taxes, net: (i) => G(i).netProfit,
   });
   writeStatement("bsTi", "bsTi", t("Баланс — Turbo Impex (на конец месяца)", "Balance sheet — Turbo Impex (month-end)"), bsTi, bsMonths, true, {
-    bank: (i) => B(i).ti.bank, cash: (i) => B(i).ti.cash, recv: (i) => B(i).ti.receivableFromFargo, stock: (i) => B(i).ti.stock, transit: (i) => B(i).ti.goodsInTransit, vatOver: (i) => B(i).ti.vatOverpaid,
+    bank: (i) => B(i).ti.bank, cash: (i) => B(i).ti.cash, recv: (i) => B(i).ti.receivableFromFargo, stock: (i) => B(i).ti.stock, transit: (i) => B(i).ti.goodsInTransit, vatOver: (i) => B(i).ti.vatOverpaid, ptaxOver: (i) => B(i).ti.profitTaxOverpaid,
     assets: (i) => B(i).ti.assets, vatDebt: (i) => B(i).ti.vatDebt, priorVat: (i) => B(i).ti.priorOwnerVat, priorCash: (i) => B(i).ti.priorOwnerCash, loans: (i) => B(i).ti.loans, other: (i) => B(i).ti.otherReceipts,
     importUnpaid: (i) => B(i).ti.importUnpaid, ptax: (i) => B(i).ti.profitTaxPayable, liab: (i) => B(i).ti.liabilities, capTi: (i) => B(i).ti.tiCapital, capFg: (i) => B(i).ti.fargoCapital,
     retained: (i) => B(i).ti.retained, equity: (i) => B(i).ti.equity, unrec: (i) => B(i).ti.unreconciled,
@@ -1536,7 +1559,7 @@ export function modelWorkbook(
     toTi: (i) => B(i).fargo.payableToTi, liab: (i) => B(i).fargo.liabilities, retained: (i) => B(i).fargo.retained, equity: (i) => B(i).fargo.equity, check: () => 0,
   });
   writeStatement("bsGr", "bsGr", t("Баланс — Humana консолидированный (на конец месяца)", "Balance sheet — Humana consolidated (month-end)"), bsGr, bsMonths, true, {
-    stock: (i) => B(i).group.stock, atTi: (i) => B(i).group.stockAtTi, atFg: (i) => B(i).group.stockAtFargo, transit: (i) => B(i).group.goodsInTransit, vat: (i) => B(i).group.vat,
+    stock: (i) => B(i).group.stock, atTi: (i) => B(i).group.stockAtTi, atFg: (i) => B(i).group.stockAtFargo, transit: (i) => B(i).group.goodsInTransit, vat: (i) => B(i).group.vat, taxOver: (i) => B(i).group.taxOverpaid,
     ar: (i) => B(i).group.receivables, cash: (i) => B(i).group.tiCash, held: (i) => B(i).group.cashHeldByFargo, assets: (i) => B(i).group.assets, liab: (i) => B(i).group.liabilities,
     capTi: (i) => B(i).group.tiCapital, capFg: (i) => B(i).group.fargoCapital, retained: (i) => B(i).group.retained, equity: (i) => B(i).group.equity, unrec: (i) => B(i).group.unreconciled,
   });
@@ -1666,6 +1689,12 @@ export function modelWorkbook(
       (i) => c.balance[i].ti.unreconciled,
       bsMonths
     );
+    add(
+      t("TI: переплата налога на прибыль", "TI: profit tax overpaid"),
+      (_x, m) => `IFERROR(INDEX(${BT}$C$${R("bsTi", "ptaxOver")}:$${L(2 + bsMonths.length)}$${R("bsTi", "ptaxOver")},MATCH(${ym(m)},${BT}$C$3:$${L(2 + bsMonths.length)}$3,0)),0)`,
+      (i) => c.balance[i].ti.profitTaxOverpaid,
+      bsMonths
+    );
     const VT = Q("vatTi");
     add(t("Fargo: переплата НДС на конец месяца", "Fargo: VAT credit at month-end"), plAt(VF, R("vatFg", "vcredit")), (i) => c.fargo[i].vat.creditOut);
     add(t("Fargo: НДС уплачен в бюджет", "Fargo: VAT paid to the state"), plAt(VF, R("vatFg", "vpaid")), (i) => c.fargo[i].vat.paid);
@@ -1735,6 +1764,7 @@ export function modelContents(withFormal: boolean): Array<{ name: [string, strin
       ["vat", "Лицевой счёт TI по НДС в налоговой, строка за строкой.", "TI's VAT tax account, line by line."],
       ["vatCh", "НДС, начисленный TI вне счетов для Fargo.", "VAT charged to TI outside the Fargo invoices."],
       ["tax", "Декларации TI по налогу на прибыль.", "TI's profit tax returns."],
+      ["taxOver", "Переплата налога на прибыль: оплачено сверх налога, что вернулось или ушло в зачёт.", "Profit tax overpaid: paid beyond the tax, what came back or covered another tax."],
       ["opexTi", "Расходы TI.", "TI's expenses."],
       ["opexFg", "Расходы Fargo по Humana.", "Fargo's expenses on Humana."],
       ["tiWo", "Образцы и лабораторные пробы TI.", "TI's samples and laboratory tins."],

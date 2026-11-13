@@ -131,6 +131,16 @@ export interface TaxFilingIn {
   declaredExpenses: number;
 }
 
+/** Profit tax money the tax office holds beyond the tax charged, and what came back (refund or used for another tax). */
+export interface TaxOverpaymentIn {
+  id: string;
+  monthId: string;
+  description: string;
+  paid: number;
+  returned: number;
+  notes?: string | null;
+}
+
 export interface VatAccountIn {
   id: string;
   period: string; // "2025-08"
@@ -149,7 +159,7 @@ export interface VatChargeIn {
   monthId: string;
   description: string;
   amount: number;
-  bearer: string; // "PRIOR_OWNER" | "TI"
+  bearer: string; // "TI" (a TI cost) | "PRIOR_OWNER" | "NONE" (VAT only, e.g. tax-agent VAT TI gets back — not a cost)
 }
 
 export interface FargoVatReturnIn {
@@ -262,6 +272,7 @@ export interface Dataset {
   opexTi: OpexTiIn[];
   opexFargo: OpexFargoIn[];
   taxFilings: TaxFilingIn[];
+  taxOverpayments?: TaxOverpaymentIn[];
   vatAccount: VatAccountIn[];
   vatCharges: VatChargeIn[];
   fargoVatReturns: FargoVatReturnIn[];
@@ -523,6 +534,7 @@ export interface BalanceTi {
   stock: number;
   goodsInTransit: number;
   vatOverpaid: number;
+  profitTaxOverpaid: number; // the tax office holds it beyond the tax charged — comes back or covers later tax
   assets: number;
   vatDebt: number;
   priorOwnerVat: number;
@@ -571,6 +583,7 @@ export interface BalanceGroup {
   stockAtFargo: number;
   goodsInTransit: number;
   vat: number;
+  taxOverpaid: number;
   receivables: number;
   tiCash: number;
   cashHeldByFargo: number;

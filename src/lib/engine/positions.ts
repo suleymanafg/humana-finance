@@ -183,11 +183,18 @@ export function computeBalances(
       (e) => e.amount,
       (e) => !isImportVat(e.categoryName) && e.monthId <= m && !!e.paidMonthId && e.paidMonthId > m
     );
-    const profitTaxPayable =
-      profitTaxBookedCum - sumWhere(ds.taxFilings, (f2) => f2.taxAmount, (f2) => !!f2.paidMonthId && f2.paidMonthId <= m);
+    // profit tax: booked − paid against the returns − money the tax office holds beyond the tax (paid against a
+    // return later cancelled, less what came back or covered a later tax): + still owed, − overpaid (a TI asset)
+    const taxHeldBeyond = sumWhere(ds.taxOverpayments ?? [], (o) => o.paid - o.returned, (o) => o.monthId <= m);
+    const profitTaxPosition =
+      profitTaxBookedCum -
+      sumWhere(ds.taxFilings, (f2) => f2.taxAmount, (f2) => !!f2.paidMonthId && f2.paidMonthId <= m) -
+      taxHeldBeyond;
+    const profitTaxPayable = Math.max(0, profitTaxPosition);
+    const profitTaxOverpaid = Math.max(0, -profitTaxPosition);
     const tiCapital = sumWhere(ds.contributions, (c) => c.tiAmount, (c) => monthOf(c.date) <= m);
     const fargoCapital = sumWhere(ds.contributions, (c) => c.fargoAmount, (c) => monthOf(c.date) <= m);
-    const tiAssets = bank + cash + receivableFromFargo + tiStock + goodsInTransit + vatOverpaid;
+    const tiAssets = bank + cash + receivableFromFargo + tiStock + goodsInTransit + vatOverpaid + profitTaxOverpaid;
     const tiLiabilities =
       vatDebt + priorOwnerVat + priorOwnerCash + loans + otherReceipts + importUnpaid + profitTaxPayable;
     const tiEquity = tiCapital + fargoCapital + tiNetCum;
@@ -205,7 +212,7 @@ export function computeBalances(
         otherReceipts -
         landed -
         tiOpexCum -
-        (profitTaxBookedCum - profitTaxPayable));
+        (profitTaxBookedCum - profitTaxPosition));
     const invoiceVatCum = sumWhere(invoices, (l) => l.vat, (l) => l.monthId <= m);
     const unreconciledVat = invoiceVatCum + tiVatChargesCum + vatOverpaid - vatDebt - priorOwnerVat;
 
@@ -219,7 +226,7 @@ export function computeBalances(
     // ── group ──
     const groupStock = tiStock + fargoStockTi;
     const groupAssets =
-      groupStock + goodsInTransit + vatOverpaid + f.vat.creditOut + receivables + bank + cash + cashHeld;
+      groupStock + goodsInTransit + vatOverpaid + profitTaxOverpaid + f.vat.creditOut + receivables + bank + cash + cashHeld;
     const groupEquity = tiCapital + fargoCapital + groupNetCum;
 
     const result: BalanceMonth = {
@@ -232,6 +239,7 @@ export function computeBalances(
         stock: tiStock,
         goodsInTransit,
         vatOverpaid,
+        profitTaxOverpaid,
         assets: tiAssets,
         vatDebt,
         priorOwnerVat,
@@ -278,6 +286,7 @@ export function computeBalances(
         stockAtFargo: fargoStockTi,
         goodsInTransit,
         vat: vatOverpaid + f.vat.creditOut,
+        taxOverpaid: profitTaxOverpaid,
         receivables,
         tiCash: bank + cash,
         cashHeldByFargo: cashHeld,

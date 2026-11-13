@@ -114,6 +114,12 @@ const registry: Record<string, EntityConfig> = {
     fields: ["quarterLabel", "taxAmount", "bookedMonthId", "paidMonthId", "declaredExpenses"],
     softDelete: true,
   },
+  taxOverpayment: {
+    delegate: () => prisma.tiTaxOverpayment,
+    fields: ["monthId", "description", "paid", "returned", "notes"],
+    requiredFields: ["monthId", "description"],
+    softDelete: true,
+  },
   contribution: {
     delegate: () => prisma.capitalContribution,
     fields: ["date", "tiAmount", "fargoAmount", "viaFargo", "notes"],
@@ -286,6 +292,7 @@ const MONTH_FIELD: Record<string, string> = {
   stockCount: "monthId",
   monthBalance: "monthId",
   taxFiling: "bookedMonthId",
+  taxOverpayment: "monthId",
   tiVatCharge: "monthId",
   fargoVatReturn: "monthId",
   loanMovement: "monthId",

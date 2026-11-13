@@ -233,3 +233,32 @@ describe("balance sheet inputs", () => {
     expect(sep.ti.fargoCapital).toBe(1_500_000);
   });
 });
+
+describe("profit tax overpaid", () => {
+  const base = compute(fixture());
+  const ds = fixture();
+  ds.taxOverpayments = [
+    { id: "O1", monthId: "2025-09", description: "Paid against a return later cancelled", paid: 100_000, returned: 0 },
+    { id: "O2", monthId: "2025-10", description: "Came back to the bank", paid: 0, returned: 30_000 },
+  ];
+  const c = compute(ds);
+  it("is a TI asset, netted against the profit tax still owed", () => {
+    // September: 40,000 booked and not paid yet, 100,000 held by the tax office → 60,000 overpaid, nothing payable
+    expect(month(c.balance, "2025-09").ti.profitTaxOverpaid).toBeCloseTo(60_000, 6);
+    expect(month(c.balance, "2025-09").ti.profitTaxPayable).toBeCloseTo(0, 6);
+    // October: the return is paid, 30,000 came back → 70,000 still held
+    expect(month(c.balance, "2025-10").ti.profitTaxOverpaid).toBeCloseTo(70_000, 6);
+    expect(month(c.balance, "2025-10").group.taxOverpaid).toBeCloseTo(70_000, 6);
+  });
+  it("is not a cost", () => {
+    for (const [i, t] of c.ti.entries()) expect(t.netProfit).toBeCloseTo(base.ti[i].netProfit, 6);
+  });
+  it("accounts for the money that left the bank, and the balance sheets still tie", () => {
+    for (const [i, b] of c.balance.entries()) {
+      const held = (ds.taxOverpayments ?? []).filter((o) => o.monthId <= b.monthId).reduce((s, o) => s + o.paid - o.returned, 0);
+      expect(b.ti.unreconciled - base.balance[i].ti.unreconciled).toBeCloseTo(held, 6);
+      expect(Math.abs(b.group.unreconciled - b.ti.unreconciled)).toBeLessThan(1e-6);
+      expect(Math.abs(b.ti.unreconciledCash + b.ti.unreconciledVat - b.ti.unreconciled)).toBeLessThan(1e-6);
+    }
+  });
+});

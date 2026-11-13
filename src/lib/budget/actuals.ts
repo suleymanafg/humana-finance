@@ -80,7 +80,8 @@ export function openingAt(ds: Dataset, c: Computed, monthId: string, inputs: Bud
     loans: b.ti.loans,
     vatCredit: b.ti.vatOverpaid,
     vatPayable: b.ti.vatDebt,
-    profitTaxPayable: b.ti.profitTaxPayable,
+    // overpaid profit tax as a negative payable: the plan lets it cover the next profit tax, as the tax office does
+    profitTaxPayable: b.ti.profitTaxPayable - b.ti.profitTaxOverpaid,
     priorOwner: b.ti.priorOwnerVat + b.ti.priorOwnerCash,
     importUnpaid: b.ti.importUnpaid,
     otherLiabilities: b.ti.otherReceipts,
