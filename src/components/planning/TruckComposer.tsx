@@ -45,7 +45,7 @@ export default function TruckComposer({
   eurRate: number;
   /** column names (truck codes); default «Фура 1 …» */
   names?: string[];
-  /** the plan's pallets per product for the whole load — shows the change */
+  /** the advised pallets per product for the whole load — shows the change */
   baseline?: Record<string, number>;
   canAddTrucks?: boolean;
   readOnly?: boolean;
@@ -78,7 +78,7 @@ export default function TruckComposer({
             ))}
             <th className="!text-center">{ru ? "Всего" : "Total"}</th>
             <th>{ru ? "шт" : "units"}</th>
-            {baseline && <th>{ru ? "к плану" : "vs plan"}</th>}
+            {baseline && <th>{ru ? "к совету" : "vs advice"}</th>}
           </tr>
         </thead>
         <tbody>

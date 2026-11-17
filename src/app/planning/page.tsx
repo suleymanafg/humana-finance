@@ -1,8 +1,8 @@
-// «Этот месяц» — supply planning's working screen: the pick-ups for this
-// month and next, the IBP numbers due by the 20th, the trucks on their way and
-// whether the stock lasts. Everything comes from the plan (plan-data.ts).
+// «Этот месяц» — supply planning's working screen, from the facts only: the
+// stock and the trucks in the app, how long they last, and each ship month's
+// advice counted on its own (advice.ts) up to the month whose IBP is due.
 import { loadPlan } from "@/lib/planning/plan-data";
-import { coverMonths, dueIbp, loadView, pipelineView, skuHeads, stockRows } from "@/lib/planning/plan-view";
+import { adviceViews, coverMonths, dueIbp, outlookMonths, pipelineView, skuHeads, stockRows } from "@/lib/planning/plan-view";
 import { getSession } from "@/lib/auth";
 import PlanningShell from "@/components/PlanningShell";
 import PlanView from "@/components/planning/PlanView";
@@ -23,11 +23,13 @@ export default async function PlanningPage() {
         skus={skuHeads(p)}
         eurRate={p.eurRate}
         settings={{ truckPlaces: s.truckPlaces, minFill: s.minFill, maxFill: s.maxFill, dangerLine: s.dangerLine, leadDays: s.leadDays, dispatchDay: s.dispatchDay }}
-        pickups={p.plan.loads.filter((l) => l.shipMonth <= p.extraThrough && l.trucks > 0).map((l) => loadView(p, l))}
-        due={{ ...due, entered: p.ibpEntered[due.shipMonth] ?? {} }}
+        advice={adviceViews(p)}
+        due={{ shipMonth: due.shipMonth, deadline: due.deadline, daysLeft: due.daysLeft }}
+        waitingAtDmk={Object.values(p.openUsed).reduce((t, v) => t + v, 0)}
         pipeline={pipelineView(p)}
         stock={stockRows(p)}
         coverMonths={coverMonths(p)}
+        outlook={outlookMonths(p)}
         isAdmin={session?.role === "ADMIN"}
       />
     </PlanningShell>

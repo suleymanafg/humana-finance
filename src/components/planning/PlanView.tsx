@@ -1,15 +1,16 @@
 "use client";
 
-// «Этот месяц» — the supply plan's working screen. Three things to do, each in
-// whole trucks, money and a date: the pick-ups (this month and next, from what
-// waits at DMK plus what HQ can add), the IBP numbers due by the 20th, and the
-// trucks on their way. Below them, month by month, whether the stock lasts.
+// «Этот месяц» — the supply plan's working screen, from the facts only (owner,
+// 17 Nov 2026): what is in the warehouse and which trucks are in the app, how
+// long that lasts, and for each ship month how many trucks are needed —
+// counted on its own, never assuming another month's advice was followed.
+// A row opens into its trucks (composition, HQ's form) or its IBP numbers.
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useT } from "@/lib/locale-context";
 import { dstr, monthLong, monthShort, pn, splitPack } from "@/lib/planning/ui-format";
-import type { LoadView, PipelineView, SkuHead, StockRow } from "@/lib/planning/plan-view";
+import type { AdviceView, LoadView, OutlookMonth, PipelineView, SkuHead, StockRow } from "@/lib/planning/plan-view";
 import TruckComposer, { compositionTotals, palletsOf, unitsOf, type Composition } from "./TruckComposer";
 
 export interface PlanViewProps {
@@ -19,11 +20,15 @@ export interface PlanViewProps {
   skus: SkuHead[];
   eurRate: number;
   settings: { truckPlaces: number; minFill: number; maxFill: number; dangerLine: number; leadDays: number; dispatchDay: number };
-  pickups: LoadView[];
-  due: { shipMonth: string; deadline: string; daysLeft: number; load: LoadView | null; entered: Record<string, number> };
+  /** each ship month up to the one whose IBP is due, on its own */
+  advice: AdviceView[];
+  due: { shipMonth: string; deadline: string; daysLeft: number };
+  /** ordered in the IBP and still at DMK today, units */
+  waitingAtDmk: number;
   pipeline: PipelineView[];
   stock: StockRow[];
   coverMonths: string[];
+  outlook: OutlookMonth[];
   isAdmin: boolean;
 }
 
@@ -100,13 +105,14 @@ function HqFormRow({ busy, ru, onFill }: { busy: boolean; ru: boolean; onFill: (
   );
 }
 
-function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: { load: LoadView; skus: SkuHead[]; eurRate: number; settings: PlanViewProps["settings"]; isAdmin: boolean; ru: boolean; thisMonth: string }) {
+function PickupBody({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: { load: LoadView; skus: SkuHead[]; eurRate: number; settings: PlanViewProps["settings"]; isAdmin: boolean; ru: boolean; thisMonth: string }) {
   const router = useRouter();
   const defaultDay = `${load.shipMonth}-${String(settings.dispatchDay).padStart(2, "0")}`;
   const [dispatch, setDispatch] = useState(load.shipMonth === thisMonth ? new Date().toISOString().slice(0, 10) : defaultDay);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const planComp = () => load.split.map((t) => palletsOf(t.units, skus));
+  // no truck advised: an empty one to fill by hand
+  const planComp = (): Composition => (load.split.length > 0 ? load.split.map((t) => palletsOf(t.units, skus)) : [{}]);
   const [comp, setComp] = useState<Composition>(planComp);
   const edited = JSON.stringify(comp) !== JSON.stringify(planComp());
   const trucksUnits = comp.map((t) => unitsOf(t, skus)).filter((u) => Object.keys(u).length > 0);
@@ -146,28 +152,26 @@ function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: {
   }
 
   return (
-    <section className="pcard p-5" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">
-        {ru ? `Забрать у DMK · ${monthLong(load.shipMonth, true).toLowerCase()} · предложение плана` : `Pick up from DMK · ${monthLong(load.shipMonth, false)} · the plan's proposal`}
-      </div>
-      <div className="mt-1 text-[30px] font-extrabold leading-tight">
-        <span className="pnum">{load.trucks}</span> {trucksWord(load.trucks, ru)}
-        <span className="ml-2 text-[16px] font-bold text-muted">· {pct(load.fill, ru)}</span>
-      </div>
-      <div className="mt-1 text-[13px] font-semibold text-muted">
-        <span className="pnum">{pn(sumOf(load.units))}</span> {ru ? "шт" : "units"} · <span className="pnum">{load.pallets}</span> {ru ? "паллет" : "pallets"} · <span className="pnum">€{pn(load.eur)}</span> {uzs(load.eur, eurRate, ru)} ·{" "}
-        {ru ? "в продаже с" : "on the shelf from"} {monthLong(load.sellMonth, ru).toLowerCase()}
-      </div>
+    <div>
+      {load.trucks > 0 && (
+        <div className="text-[13px] font-semibold text-muted">
+          <span className="pnum">{pn(sumOf(load.units))}</span> {ru ? "шт" : "units"} · <span className="pnum">{load.pallets}</span> {ru ? "паллет" : "pallets"} · {ru ? "загрузка" : "fill"} {pct(load.fill, ru)} · <span className="pnum">€{pn(load.eur)}</span> {uzs(load.eur, eurRate, ru)}
+        </div>
+      )}
       {load.underFilled && (
         <p className="mt-1 text-[12px] font-bold" style={{ color: "var(--warn-ink)" }}>
           {ru ? `Загрузка ниже ${pct(settings.minFill, true)} — перевозка на риске покупателя.` : `Under ${pct(settings.minFill, false)} full — transport at the buyer's risk.`}
         </p>
       )}
-      {extraUnits > 0 && (
+      {load.trucks > 0 && (
         <p className="mt-1 text-[12px] font-semibold text-muted">
-          {ru
-            ? `По плану ${pn(sumOf(load.fromOpen))} шт — из ждущего у DMK, ${pn(extraUnits)} шт — сверх него: подтвердите с HQ, что они могут добавить.`
-            : `By the plan ${pn(sumOf(load.fromOpen))} units come from what waits at DMK and ${pn(extraUnits)} on top of it — confirm with HQ they can add them.`}
+          {extraUnits > 0
+            ? ru
+              ? `Из них ${pn(sumOf(load.fromOpen))} шт уже заказано в IBP и ждёт у DMK, ${pn(extraUnits)} шт — сверх заказанного: подтвердите с HQ, что они могут добавить.`
+              : `${pn(sumOf(load.fromOpen))} units are already ordered in the IBP and wait at DMK; ${pn(extraUnits)} are on top of that — confirm with HQ they can add them.`
+            : ru
+              ? "Всё это уже заказано в IBP и ждёт у DMK."
+              : "All of it is already ordered in the IBP and waits at DMK."}
         </p>
       )}
       <div className="mt-3">
@@ -198,7 +202,7 @@ function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: {
             </button>
             {edited && (
               <button type="button" onClick={() => setComp(planComp())} className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] font-bold text-muted">
-                {ru ? "Вернуть состав плана" : "Back to the plan's mix"}
+                {ru ? "Вернуть состав совета" : "Back to the advised mix"}
               </button>
             )}
           </>
@@ -206,7 +210,7 @@ function PickupCard({ load, skus, eurRate, settings, isAdmin, ru, thisMonth }: {
         {msg && <span className="text-[12px] font-bold text-muted">{msg}</span>}
       </div>
       {isAdmin && <HqFormRow busy={busy} ru={ru} onFill={(f) => void fill(f)} />}
-    </section>
+    </div>
   );
 }
 
@@ -237,7 +241,7 @@ function PlannedMonthCard({ month, trucks, skus, eurRate, settings, isAdmin, ru 
     const body = await res.json().catch(() => ({}));
     setBusy(false);
     if (res.ok) {
-      setMsg(ru ? "Состав сохранён — план пересчитан." : "Composition saved — the plan recalculated.");
+      setMsg(ru ? "Состав сохранён — советы пересчитаны." : "Composition saved — the advice is counted again.");
       router.refresh();
     } else setMsg(body.error ?? (ru ? "Не удалось" : "Failed"));
   }
@@ -247,8 +251,8 @@ function PlannedMonthCard({ month, trucks, skus, eurRate, settings, isAdmin, ru 
     const all = ids.length === trucks.length;
     const ok = confirm(
       ru
-        ? `Убрать ${codes}? ${all ? `Месяц ${monthLong(month, true).toLowerCase()} снова уйдёт в план — его потребность появится как заказ.` : "Остальные фуры месяца останутся как решено (план не пересчитывает месяц, пока в нём есть фуры)."}`
-        : `Remove ${codes}? ${all ? `${monthLong(month, false)} goes back to the plan — its need shows again as an order to place.` : "The month's other trucks stay as decided (the plan does not redo a month while it has trucks)."}`
+        ? `Убрать ${codes}? Совет по месяцам пересчитается без ${all ? "этих фур" : "неё"}.`
+        : `Remove ${codes}? The advice by month is counted again without ${all ? "them" : "it"}.`
     );
     if (!ok) return;
     setBusy(true);
@@ -269,7 +273,7 @@ function PlannedMonthCard({ month, trucks, skus, eurRate, settings, isAdmin, ru 
   }
 
   return (
-    <section className="pcard p-5">
+    <section>
       <div className="flex flex-wrap items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">
         <span>{ru ? `Заведены на ${monthLong(month, true).toLowerCase()}` : `In the app for ${monthLong(month, false)}`}</span>
         {trucks.map((t) => (
@@ -308,7 +312,7 @@ function PlannedMonthCard({ month, trucks, skus, eurRate, settings, isAdmin, ru 
           {planned.length > 0 && (
             <button type="button" disabled={busy} onClick={() => void remove(planned.map((t) => t.id))} className="rounded-lg border px-3.5 py-2 text-[12.5px] font-bold" style={{ borderColor: "var(--warn-border)", color: "var(--warn-ink)" }}>
               {planned.length === trucks.length
-                ? ru ? "Убрать фуры — вернуть месяц в план" : "Remove the trucks — back to the plan"
+                ? ru ? "Убрать фуры" : "Remove the trucks"
                 : ru ? `Убрать запланированные (${planned.length})` : `Remove the planned ones (${planned.length})`}
             </button>
           )}
@@ -320,12 +324,197 @@ function PlannedMonthCard({ month, trucks, skus, eurRate, settings, isAdmin, ru 
   );
 }
 
+const dec = (x: number, digits: number, ru: boolean) => x.toFixed(digits).replace(".", ru ? "," : ".");
+const monthOnly = (m: string, ru: boolean) => monthLong(m, ru).replace(/ \d{4}$/, "");
+
+/** The IBP numbers for a ship month still open: what to have there, next to what is there now. */
+function IbpBody({ load, skus, ru }: { load: LoadView; skus: SkuHead[]; ru: boolean }) {
+  const rows = skus.filter((s) => (load.ibpToEnter[s.id] ?? 0) > 0 || (load.ibpNow[s.id] ?? 0) > 0);
+  return (
+    <div>
+      <p className="max-w-[78ch] text-[12px] font-semibold text-muted">
+        {ru
+          ? "Посчитано поверх того, что уже заказано в IBP на месяцы до этого (считается, что заказанное забирают в свой месяц). Введите числа в портал DMK и загрузите свежую выгрузку IBP на вкладке «Заказы»."
+          : "Counted on top of what is already ordered in the IBP for the months before it (taken in their own months). Type the numbers into DMK's portal, then upload a fresh IBP export on the Orders tab."}
+      </p>
+      {rows.length > 0 && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="ptable text-[12.5px]">
+            <thead>
+              <tr>
+                <th>{ru ? "Товар" : "Product"}</th>
+                <th>{ru ? "ввести" : "enter"}</th>
+                <th>{ru ? "сейчас в IBP" : "in IBP now"}</th>
+                <th>{ru ? "изменить на" : "change by"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((s) => {
+                const d = (load.ibpToEnter[s.id] ?? 0) - (load.ibpNow[s.id] ?? 0);
+                return (
+                  <tr key={s.id}>
+                    <td><SkuName name={s.name} /></td>
+                    <td className="pnum font-bold">{pn(load.ibpToEnter[s.id] ?? 0)}</td>
+                    <td className="pnum text-muted">{load.ibpNow[s.id] ? pn(load.ibpNow[s.id]) : "—"}</td>
+                    <td className="pnum" style={{ color: Math.abs(d) < 0.5 ? "var(--muted)" : d > 0 ? "var(--info)" : "var(--warn-ink)" }}>
+                      {Math.abs(d) < 0.5 ? "—" : `${d > 0 ? "+" : "−"}${pn(Math.abs(d))}`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td>{ru ? "Итого" : "Total"}</td>
+                <td className="pnum">{pn(sumOf(load.ibpToEnter))}</td>
+                <td className="pnum">{pn(sumOf(load.ibpNow))}</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+      <div className="mt-3">
+        <Link href="/planning/orders" className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] font-bold">
+          {ru ? "Заказы по месяцам" : "Orders by month"}
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function Cell({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10.5px] font-extrabold uppercase tracking-[0.06em] text-muted">{label}</div>
+      <div className="mt-0.5 text-[13px] font-bold">{children}</div>
+    </div>
+  );
+}
+
+/** One ship month: what is in the app for it, what is ordered, and the advice — counted on its own. */
+function AdviceRow({ a, open, onToggle, props, ru }: { a: AdviceView; open: boolean; onToggle: () => void; props: PlanViewProps; ru: boolean }) {
+  const { thisMonth, due, skus, eurRate, settings, isAdmin } = props;
+  const isDue = a.kind === "ibp" && a.shipMonth === due.shipMonth;
+  const now = a.shipMonth === thisMonth;
+  const n = a.load.trucks;
+  const units = sumOf(a.load.units);
+  const entered = sumOf(a.load.ibpNow);
+  const diff = units - entered;
+  const more = a.trucksIn.length > 0;
+  const orderedShown = a.kind === "pickup" ? a.orderedUnits : entered;
+
+  return (
+    <div className="border-t" style={{ borderColor: "var(--hair)", background: now || isDue ? "var(--accent-soft-bg)" : undefined }}>
+      <div className="grid items-center gap-x-5 gap-y-3 px-5 py-4 sm:grid-cols-2 lg:grid-cols-[minmax(160px,1.1fr)_minmax(110px,0.8fr)_minmax(130px,0.9fr)_minmax(210px,1.5fr)_minmax(120px,auto)]">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[15px] font-extrabold">{monthLong(a.shipMonth, ru)}</span>
+            {now && <span className="ppill text-white" style={{ background: "var(--accent)" }}>{ru ? "сейчас" : "now"}</span>}
+            {isDue && (
+              <span className="ppill text-white" style={{ background: due.daysLeft <= 7 ? "var(--warn)" : "var(--accent)" }}>
+                {ru ? `IBP до ${dstr(due.deadline).slice(0, 5)} · ${due.daysLeft} дн.` : `IBP by ${dstr(due.deadline).slice(0, 5)} · ${due.daysLeft}d`}
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 text-[12px] font-semibold text-muted">
+            {ru ? "отгрузка · в продаже с" : "ship month · on the shelf from"} {ru ? monthOnly(a.sellMonth, true).toLowerCase() : monthOnly(a.sellMonth, false)}
+          </div>
+        </div>
+
+        <Cell label={ru ? "Фуры заведены" : "Trucks in the app"}>
+          {more ? (
+            <span title={a.trucksIn.map((t) => `${t.code} · ${(STATUS_RU[t.status] ?? STATUS_RU.TRANSIT)[ru ? 0 : 1]}`).join("\n")}>
+              <span className="pnum">{a.trucksIn.length}</span> {trucksWord(a.trucksIn.length, ru)}
+            </span>
+          ) : (
+            <span className="text-muted">—</span>
+          )}
+        </Cell>
+
+        <Cell label={a.kind === "pickup" ? (ru ? "Заказано в IBP, не в фурах" : "Ordered in the IBP, not on trucks") : ru ? "Сейчас в IBP" : "In the IBP now"}>
+          {orderedShown > 0 ? (
+            <>
+              <span className="pnum">{pn(orderedShown)}</span> <span className="font-semibold text-muted">{ru ? "шт" : "units"}</span>
+            </>
+          ) : (
+            <span className="text-muted">—</span>
+          )}
+        </Cell>
+
+        <div>
+          <div className="text-[10.5px] font-extrabold uppercase tracking-[0.06em]" style={{ color: "var(--accent)" }}>
+            {a.kind === "pickup" ? (ru ? "Совет: забрать" : "Advice: pick up") : ru ? "Совет: ввести в IBP" : "Advice: enter in the IBP"}
+          </div>
+          {n > 0 ? (
+            <>
+              <div className="text-[22px] font-extrabold leading-tight">
+                {a.kind === "pickup" ? (
+                  <>
+                    {more && ru && "ещё "}
+                    <span className="pnum">{n}</span> {trucksWord(n, ru)}
+                    {more && !ru && " more"}
+                  </>
+                ) : (
+                  <>
+                    <span className="pnum">{pn(units)}</span> <span className="text-[14px]">{ru ? "шт" : "units"}</span>
+                    <span className="ml-2 text-[14px] font-bold text-muted">· {n} {trucksWord(n, ru)}</span>
+                  </>
+                )}
+              </div>
+              <div className="text-[12px] font-semibold text-muted">
+                {a.kind === "pickup" ? (
+                  <>
+                    {ru ? "по расчёту" : "by the count"} <span className="pnum">{dec(a.needTrucks, 1, ru)}</span> · {ru ? "запас до" : "stock up to"} <span className="pnum">{dec(a.target, 2, ru).replace(/[.,]?0+$/, "")}</span> {ru ? "мес." : "mo"} · <span className="pnum">€{pn(a.load.eur)}</span>
+                  </>
+                ) : Math.abs(diff) < 0.5 ? (
+                  ru ? "совпадает с введённым" : "as entered"
+                ) : (
+                  <span style={{ color: diff > 0 ? "var(--info)" : "var(--warn-ink)" }}>
+                    {ru ? "изменить на" : "change by"} <span className="pnum">{diff > 0 ? "+" : "−"}{pn(Math.abs(diff))}</span>
+                  </span>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-[18px] font-extrabold leading-tight" style={{ color: "var(--ok-ink)" }}>
+                {a.kind === "pickup" ? (ru ? "Не нужно" : "Nothing needed") : ru ? "Заказ не нужен" : "No order needed"}
+              </div>
+              <div className="text-[12px] font-semibold text-muted">
+                {a.kind === "ibp" && entered > 0
+                  ? ru ? `введено ${pn(entered)} шт — можно убрать` : `${pn(entered)} units entered — can be removed`
+                  : more
+                    ? ru ? "заведённых фур хватает" : "the trucks in the app are enough"
+                    : ru ? "запаса хватает до цели" : "stock reaches the target"}
+              </div>
+            </>
+          )}
+        </div>
+
+        <button type="button" onClick={onToggle} aria-expanded={open} className="justify-self-start rounded-lg border border-border bg-surface px-3.5 py-2 text-[12.5px] font-bold lg:justify-self-end">
+          {open ? (ru ? "Свернуть" : "Close") : a.kind === "pickup" ? (ru ? "Собрать фуры" : "Build the trucks") : ru ? "По товарам" : "By product"}
+        </button>
+      </div>
+      {open && (
+        <div className="border-t bg-surface px-5 py-4" style={{ borderColor: "var(--hair)" }}>
+          {a.kind === "pickup" ? (
+            <PickupBody load={a.load} skus={skus} eurRate={eurRate} settings={settings} isAdmin={isAdmin} ru={ru} thisMonth={thisMonth} />
+          ) : (
+            <IbpBody load={a.load} skus={skus} ru={ru} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PlanView(props: PlanViewProps) {
-  const { today, thisMonth, monthDone, skus, eurRate, settings, pickups, due, pipeline, stock, coverMonths, isAdmin } = props;
+  const { today, thisMonth, monthDone, skus, eurRate, settings, advice, waitingAtDmk, pipeline, stock, coverMonths, outlook, isAdmin } = props;
   const { locale } = useT();
   const ru = locale === "ru";
+  const [openMonth, setOpenMonth] = useState<string | null>(null);
   const name = (id: string) => skus.find((s) => s.id === id)?.name ?? id;
-  const urgent = due.daysLeft <= 7;
   // ship months with trucks in the app that have not left DMK yet
   const plannedMonths = [...new Set(pipeline.filter((t) => EDITABLE.includes(t.status)).map((t) => t.shipMonth))].sort();
 
@@ -334,140 +523,156 @@ export default function PlanView(props: PlanViewProps) {
   const running = stock.reduce((t, r) => t + r.runningAt, 0);
   const onWay = pipeline.reduce((t, x) => t + sumOf(x.units), 0);
 
-  // products that run out (lost sales) or fall under the danger line in the months shown
-  const warnings = stock
-    .map((r) => {
-      const lostMonths = coverMonths.filter((m) => (r.lost[m] ?? 0) > 0.5);
-      const lowMonths = coverMonths.filter((m) => (r.lost[m] ?? 0) <= 0.5 && (r.cover[m] ?? 0) < settings.dangerLine);
-      return { id: r.id, lostMonths, lost: lostMonths.reduce((t, m) => t + r.lost[m], 0), lowMonths };
-    })
-    .filter((w) => w.lostMonths.length > 0 || w.lowMonths.length > 0);
+  // the first month something runs out with what is in the app today
+  const firstOut = outlook.find((o) => o.out > 0);
+  const firstOutNames = firstOut ? stock.filter((r) => (r.lost[firstOut.month] ?? 0) > 0.5).map((r) => `${splitPack(name(r.id)).name} ${splitPack(name(r.id)).pack}`.trim()) : [];
 
-  const dueRows = skus.filter((s) => (due.load?.ibpToEnter[s.id] ?? 0) > 0 || (due.entered[s.id] ?? 0) > 0);
-  const toEnter = (id: string) => due.load?.ibpToEnter[id] ?? 0;
+  const facts = [
+    { label: ru ? "На складе сейчас" : "In stock now", value: pn(onHand), sub: ru ? "шт, TI + Fargo" : "units, TI + Fargo" },
+    {
+      label: ru ? "Продано в этом месяце" : "Sold this month",
+      value: pn(sold),
+      sub: ru ? `темп ${pn(running)}/мес · прошло ${Math.round(monthDone * 100)}%` : `pace ${pn(running)}/mo · ${Math.round(monthDone * 100)}% done`,
+    },
+    {
+      label: ru ? "Фуры заведены, не прибыли" : "Trucks in the app, not arrived",
+      value: String(pipeline.length),
+      sub: ru ? `${trucksWord(pipeline.length, true)} · ${pn(onWay)} шт` : `${trucksWord(pipeline.length, false)} · ${pn(onWay)} units`,
+    },
+    { label: ru ? "Заказано в IBP, ждёт у DMK" : "Ordered in the IBP, waiting at DMK", value: pn(waitingAtDmk), sub: ru ? "шт, ещё не в фурах" : "units, not on a truck yet" },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] font-semibold text-muted">
-        <span>{ru ? "На складе сейчас" : "In stock now"} <b className="pnum text-foreground">{pn(onHand)}</b></span>
-        <span>
-          {ru ? "продано в этом месяце" : "sold this month"} <b className="pnum text-foreground">{pn(sold)}</b> ({ru ? "темп" : "pace"} <b className="pnum text-foreground">{pn(running)}</b>/{ru ? "мес" : "mo"}, {ru ? "прошло" : "done"} {Math.round(monthDone * 100)}%)
-        </span>
-        <span>{ru ? "не прибыло" : "on the way"} <b className="pnum text-foreground">{pn(onWay)}</b> · {pipeline.length} {trucksWord(pipeline.length, ru)}</span>
+      {/* the facts */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {facts.map((f) => (
+          <div key={f.label} className="pcard px-4 py-3">
+            <div className="text-[10.5px] font-extrabold uppercase tracking-[0.06em] text-muted">{f.label}</div>
+            <div className="pnum mt-0.5 text-[22px] font-extrabold leading-tight">{f.value}</div>
+            <div className="text-[11.5px] font-semibold text-muted">{f.sub}</div>
+          </div>
+        ))}
       </div>
 
-      {/* trucks in the app, not yet dispatched — their composition stays editable */}
-      {plannedMonths.map((m) => (
-        <PlannedMonthCard key={`${m}:${pipeline.filter((t) => t.shipMonth === m).map((t) => t.id + sumOf(t.units)).join()}`} month={m} trucks={pipeline.filter((t) => t.shipMonth === m && EDITABLE.includes(t.status))} skus={skus} eurRate={eurRate} settings={settings} isAdmin={isAdmin} ru={ru} />
-      ))}
-      {/* the plan's proposals for the months without trucks */}
-      {pickups.length === 0 ? (
-        <section className="pcard p-5">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">{ru ? "Забрать у DMK" : "Pick up from DMK"}</div>
-          <div className="mt-1 text-[24px] font-extrabold leading-tight">{ru ? "Забирать не нужно" : "Nothing to pick up"}</div>
-          <p className="mt-1 text-[12px] font-semibold text-muted">{ru ? "На ближайшие месяцы фуры уже заведены или не нужны." : "The coming months' trucks are already in or not needed."}</p>
-        </section>
-      ) : (
-        pickups.map((l) => <PickupCard key={`${l.shipMonth}:${sumOf(l.units)}`} load={l} skus={skus} eurRate={eurRate} settings={settings} isAdmin={isAdmin} ru={ru} thisMonth={thisMonth} />)
-      )}
+      {/* the advice, month by month */}
+      <section className="pcard overflow-hidden">
+        <div className="px-5 py-3.5">
+          <h2 className="text-[15px] font-extrabold">{ru ? "Сколько фур нужно" : "How many trucks are needed"}</h2>
+          <p className="mt-0.5 max-w-[82ch] text-[12px] font-semibold text-muted">
+            {ru
+              ? "Каждый месяц посчитан отдельно — только от склада и фур, которые уже заведены. Совет другого месяца не считается выполненным: пока фура не заведена, её нет. Заведёте фуру — все месяцы пересчитаются."
+              : "Each month is counted on its own — from the stock and the trucks already in the app, nothing else. Another month's advice is never taken as done: until a truck is in the app, it does not exist. Add a truck and every month is counted again."}
+          </p>
+        </div>
+        {advice.map((a) => (
+          <AdviceRow
+            key={`${a.shipMonth}:${sumOf(a.load.units)}:${a.trucksIn.length}`}
+            a={a}
+            open={openMonth === a.shipMonth}
+            onToggle={() => setOpenMonth(openMonth === a.shipMonth ? null : a.shipMonth)}
+            props={props}
+            ru={ru}
+          />
+        ))}
+      </section>
 
-      <div className="grid gap-3.5">
-        <section className="pcard p-5">
-          <div className="flex flex-wrap items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">
-            <span>{ru ? `Ввести в IBP до ${dstr(due.deadline)}` : `Enter in IBP by ${dstr(due.deadline)}`}</span>
-            <span className="rounded-full px-2 py-0.5 text-[11px] font-extrabold normal-case tracking-normal text-white" style={{ background: urgent ? "var(--warn)" : "var(--accent)" }}>
-              {ru ? `${due.daysLeft} дн.` : `${due.daysLeft}d`}
-            </span>
-          </div>
-          <div className="mt-1 flex flex-wrap items-baseline gap-2">
-            <div className="text-[30px] font-extrabold leading-tight">
-              {due.load ? (
-                <>
-                  <span className="pnum">{due.load.trucks}</span> {trucksWord(due.load.trucks, ru)}
-                </>
-              ) : ru ? "Заказ не нужен" : "No order needed"}
-            </div>
-            <span className="text-[16px] font-bold text-muted">{ru ? `на ${monthLong(due.shipMonth, true).toLowerCase()}` : `for ${monthLong(due.shipMonth, false)}`}</span>
-          </div>
-          {due.load && (
-            <div className="mt-1 text-[13px] font-semibold text-muted">
-              <span className="pnum">{due.load.pallets}</span> {ru ? "паллет" : "pallets"} · {pct(due.load.fill, ru)} · <span className="pnum">€{pn(due.load.eur)}</span> {uzs(due.load.eur, eurRate, ru)} · {ru ? "в продаже с" : "on the shelf from"} {monthLong(due.load.sellMonth, ru).toLowerCase()}
-            </div>
+      {/* how long the facts last */}
+      <section className="pcard overflow-hidden">
+        <div className="px-5 py-3.5">
+          <h2 className="text-[15px] font-extrabold">{ru ? "Хватит ли товара без новых фур" : "Will stock last without new trucks"}</h2>
+          <p className="mt-0.5 text-[12px] font-semibold text-muted">
+            {ru
+              ? "склад и заведённые фуры; советы выше сюда не входят · запас на конец месяца в месяцах продаж"
+              : "the stock and the trucks in the app; the advice above is not counted · month-end stock in months of sales"}
+          </p>
+          {firstOut && (
+            <p className="mt-2 rounded-lg border px-3 py-2 text-[12.5px] font-bold" style={{ borderColor: "var(--warn-border)", background: "var(--warn-soft)", color: "var(--warn-ink)" }}>
+              {ru
+                ? `Первыми закончатся (${monthOnly(firstOut.month, true).toLowerCase()}): ${firstOutNames.join(", ")}.`
+                : `First to run out (${monthOnly(firstOut.month, false)}): ${firstOutNames.join(", ")}.`}
+            </p>
           )}
-          {dueRows.length > 0 && (
-            <table className="ptable mt-3 text-[12.5px]">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+            {outlook.map((o) => {
+              const tone = o.out > 0 ? "out" : o.low > 0 ? "low" : "ok";
+              const bg = tone === "out" ? "var(--danger-soft)" : tone === "low" ? "var(--warn-soft)" : "var(--ok-soft)";
+              const fg = tone === "out" ? "var(--danger)" : tone === "low" ? "var(--warn-ink)" : "var(--ok-ink)";
+              return (
+                <div key={o.month} className="rounded-[10px] px-3 py-2.5" style={{ background: bg, color: fg }}>
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.06em]">{monthShort(o.month, ru)}</div>
+                  <div className="mt-0.5 text-[20px] font-extrabold leading-tight">
+                    <span className="pnum">{o.cover >= 24 ? "24+" : dec(o.cover, 1, ru)}</span> <span className="text-[11px]">{ru ? "мес." : "mo"}</span>
+                  </div>
+                  <div className="text-[11.5px] font-bold">
+                    {tone === "out"
+                      ? ru ? `нет: ${o.out} из ${stock.length}` : `out: ${o.out} of ${stock.length}`
+                      : tone === "low"
+                        ? ru ? `мало: ${o.low} из ${stock.length}` : `low: ${o.low} of ${stock.length}`
+                        : ru ? "хватает" : "enough"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <details className="border-t" style={{ borderColor: "var(--hair)" }}>
+          <summary className="cursor-pointer px-5 py-3 text-[12.5px] font-bold" style={{ color: "var(--accent)" }}>
+            {ru ? "По товарам" : "By product"}
+          </summary>
+          <div className="overflow-x-auto">
+            <table className="ptable text-[12.5px]">
               <thead>
                 <tr>
                   <th>{ru ? "Товар" : "Product"}</th>
-                  <th>{ru ? "ввести" : "enter"}</th>
-                  <th>{ru ? "сейчас в IBP" : "in IBP now"}</th>
-                  <th>{ru ? "изменить на" : "change by"}</th>
+                  <th>{ru ? "Сейчас" : "Now"}</th>
+                  <th>{ru ? "Темп/мес" : "Pace/mo"}</th>
+                  <th>{ru ? `Конец ${monthShort(thisMonth, true).toLowerCase()}` : `End ${monthShort(thisMonth, false)}`}</th>
+                  {coverMonths.map((m) => (
+                    <th key={m} className="!text-center">{monthShort(m, ru)}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {dueRows.map((s) => {
-                  const d = toEnter(s.id) - (due.entered[s.id] ?? 0);
-                  return (
-                    <tr key={s.id}>
-                      <td><SkuName name={s.name} /></td>
-                      <td className="pnum font-bold">{pn(toEnter(s.id))}</td>
-                      <td className="pnum text-muted">{due.entered[s.id] ? pn(due.entered[s.id]) : "—"}</td>
-                      <td className="pnum" style={{ color: Math.abs(d) < 0.5 ? "var(--muted)" : d > 0 ? "var(--info)" : "var(--warn-ink)" }}>
-                        {Math.abs(d) < 0.5 ? "—" : `${d > 0 ? "+" : "−"}${pn(Math.abs(d))}`}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {stock.map((r) => (
+                  <tr key={r.id}>
+                    <td><SkuName name={name(r.id)} /></td>
+                    <td className="pnum">{pn(r.onHand)}</td>
+                    <td className="pnum text-muted">{pn(r.runningAt)}</td>
+                    <td className="pnum">{pn(r.endOfMonth)}</td>
+                    {coverMonths.map((m) => {
+                      const lost = r.lost[m] ?? 0;
+                      const cover = r.cover[m] ?? 0;
+                      const tone = lost > 0.5 ? "out" : cover < settings.dangerLine ? "low" : "ok";
+                      const bg = tone === "out" ? "var(--danger-soft)" : tone === "low" ? "var(--warn-soft)" : "var(--ok-soft)";
+                      const fg = tone === "out" ? "var(--danger)" : tone === "low" ? "var(--warn-ink)" : "var(--ok-ink)";
+                      const tip = `${monthLong(m, ru)}: ${lost > 0.5 ? (ru ? `не хватит ≈${pn(lost)} шт` : `short ≈${pn(lost)}`) : `${cover.toFixed(1)} ${ru ? "мес." : "mo"}`}`;
+                      return (
+                        <td key={m} className="!px-1 !py-1">
+                          <div title={tip} className="pnum flex h-8 min-w-[52px] items-center justify-center rounded-md text-[12px] font-bold" style={{ background: bg, color: fg }}>
+                            {tone === "out" ? (ru ? "нет" : "out") : cover >= 24 ? "24+" : cover.toFixed(1)}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
               </tbody>
-              <tfoot>
-                <tr>
-                  <td>{ru ? "Итого" : "Total"}</td>
-                  <td className="pnum">{pn(due.load ? sumOf(due.load.ibpToEnter) : 0)}</td>
-                  <td className="pnum">{pn(sumOf(due.entered))}</td>
-                  <td />
-                </tr>
-              </tfoot>
             </table>
-          )}
-          <p className="mt-2 text-[12px] font-semibold text-muted">
-            {ru
-              ? "Введите эти числа в портал DMK, затем загрузите свежую выгрузку IBP на вкладке «Заказы» — план пересчитается."
-              : "Type these into DMK's portal, then upload a fresh IBP export on the Orders tab — the plan recalculates."}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Link href="/planning/orders" className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] font-bold">
-              {ru ? "Заказы по месяцам" : "Orders by month"}
-            </Link>
           </div>
-        </section>
-      </div>
+          <div className="flex flex-wrap gap-x-5 gap-y-1 px-5 py-3 text-[11.5px] font-semibold text-muted">
+            <span><span className="inline-block h-3 w-3 rounded-sm align-[-2px]" style={{ background: "var(--ok-soft)" }} /> {ru ? `${settings.dangerLine} мес. и больше` : `${settings.dangerLine} month or more`}</span>
+            <span><span className="inline-block h-3 w-3 rounded-sm align-[-2px]" style={{ background: "var(--warn-soft)" }} /> {ru ? "ниже опасной черты" : "under the danger line"}</span>
+            <span><span className="inline-block h-3 w-3 rounded-sm align-[-2px]" style={{ background: "var(--danger-soft)" }} /> {ru ? "не хватит (недопродажи)" : "runs out (lost sales)"}</span>
+          </div>
+        </details>
+      </section>
 
-      {warnings.length > 0 && (
-        <section className="rounded-[10px] border px-4 py-3 text-[12.5px]" style={{ borderColor: "var(--warn-border)", background: "var(--warn-soft)", color: "var(--warn-ink)" }}>
-          <div className="font-extrabold">{ru ? "Не хватит товара" : "Stock runs short"}</div>
-          <ul className="mt-1 space-y-0.5 font-semibold">
-            {warnings.map((w) => (
-              <li key={w.id}>
-                {splitPack(name(w.id)).name} {splitPack(name(w.id)).pack}:{" "}
-                {w.lostMonths.length > 0 &&
-                  (ru
-                    ? `нет в ${w.lostMonths.map((m) => monthShort(m, true).toLowerCase()).join(", ")} — ≈${pn(w.lost)} шт недопродаж`
-                    : `out in ${w.lostMonths.map((m) => monthShort(m, false)).join(", ")} — ≈${pn(w.lost)} units lost`)}
-                {w.lostMonths.length > 0 && w.lowMonths.length > 0 && "; "}
-                {w.lowMonths.length > 0 &&
-                  (ru
-                    ? `меньше ${settings.dangerLine} мес. запаса в ${w.lowMonths.map((m) => monthShort(m, true).toLowerCase()).join(", ")}`
-                    : `under ${settings.dangerLine} month of cover in ${w.lowMonths.map((m) => monthShort(m, false)).join(", ")}`)}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
+      {/* the trucks in the app */}
       {pipeline.length > 0 && (
         <section className="pcard overflow-hidden">
-          <div className="flex flex-wrap items-baseline gap-3 border-b px-5 py-3" style={{ borderColor: "var(--hair)" }}>
-            <h2 className="text-[14px] font-extrabold">{ru ? "Фуры, которые ещё не прибыли" : "Trucks not arrived yet"}</h2>
+          <div className="flex flex-wrap items-baseline gap-3 px-5 py-3.5">
+            <h2 className="text-[15px] font-extrabold">{ru ? "Заведённые фуры, которые ещё не прибыли" : "Trucks in the app, not arrived yet"}</h2>
             <span className="text-[11.5px] font-semibold text-muted">
               {ru ? `в продаже — по дате на странице поставок, иначе отгрузка + ${settings.leadDays} дн.` : `sellable — the date on Shipments, else dispatch + ${settings.leadDays} days`}
             </span>
@@ -475,7 +680,7 @@ export default function PlanView(props: PlanViewProps) {
               {ru ? "Сменить статус →" : "Change status →"}
             </Link>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto border-t" style={{ borderColor: "var(--hair)" }}>
             <table className="ptable text-[12.5px]">
               <thead>
                 <tr>
@@ -507,62 +712,22 @@ export default function PlanView(props: PlanViewProps) {
               </tbody>
             </table>
           </div>
+          {/* not dispatched yet: the composition stays editable */}
+          {plannedMonths.map((m) => {
+            const trucks = pipeline.filter((t) => t.shipMonth === m && EDITABLE.includes(t.status));
+            return (
+              <details key={m} className="border-t" style={{ borderColor: "var(--hair)" }}>
+                <summary className="cursor-pointer px-5 py-3 text-[12.5px] font-bold" style={{ color: "var(--accent)" }}>
+                  {ru ? `Состав и форма HQ — ${trucks.map((t) => t.code).join(", ")}` : `Composition and HQ's form — ${trucks.map((t) => t.code).join(", ")}`}
+                </summary>
+                <div className="px-5 pb-4">
+                  <PlannedMonthCard key={`${m}:${trucks.map((t) => t.id + sumOf(t.units)).join()}`} month={m} trucks={trucks} skus={skus} eurRate={eurRate} settings={settings} isAdmin={isAdmin} ru={ru} />
+                </div>
+              </details>
+            );
+          })}
         </section>
       )}
-
-      <section className="pcard overflow-hidden">
-        <div className="flex flex-wrap items-baseline gap-3 border-b px-5 py-3" style={{ borderColor: "var(--hair)" }}>
-          <h2 className="text-[14px] font-extrabold">{ru ? "Хватит ли товара" : "Will stock last"}</h2>
-          <span className="text-[11.5px] font-semibold text-muted">
-            {ru ? "запас на конец месяца в месяцах продаж следующего месяца — со всеми фурами плана" : "month-end stock in months of the next month's sales — with every truck in the plan"}
-          </span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="ptable text-[12.5px]">
-            <thead>
-              <tr>
-                <th>{ru ? "Товар" : "Product"}</th>
-                <th>{ru ? "Сейчас" : "Now"}</th>
-                <th>{ru ? "Темп/мес" : "Pace/mo"}</th>
-                <th>{ru ? `Конец ${monthShort(thisMonth, true).toLowerCase()}` : `End ${monthShort(thisMonth, false)}`}</th>
-                {coverMonths.map((m) => (
-                  <th key={m} className="!text-center">{monthShort(m, ru)}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {stock.map((r) => (
-                <tr key={r.id}>
-                  <td><SkuName name={name(r.id)} /></td>
-                  <td className="pnum">{pn(r.onHand)}</td>
-                  <td className="pnum text-muted">{pn(r.runningAt)}</td>
-                  <td className="pnum">{pn(r.endOfMonth)}</td>
-                  {coverMonths.map((m) => {
-                    const lost = r.lost[m] ?? 0;
-                    const cover = r.cover[m] ?? 0;
-                    const tone = lost > 0.5 ? "out" : cover < settings.dangerLine ? "low" : "ok";
-                    const bg = tone === "out" ? "var(--danger-soft)" : tone === "low" ? "var(--warn-soft)" : "var(--ok-soft)";
-                    const fg = tone === "out" ? "var(--danger)" : tone === "low" ? "var(--warn-ink)" : "var(--ok-ink)";
-                    const tip = `${monthLong(m, ru)}: ${lost > 0.5 ? (ru ? `не хватит ≈${pn(lost)} шт` : `short ≈${pn(lost)}`) : `${cover.toFixed(1)} ${ru ? "мес." : "mo"}`}`;
-                    return (
-                      <td key={m} className="!px-1 !py-1">
-                        <div title={tip} className="pnum flex h-8 min-w-[52px] items-center justify-center rounded-md text-[12px] font-bold" style={{ background: bg, color: fg }}>
-                          {tone === "out" ? (ru ? "нет" : "out") : cover >= 24 ? "24+" : cover.toFixed(1)}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex flex-wrap gap-x-5 gap-y-1 px-5 py-3 text-[11.5px] font-semibold text-muted">
-          <span><span className="inline-block h-3 w-3 rounded-sm align-[-2px]" style={{ background: "var(--ok-soft)" }} /> {ru ? `${settings.dangerLine} мес. и больше` : `${settings.dangerLine} month or more`}</span>
-          <span><span className="inline-block h-3 w-3 rounded-sm align-[-2px]" style={{ background: "var(--warn-soft)" }} /> {ru ? "ниже опасной черты" : "under the danger line"}</span>
-          <span><span className="inline-block h-3 w-3 rounded-sm align-[-2px]" style={{ background: "var(--danger-soft)" }} /> {ru ? "не хватит (недопродажи)" : "runs out (lost sales)"}</span>
-        </div>
-      </section>
 
       <p className="text-[11px] font-semibold text-muted">
         {ru

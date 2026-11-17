@@ -77,6 +77,15 @@ export interface OrderPlannerInput {
   spillShare?: number;
   /** a pallet is only taken off a product whose stock stays at least this many months */
   dangerLine?: number;
+  /** run the month-end stock on to at least this month (default: the last sell month) */
+  through?: string;
+  /**
+   * What cannot be sold before the load is sellable is lost, not owed: the load is sized from the stock
+   * really left at the start of its sell month (never below zero), not from the stock at the end of the
+   * ship month less everything sold on the way. The same wherever stock lasts until the load; where it
+   * runs out first, the load no longer carries those missed sales. Off by default (the workbook's rule).
+   */
+  lostIsLost?: boolean;
 }
 
 export interface PlannedLoad {
@@ -91,6 +100,8 @@ export interface PlannedLoad {
   /** truck space used, and the share of the trucks it fills (HQ: at least 0.98, at most 1) */
   places: number;
   fill: number;
+  /** truck space the need itself takes, in whole pallets — before the load is trimmed or filled to whole trucks */
+  needPlaces: number;
   /** under HQ's minimum fill — transport safety at the buyer's risk */
   underFilled: boolean;
   /** of the load: entered in the IBP (frozen months) / taken from what is open at DMK / new */
@@ -181,10 +192,19 @@ export function planOrders(input: OrderPlannerInput): OrderPlan {
     const fixed = Object.fromEntries(ids.map((id) => [id, ibpFixed(k) ? input.ibpEntered[k]?.[id] ?? 0 : 0]));
     const pending = (id: string, to: string) => arriving(id, addMonths(k, 1), to);
     const next = addMonths(k, 1);
+    // demand up to the end of the sell month that the load has to carry, beyond the stock and what is already coming
+    const short = Object.fromEntries(
+      ids.map((id) => {
+        if (!input.lostIsLost || a <= k) return [id, sumD(id, next, a) - E[id] - pending(id, a)];
+        let left = E[id];
+        for (let m = next; m < a; m = addMonths(m, 1)) left = Math.max(0, left + arriving(id, m, m) - d(id, m));
+        return [id, d(id, a) - left - arriving(id, a, a)];
+      })
+    );
     const need = Object.fromEntries(
       ids.map((id) => {
         if (isOnlyIbp) return [id, 0];
-        let n = input.targetOf(k) * d(id, addMonths(a, 1)) + sumD(id, next, a) - E[id] - pending(id, a);
+        let n = input.targetOf(k) * d(id, addMonths(a, 1)) + short[id];
         if (onlyIbp(next)) {
           // the next load cannot grow: carry the stock to the end of its sell month
           const a2 = input.sellMonthOf(next);
@@ -197,8 +217,7 @@ export function planOrders(input: OrderPlannerInput): OrderPlan {
     // a take-only-the-IBP month takes what is entered; any other month what it needs (at least what is entered)
     let p = Object.fromEntries(ids.map((id) => [id, Math.max(0, Math.ceil((isOnlyIbp ? fixed[id] : Math.max(fixed[id], need[id])) / pal[id] - 1e-9))]));
     const total = placesOf(p);
-    const coverAfter = (id: string, pallets: number) =>
-      (E[id] + pending(id, a) + pallets * pal[id] - sumD(id, next, a)) / Math.max(1, d(id, addMonths(a, 1)));
+    const coverAfter = (id: string, pallets: number) => (pallets * pal[id] - short[id]) / Math.max(1, d(id, addMonths(a, 1)));
     const trimmable = Object.fromEntries(
       ids.map((id) => [id, p[id] >= 1 && (p[id] - 1) * pal[id] >= fixed[id] && coverAfter(id, p[id] - 1) >= danger])
     );
@@ -287,6 +306,7 @@ export function planOrders(input: OrderPlannerInput): OrderPlan {
       trucks,
       places: placesOf(p),
       fill: trucks ? placesOf(p) / (trucks * CAP) : 0,
+      needPlaces: total,
       // under HQ's minimum as a load, or some truck of it on its own
       underFilled: trucks > 0 && (placesOf(p) < minFill * trucks * CAP - EPS || !trucksFit(p, trucks)),
       fromIbp: fixed,
@@ -298,6 +318,6 @@ export function planOrders(input: OrderPlannerInput): OrderPlan {
   }
   // run the stock on to the last sell month
   const lastSell = loads.reduce((m, l) => (l.sellMonth > m ? l.sellMonth : m), month);
-  advanceTo(lastSell);
+  advanceTo(input.through && input.through > lastSell ? input.through : lastSell);
   return { loads: planned, stock, cover, lost, openLeft: open };
 }

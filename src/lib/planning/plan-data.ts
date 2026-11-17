@@ -14,6 +14,7 @@ import { loadPlanning, type PlanningData } from "./data";
 import { addMonths, monthKeyOf, truckShipMonth } from "./compute";
 import { runStageEngine, type EngineProduct, type Stage, type StageEngineResult } from "./stage-engine";
 import { planOrders, type KnownLoad, type OrderPlan } from "./order-planner";
+import { buildAdvice, type Advice } from "./advice";
 
 export interface PlanSettings {
   /** tins a month one recruited baby adds on each stage */
@@ -92,7 +93,10 @@ export interface PlanData {
   skus: PlanSku[];
   settings: PlanSettings;
   engine: StageEngineResult;
+  /** the planner's run with every proposed load counted as taken — the budget's scenario and the kept estimates; the planning screens show `advice` */
   plan: OrderPlan;
+  /** what the planning screens show: the outlook from the stock and the trucks in the app, and each ship month's advice on its own */
+  advice: Advice;
   pipeline: PipelineTruck[];
   /** stock today (TI + Fargo, after this month's sales so far) */
   onHand: Record<string, number>;
@@ -147,6 +151,11 @@ export function monthDoneShare(today: string): number {
 export function sellMonthOfDate(sellDate: string): string {
   const m = sellDate.slice(0, 7);
   return Number(sellDate.slice(8, 10)) > 15 ? addMonths(m, 1) : m;
+}
+
+/** The month a load of this ship month can first be sold: its assumed dispatch day + lead days. */
+export function sellMonthOfShip(settings: Pick<PlanSettings, "dispatchDay" | "leadDays">, shipMonth: string): string {
+  return sellMonthOfDate(addDays(`${shipMonth}-${String(settings.dispatchDay).padStart(2, "0")}`, settings.leadDays));
 }
 
 export function parsePlanSettings(raw: string | undefined): PlanSettings {
@@ -317,21 +326,47 @@ export async function buildPlan(opts: { addTrucks?: WhatIfTruck[] } = {}): Promi
   const knownShip = new Set(pipeline.map((t) => t.shipMonth));
   const shipMonths: string[] = [];
   for (let m = thisMonth; m <= addMonths(thisMonth, 15); m = addMonths(m, 1)) if (!knownShip.has(m)) shipMonths.push(m);
-  const sellMonthOf = (m: string) => sellMonthOfDate(addDays(`${m}-${String(settings.dispatchDay).padStart(2, "0")}`, settings.leadDays));
+  const sellMonthOf = (m: string) => sellMonthOfShip(settings, m);
+
+  const plannerSkus = skus.map((s) => ({ id: s.id, pcsPerPallet: s.pcsPerPallet, priceEur: s.priceEur, placesPerPallet: s.placesPerPallet }));
+  const trucksAhead = pipeline.filter((t) => t.sellMonth > thisMonth).map((t): KnownLoad => ({ shipMonth: t.shipMonth, sellMonth: t.sellMonth, units: t.units, label: t.code }));
+  const targetOf = (m: string) => targets[m] ?? settings.defaultTarget;
+
+  // the advice: every ship month up to the one whose IBP is due next, each from the facts alone
+  const adviceMonths: string[] = [];
+  for (let m = thisMonth; m <= addMonths(frozenThrough, 1); m = addMonths(m, 1)) adviceMonths.push(m);
+  const advice = buildAdvice({
+    skus: plannerSkus,
+    stockMonth: thisMonth,
+    stockEnd: stockEndThisMonth,
+    demand: engine.demand,
+    trucks: trucksAhead,
+    ibpEntered,
+    open: openUsed,
+    shipMonths: adviceMonths,
+    frozenThrough,
+    through: addMonths(thisMonth, 18),
+    sellMonthOf,
+    targetOf,
+    truckPlaces: settings.truckPlaces,
+    minFill: settings.minFill,
+    maxFill: settings.maxFill,
+    dangerLine: settings.dangerLine,
+  });
 
   const plan = planOrders({
-    skus: skus.map((s) => ({ id: s.id, pcsPerPallet: s.pcsPerPallet, priceEur: s.priceEur, placesPerPallet: s.placesPerPallet })),
+    skus: plannerSkus,
     stockMonth: thisMonth,
     stockEnd: stockEndThisMonth,
     demand: engine.demand,
     shipMonths: shipMonths.filter((m) => m > thisMonth || !knownShip.has(thisMonth)),
-    known: pipeline.filter((t) => t.sellMonth > thisMonth).map((t): KnownLoad => ({ shipMonth: t.shipMonth, sellMonth: t.sellMonth, units: t.units, label: t.code })),
+    known: trucksAhead,
     ibpEntered,
     frozenThrough,
     extraThrough,
     open: openUsed,
     sellMonthOf,
-    targetOf: (m) => targets[m] ?? settings.defaultTarget,
+    targetOf,
     truckPlaces: settings.truckPlaces,
     minFill: settings.minFill,
     maxFill: settings.maxFill,
@@ -348,6 +383,7 @@ export async function buildPlan(opts: { addTrucks?: WhatIfTruck[] } = {}): Promi
     settings,
     engine,
     plan,
+    advice,
     pipeline,
     onHand,
     stockEndThisMonth,

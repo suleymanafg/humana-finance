@@ -1,10 +1,11 @@
-// «Заказы» — the plan by ship month (what each load carries and what the IBP
-// should hold for it), then the record: DMK's IBP export upload and the
-// orders by ship month as entered.
+// «Заказы» — the IBP by ship month as it is entered, with the advice for the
+// one month whose IBP is due and the stock each month would end with if the
+// orders are taken; then the record: DMK's IBP export upload and the orders
+// by ship month as entered.
 import { loadPlanning } from "@/lib/planning/data";
 import { loadPlan } from "@/lib/planning/plan-data";
 import { addMonths, runRate } from "@/lib/planning/compute";
-import { dueIbp, loadView, pipelineView, skuHeads } from "@/lib/planning/plan-view";
+import { dueIbp, orderedCover, pipelineView, skuHeads } from "@/lib/planning/plan-view";
 import PlanningShell from "@/components/PlanningShell";
 import PlanOrdersView from "@/components/planning/PlanOrdersView";
 import OrdersView from "@/components/OrdersView";
@@ -27,14 +28,16 @@ export default async function OrdersPage() {
         <PlanOrdersView
           shipMonths={shipMonths}
           skus={skuHeads(p)}
-          loads={p.plan.loads.map((l) => loadView(p, l))}
           pipeline={pipelineView(p)}
           ibpEntered={p.ibpEntered}
           dueShip={due.shipMonth}
+          dueDeadline={due.deadline}
+          dueAdvice={due.load?.ibpToEnter ?? {}}
+          dueTrucks={due.load?.trucks ?? 0}
           frozenThrough={p.frozenThrough}
-          extraThrough={p.extraThrough}
+          cover={orderedCover(p, shipMonths)}
           eurRate={p.eurRate}
-          minFill={p.settings.minFill}
+          dangerLine={p.settings.dangerLine}
         />
         <OrdersView
           skus={skus.map((s) => ({ id: s.id, name: s.name, pcsPerPallet: s.pcsPerPallet }))}
