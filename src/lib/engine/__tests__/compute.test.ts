@@ -159,6 +159,41 @@ describe("Fargo results and VAT", () => {
   });
 });
 
+describe("bank and cash by Fargo's e-invoices", () => {
+  // Aug: A sold 50 (city) + 10 promo (chain) = 60, of which 45 on e-invoices → cash share 0.25 on both rows;
+  //      B: 5 e-invoiced but none sold → left out. Sep: A 30 all on e-invoices; B sold 20, none invoiced → all cash.
+  const ds = fixture();
+  ds.fargoEsf = [
+    { monthId: "2025-08", productId: "A", qty: 45 },
+    { monthId: "2025-08", productId: "B", qty: 5 },
+    { monthId: "2025-09", productId: "A", qty: 30 },
+  ];
+  const c = compute(ds);
+  const aug = month(c.fargo, "2025-08");
+  const sep = month(c.fargo, "2025-09");
+  it("takes the cash share per product: 1 − e-invoiced ÷ sold, promo folded into its SKU", () => {
+    expect(aug.esf?.byProduct.A).toEqual({ sold: 60, invoiced: 45, cashShare: 0.25 });
+    expect(aug.bankSales).toBeCloseTo(6_900_000 * 0.75, 4);
+    expect(aug.vat.outputBank).toBeCloseTo(6_900_000 * 0.75 * (0.12 / 1.12), 4);
+    expect(aug.vat.outputCash).toBeCloseTo(60 * 0.25 * 65_000 * 1.03 * 0.12, 4);
+    expect(aug.salesAtPrice).toBe(6_900_000);
+  });
+  it("leaves out e-invoices of a product not sold that month, and counts it", () => {
+    expect(aug.esf?.unmatched).toBe(5);
+    expect(c.healthChecks.find((h) => h.key === "esfWithoutSales")?.count).toBe(1);
+  });
+  it("counts a product without e-invoices in such a month as all cash", () => {
+    const unitB = c.fifo.B.months["2025-09"].fargoUnitCost;
+    expect(sep.bankSales).toBeCloseTo(30 * 120_000, 4);
+    expect(sep.vat.outputCash).toBeCloseTo(20 * unitB * 1.03 * 0.12, 4);
+  });
+  it("keeps the channels' cash share in months without e-invoices", () => {
+    const oct = month(c.fargo, "2025-10");
+    expect(oct.esf).toBeNull();
+    expect(oct.bankSales).toBeCloseTo(10 * 120_000 * 0.5, 4);
+  });
+});
+
 describe("Turbo Impex results and VAT", () => {
   const c = compute(fixture());
   const aug = month(c.ti, "2025-08");

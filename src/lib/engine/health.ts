@@ -1,5 +1,7 @@
 // Data-integrity checks. Each returns ok/warn and where to fix it, so nothing
 // inconsistent is ever silently absorbed into the statements.
+import { costProductResolver } from "./costing";
+import { fargoEsfMonths } from "./results";
 import type { Computed, Dataset, HealthCheck } from "./types";
 
 const LIST_LIMIT = 12;
@@ -47,6 +49,19 @@ export function buildHealthChecks(
         .sort((a, b) => a.qty - b.qty)
         .map((s) => `${s.monthId} · ${name(s.productId)}: ${s.qty}`),
       "/sales",
+      "info"
+    )
+  );
+  const costOf = costProductResolver(ds);
+  checks.push(
+    check(
+      "esfWithoutSales",
+      [...fargoEsfMonths(ds, costOf)].flatMap(([m, x]) =>
+        Object.entries(x.byProduct)
+          .filter(([, row]) => row.sold === 0 && row.invoiced !== 0)
+          .map(([p, row]) => `${m} · ${name(p)}: ${fmt(row.invoiced)}`)
+      ),
+      "/taxes/fargo-vat",
       "info"
     )
   );

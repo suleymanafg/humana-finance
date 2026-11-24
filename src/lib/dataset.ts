@@ -3,6 +3,7 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { Dataset, TaxSettings } from "./engine/types";
 import { databaseProblem } from "./db-problem";
+import { FARGO_ESF_KEY, fargoEsfRows, parseFargoEsf } from "./fargo-esf";
 
 export const DEFAULT_TAXES: TaxSettings = {
   vatRate: 0.12,
@@ -232,6 +233,7 @@ export async function buildDataset(db: PrismaClient): Promise<Dataset> {
     })),
     arEntries,
     clientMaps,
+    fargoEsf: fargoEsfRows(parseFargoEsf(settings.find((s) => s.key === FARGO_ESF_KEY)?.value)),
     taxes: settingOf<TaxSettings>("taxes", DEFAULT_TAXES),
   };
 }

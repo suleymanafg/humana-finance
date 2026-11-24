@@ -18,7 +18,7 @@ import {
 import type { Computed, Dataset } from "./types";
 
 export { costProductResolver, isImportVat, monthOf } from "./costing";
-export { FARGO_WRITEOFF_GROUP } from "./results";
+export { FARGO_WRITEOFF_GROUP, cashShareResolver, fargoEsfMonths } from "./results";
 
 /** Promo SKUs are costed as their regular SKU. */
 export function costProductIdOf(productId: string, ds: Dataset): string {

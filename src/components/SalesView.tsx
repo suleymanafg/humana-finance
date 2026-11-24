@@ -69,6 +69,8 @@ function useSelection(): [string, Selection, (s: Selection) => void] {
 interface UnitCosts {
   group: Record<string, number>;
   fargo: Record<string, number>;
+  /** in a month split by Fargo's e-invoices: each product's cash share (else the channel's) */
+  cash?: Record<string, number>;
 }
 
 export default function SalesView(props: SalesProps & { tab: SalesTab }) {
@@ -162,7 +164,7 @@ function useSalesModel({
       for (const s of rows) {
         if (filter && !filter.has(s.channelId)) continue;
         const r = s.amount ?? s.qty * (productById.get(s.productId)?.price ?? 0);
-        const cashShare = channelById.get(s.channelId)?.cashPct ?? 0;
+        const cashShare = unit.cash?.[s.productId] ?? channelById.get(s.channelId)?.cashPct ?? 0;
         const bankVat = (r * (1 - cashShare) * vat.rate) / (1 + vat.rate);
         const cashVat = s.qty * cashShare * (unit.fargo[s.productId] ?? 0) * (1 + vat.deemedMargin) * vat.rate;
         const ex = r - bankVat - cashVat;

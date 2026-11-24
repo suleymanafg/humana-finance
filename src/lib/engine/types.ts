@@ -228,6 +228,19 @@ export interface StockCountIn {
   qty: number;
 }
 
+/**
+ * Tins on Fargo's e-invoices (ЭСФ, Didox: signed and pending, returns netted) in a month, by regular SKU (promo
+ * folded in). A month listed here splits bank and cash by them: what was invoiced was paid through the bank, the rest
+ * of the month's tins in cash (owner, 24 Nov 2026). Months not listed keep the channels' cash share.
+ */
+export interface FargoEsfIn {
+  monthId: string;
+  productId: string;
+  qty: number;
+  /** invoiced amount, VAT included (for reference; the split is by tins) */
+  amount?: number;
+}
+
 export interface MonthBalanceIn {
   monthId: string;
   tiBank: number;
@@ -282,6 +295,8 @@ export interface Dataset {
   contributions: ContributionIn[];
   transfers: TransferIn[];
   stockCounts: StockCountIn[];
+  /** Fargo's e-invoices by month and regular SKU; empty = every month splits by the channels' cash share */
+  fargoEsf?: FargoEsfIn[];
   monthBalances: MonthBalanceIn[];
   arEntries: ArIn[];
   clientMaps?: ClientMapIn[];
@@ -450,6 +465,18 @@ export interface FargoMonth {
     paid: number;
     creditOut: number;
   };
+  /** the month splits bank and cash by Fargo's e-invoices (null = by the channels' cash share) */
+  esf: FargoEsfMonth | null;
+}
+
+/** A month split by Fargo's e-invoices, by regular SKU (promo folded in). */
+export interface FargoEsfMonth {
+  /** tins sold (1C) and tins on e-invoices; cash share = 1 − invoiced ÷ sold (below 0 when more was invoiced) */
+  byProduct: Record<string, { sold: number; invoiced: number; cashShare: number }>;
+  sold: number;
+  invoiced: number;
+  /** e-invoiced tins of a product with no 1C sales that month: they have no sale to sit on and are left out */
+  unmatched: number;
 }
 
 export interface GroupMonth {

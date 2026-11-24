@@ -1,13 +1,17 @@
 // Monthly results for Turbo Impex, Fargo (Humana business only) and the group.
 //
-// Fargo sells at one VAT-inclusive price for cash and bank. Each channel's
-// cash share splits its sales: bank sales carry VAT inside the price
-// (price × 12/112); cash sales are declared at Fargo's FIFO cost × 1.03 with
-// 12% VAT on that. Revenue never includes VAT.
+// Fargo sells at one VAT-inclusive price for cash and bank. A cash share splits
+// each sale: bank sales carry VAT inside the price (price × 12/112); cash sales
+// are declared at Fargo's FIFO cost × 1.03 with 12% VAT on that. Revenue never
+// includes VAT. The cash share: in a month with Fargo's e-invoices loaded, a
+// tin on an e-invoice was paid through the bank and the rest in cash (owner,
+// 24 Nov 2026) — per product, 1 − e-invoiced tins ÷ tins sold; other months
+// take the channel's cash share.
 import { isImportVat, monthOf } from "./costing";
 import { FARGO_WRITEOFF_GROUP } from "../groups";
 import type {
   Dataset,
+  FargoEsfMonth,
   FargoMonth,
   GroupMonth,
   InvoiceLineCost,
@@ -20,6 +24,52 @@ const add = (rec: Record<string, number>, key: string, v: number) => {
   rec[key] = (rec[key] ?? 0) + v;
 };
 
+/**
+ * Months split by Fargo's e-invoices: per regular SKU, tins sold (1C, promo included), tins invoiced and the cash
+ * share 1 − invoiced ÷ sold. A product sold without any e-invoice that month is all cash.
+ */
+export function fargoEsfMonths(ds: Dataset, costOf: (id: string) => string): Map<string, FargoEsfMonth> {
+  const out = new Map<string, FargoEsfMonth>();
+  for (const e of ds.fargoEsf ?? []) {
+    const m = out.get(e.monthId) ?? { byProduct: {}, sold: 0, invoiced: 0, unmatched: 0 };
+    const p = costOf(e.productId);
+    const row = (m.byProduct[p] ??= { sold: 0, invoiced: 0, cashShare: 1 });
+    row.invoiced += e.qty;
+    m.invoiced += e.qty;
+    out.set(e.monthId, m);
+  }
+  const known = new Set(ds.products.map((p) => p.id));
+  const channels = new Set(ds.channels.map((c) => c.id));
+  for (const s of ds.sales) {
+    const m = out.get(s.monthId);
+    if (!m || !known.has(s.productId) || !channels.has(s.channelId)) continue;
+    const row = (m.byProduct[costOf(s.productId)] ??= { sold: 0, invoiced: 0, cashShare: 1 });
+    row.sold += s.qty;
+    m.sold += s.qty;
+  }
+  for (const m of out.values()) {
+    for (const row of Object.values(m.byProduct)) {
+      row.cashShare = row.sold !== 0 ? 1 - row.invoiced / row.sold : 1;
+      if (row.sold === 0) m.unmatched += row.invoiced;
+    }
+  }
+  return out;
+}
+
+/** The cash share of a sale: its product's in a month split by e-invoices, else its channel's. */
+export function cashShareResolver(
+  ds: Dataset,
+  costOf: (id: string) => string,
+  esf: Map<string, FargoEsfMonth> = fargoEsfMonths(ds, costOf)
+): (s: { monthId: string; productId: string; channelId: string }) => number {
+  const channels = new Map(ds.channels.map((c) => [c.id, c.cashPct]));
+  return (s) => {
+    const m = esf.get(s.monthId);
+    if (m) return m.byProduct[costOf(s.productId)]?.cashShare ?? 1;
+    return channels.get(s.channelId) ?? 0;
+  };
+}
+
 export function computeFargoMonths(
   ds: Dataset,
   monthIds: string[],
@@ -30,6 +80,8 @@ export function computeFargoMonths(
   const r = ds.taxes.vatRate;
   const products = new Map(ds.products.map((p) => [p.id, p]));
   const channels = new Map(ds.channels.map((c) => [c.id, c]));
+  const esf = fargoEsfMonths(ds, costOf);
+  const cashShareOf = cashShareResolver(ds, costOf, esf);
   const months = new Map<string, FargoMonth>(
     monthIds.map((m) => [
       m,
@@ -59,6 +111,7 @@ export function computeFargoMonths(
         incomeTax: 0,
         netProfit: 0,
         vat: { input: 0, outputBank: 0, outputCash: 0, net: 0, creditIn: 0, paid: 0, creditOut: 0 },
+        esf: esf.get(m) ?? null,
       },
     ])
   );
@@ -69,12 +122,13 @@ export function computeFargoMonths(
     const channel = channels.get(s.channelId);
     if (!fm || !product || !channel) continue;
     const sales = s.amount ?? s.qty * product.price;
-    const cash = sales * channel.cashPct;
+    const cashShare = cashShareOf(s);
+    const cash = sales * cashShare;
     const bank = sales - cash;
     const unit = fifo[costOf(s.productId)]?.months[s.monthId];
     const fargoUnitCost = unit?.fargoUnitCost ?? 0;
     const bankVat = (bank * r) / (1 + r);
-    const declared = s.qty * channel.cashPct * fargoUnitCost * (1 + ds.taxes.deemedCashMargin);
+    const declared = s.qty * cashShare * fargoUnitCost * (1 + ds.taxes.deemedCashMargin);
     const cashVat = declared * r;
     fm.salesAtPrice += sales;
     fm.bankSales += bank;

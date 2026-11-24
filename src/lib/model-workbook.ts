@@ -32,11 +32,12 @@ const SHEETS = {
   vatTi: ["НДС TI — расчёт", "VAT TI"],
   vatFg: ["НДС Fargo — расчёт", "VAT Fargo"],
   ship: ["Поставки", "Shipments"],
+  truckCosts: ["Фуры — банк и наличные", "Trucks — bank and cash"],
   skuCost: ["Себестоимость по SKU", "Cost by SKU"],
-  cashExp: ["Наличные расходы по фурам", "Cash expenses by truck"],
   cogs: ["Себестоимость FIFO", "COGS"],
   stock: ["Остатки товара", "Stock"],
   sales: ["Продажи", "Sales"],
+  esf: ["ЭСФ Fargo", "Fargo e-invoices"],
   shipExp: ["Расходы на импорт", "Shipment expenses"],
   inv: ["Счета-фактуры TI", "TI invoices"],
   tiWo: ["Образцы TI", "TI write-offs"],
@@ -236,7 +237,7 @@ export function modelWorkbook(
   wb.calcProperties.fullCalcOnLoad = true;
   const S = {} as Record<SheetKey, Sheet>;
   // the cost-by-SKU and cash-expenses tabs only exist when the formal costs and official amounts are given
-  for (const k of Object.keys(SHEETS) as SheetKey[]) if ((k !== "cashExp" && k !== "skuCost") || (formal && official)) S[k] = new Sheet(wb, N(k));
+  for (const k of Object.keys(SHEETS) as SheetKey[]) if ((k !== "truckCosts" && k !== "skuCost") || (formal && official)) S[k] = new Sheet(wb, N(k));
 
   // ═══════════════════════ data tabs ═══════════════════════
   /** the previous owner's VAT before the first month — a formula cell, so referenced directly (not by name) */
@@ -290,11 +291,12 @@ export function modelWorkbook(
     s.widths([24, 44, 14, 8, 22, 4, 30, 12]);
   }
   const LI = Q("lists");
+  const ES = Q("esf");
 
   // Sales
   {
     const s = S.sales;
-    s.title(t("Продажи Fargo (1С) по месяцам, товарам и каналам", "Fargo sales (1C) by month, product and channel"), t("Выручка = кол-во × цена из справочника, с НДС. Себестоимость за штуку — из листа FIFO.", "Sales = qty × list price, VAT included. Cost per unit comes from the FIFO tab."));
+    s.title(t("Продажи Fargo (1С) по месяцам, товарам и каналам", "Fargo sales (1C) by month, product and channel"), t("Выручка = кол-во × цена из справочника, с НДС. Доля наличных: в месяце с ЭСФ Fargo — товара (лист «ЭСФ Fargo»), иначе — канала. Себестоимость за штуку — из листа FIFO.", "Sales = qty × list price, VAT included. Cash share: in a month with Fargo's e-invoices, the product's (the «Fargo e-invoices» tab), otherwise the channel's. Cost per unit comes from the FIFO tab."));
     s.header(3, [
       t("Месяц", "Month"), t("Товар", "Product"), t("Канал", "Channel"), t("Кол-во", "Qty"), t("Сумма по счёту (если есть)", "Invoiced amount (if known)"), t("Цена", "List price"),
       t("ПРОДАЖИ с НДС", "SALES incl. VAT"), t("Доля наличных", "Cash share"), t("Наличные", "Cash sales"), t("Перечисление", "Bank sales"), t("Себестоимость как", "Cost product"),
@@ -312,7 +314,13 @@ export function modelWorkbook(
       s.v(r, 5, x.amount ?? null, MONEY);
       s.f(r, 6, `IFERROR(INDEX(${LI}$C:$C,MATCH(B${r},${LI}$A:$A,0)),0)`, MONEY);
       s.f(r, 7, `IF(E${r}="",D${r}*F${r},E${r})`, MONEY);
-      s.f(r, 8, `IFERROR(INDEX(${LI}$H:$H,MATCH(C${r},${LI}$G:$G,0)),0)`, PCT);
+      // a month on the e-invoices tab: the product's cash share there (a product without e-invoices = all cash)
+      s.f(
+        r,
+        8,
+        `IF(COUNTIF(${ES}$A:$A,A${r})=0,IFERROR(INDEX(${LI}$H:$H,MATCH(C${r},${LI}$G:$G,0)),0),IF(COUNTIFS(${ES}$A:$A,A${r},${ES}$B:$B,K${r})=0,1,SUMIFS(${ES}$F:$F,${ES}$A:$A,A${r},${ES}$B:$B,K${r})))`,
+        PCT
+      );
       s.f(r, 9, `G${r}*H${r}`, MONEY);
       s.f(r, 10, `G${r}-I${r}`, MONEY);
       s.f(r, 11, `IFERROR(INDEX(${LI}$E:$E,MATCH(B${r},${LI}$A:$A,0)),B${r})`);
@@ -323,6 +331,44 @@ export function modelWorkbook(
       s.f(r, 16, `G${r}*FARGO_TAX_RATE`, MONEY);
     });
     s.widths([9, 22, 24, 9, 14, 11, 15, 9, 15, 15, 22, 13, 15, 14, 14, 13]);
+    s.freeze(0, 3);
+  }
+
+  // Fargo's e-invoices: a month listed here splits bank and cash by them (owner, 24 Nov 2026) — the Sales tab reads
+  // the cash share; the engine does the same (`fargoEsfMonths`)
+  {
+    const s = S.esf;
+    s.title(
+      t("ЭСФ Fargo: банк и наличные по счетам-фактурам", "Fargo's e-invoices: bank and cash"),
+      t(
+        "Банки на счетах-фактурах Fargo (Didox: подписанные и ожидающие, возвраты вычтены) оплачены через банк, остальные проданные за месяц банки товара — наличными. Доля наличных = 1 − по ЭСФ ÷ продано; её берёт лист «Продажи». Месяцы, которых здесь нет, — по доле наличных канала (лист «Справочники»).",
+        "Tins on Fargo's e-invoices (Didox: signed and pending, returns netted) were paid through the bank, the rest of the month's tins of the product in cash. Cash share = 1 − e-invoiced ÷ sold; the Sales tab takes it. Months not listed use the channel's cash share (the Lists tab)."
+      )
+    );
+    s.header(3, [t("Месяц", "Month"), t("Товар", "Product"), t("По ЭСФ, шт", "On e-invoices, tins"), t("Сумма ЭСФ с НДС", "E-invoiced, incl. VAT"), t("Продано (1С), шт", "Sold (1C), tins"), t("Доля наличных", "Cash share")]);
+    const agg = new Map<string, { monthId: string; productId: string; qty: number; amount: number }>();
+    for (const e of ds.fargoEsf ?? []) {
+      if (!inRange(e.monthId)) continue;
+      const productId = costIdOf(e.productId);
+      const k = `${e.monthId}|${productId}`;
+      const o = agg.get(k) ?? { monthId: e.monthId, productId, qty: 0, amount: 0 };
+      o.qty += e.qty;
+      o.amount += e.amount ?? 0;
+      agg.set(k, o);
+    }
+    const rows = [...agg.values()].sort((a, b) => a.monthId.localeCompare(b.monthId) || (productSort.get(a.productId) ?? 0) - (productSort.get(b.productId) ?? 0));
+    const SL = Q("sales");
+    rows.forEach((x, i) => {
+      const r = 4 + i;
+      s.v(r, 1, ym(x.monthId), MONTHFMT);
+      s.v(r, 2, key(x.productId));
+      s.v(r, 3, x.qty, UNITS);
+      s.v(r, 4, Math.round(x.amount * 100) / 100, MONEY);
+      s.f(r, 5, `SUMIFS(${SL}$D:$D,${SL}$A:$A,A${r},${SL}$K:$K,B${r})`, UNITS);
+      s.f(r, 6, `IF(E${r}=0,1,1-C${r}/E${r})`, PCT);
+    });
+    if (!rows.length) s.v(4, 1, t("ЭСФ не загружены — все месяцы по доле наличных канала.", "No e-invoices loaded — every month uses the channel's cash share."));
+    s.widths([9, 22, 16, 20, 16, 13]);
     s.freeze(0, 3);
   }
 
@@ -488,7 +534,8 @@ export function modelWorkbook(
           s.f(r, 8, `D${r}`, MONEY);
           s.v(r, 9, 0, MONEY);
         } else if (official[e.id] !== undefined) {
-          s.v(r, 8, Math.round(official[e.id] * 100) / 100, MONEY);
+          // under one sum apart is the documents' tiyins, not cash
+          s.v(r, 8, Math.abs(official[e.id] - e.amount) < 1 ? e.amount : Math.round(official[e.id] * 100) / 100, MONEY);
           s.f(r, 9, `D${r}-H${r}`, MONEY);
         }
       }
@@ -861,40 +908,84 @@ export function modelWorkbook(
     s.freeze(1, 5);
   }
 
-  // Cash expenses by truck — each truck's import costs: in our records, on 1C's cost calculation, and the rest by category
+  // Trucks — bank and cash: each truck's import costs on top of the goods, by category — through the bank (in the
+  // accounting, 1C's cost calculation) and in cash (the rest of our records), side by side; VAT at customs is left out
   if (formal && official) {
-    const s = S.cashExp;
+    const s = S.truckCosts;
     const SE = Q("shipExp");
     s.title(
-      t("Расходы на импорт: в учёте (1С) и наличными — по фурам", "Import expenses: in the accounting (1C) and in cash — by truck"),
-      t("Наличные = сумма в наших записях − сумма в учёте (расчёт себестоимости 1С). Минус — в документах больше, чем в наших записях. Построчно — лист «Расходы на импорт» (фильтр по фуре).", "Cash = the amount in our records − the amount in the accounting (1C's cost calculation). A minus means the documents show more than our records. Row by row: the «Shipment expenses» tab (filter by truck).")
+      t("Расходы на импорт по фурам: банк и наличные", "Import costs by truck: bank and cash"),
+      t("Расходы сверх стоимости товара. Банк — в учёте (расчёт себестоимости 1С). Наличные — не в учёте. НДС на таможне не входит: TI получает его обратно. Построчно — лист «Расходы на импорт».", "Costs on top of the goods. Bank: in the accounting (1C's cost calculation). Cash: not in the accounting. VAT at customs is left out: TI gets it back. Row by row: the «Shipment expenses» tab."),
     );
-    const CAT_EN: Record<string, string> = { "Транспорт": "Transport", "Сертификат": "Certificate", "Маркировка": "Marking", "Стикер": "Stickers", "Декларант": "Customs broker", "Хранение": "Storage", "Таможенный сбор": "Customs fee" };
-    const trucks = shipOrder.filter((sh) => ds.importExpenses.some((e) => e.shipmentId === sh.shipmentId && official[e.id] !== undefined));
-    const rowsOfTrucks = ds.importExpenses.filter((e) => !isImportVat(e.categoryName) && trucks.some((sh) => sh.shipmentId === e.shipmentId));
+    const CAT_EN: Record<string, string> = { "Транспорт": "Transport", "Таможенный сбор": "Customs fee", "Декларант": "Customs broker", "Сертификат": "Certificate", "Стикер": "Stickers", "Хранение": "Storage", "Маркировка": "Marking" };
     const order = Object.keys(CAT_EN);
-    const cats = [...new Set(rowsOfTrucks.map((e) => e.categoryName))]
-      .filter((cat) => rowsOfTrucks.some((e) => e.categoryName === cat && (e.amount !== 0 || (official[e.id] ?? 0) !== 0)))
-      .sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
-    s.header(4, [t("Фура", "Truck"), t("В наших записях", "Our records"), t("В учёте (1С)", "In the accounting (1C)"), t("НАЛИЧНЫЕ, итого", "CASH, total"), ...cats.map((cat) => `${t("Наличные", "Cash")}: ${ru ? cat.toLowerCase() : (CAT_EN[cat] ?? cat).toLowerCase()}`)]);
-    s.ws.getRow(4).height = 30;
-    const first = 5;
-    trucks.forEach((sh, i) => {
-      const r = first + i;
-      s.v(r, 1, truckCode.get(sh.shipmentId)!);
-      s.f(r, 2, `SUMIFS(${SE}$D:$D,${SE}$A:$A,A${r},${SE}$G:$G,0)`, MONEY);
-      s.f(r, 3, `SUMIFS(${SE}$H:$H,${SE}$A:$A,A${r},${SE}$G:$G,0)`, MONEY);
-      s.f(r, 4, `B${r}-C${r}`, MONEY);
-      cats.forEach((cat, k) => s.f(r, 5 + k, `SUMIFS(${SE}$I:$I,${SE}$A:$A,$A${r},${SE}$C:$C,${str(cat)})`, MONEY));
+    const trucks = shipOrder.filter((sh) => ds.importExpenses.some((e) => e.shipmentId === sh.shipmentId && official[e.id] !== undefined));
+    const used = (e: (typeof ds.importExpenses)[number]) => !isImportVat(e.categoryName) && (e.amount !== 0 || (official[e.id] ?? 0) !== 0);
+    const catsOf = (shipmentIds: string[]) =>
+      [...new Set(ds.importExpenses.filter((e) => shipmentIds.includes(e.shipmentId) && used(e)).map((e) => e.categoryName))]
+        .sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+    const label = (cat: string) => (ru ? cat : (CAT_EN[cat] ?? cat));
+    const cols = [t("Банк (в учёте, 1С)", "Bank (in the accounting, 1C)"), t("Наличные (не в учёте)", "Cash (not in the accounting)"), t("Итого", "Total")];
+    const total = (r: number, first: number, last: number, text: string) => {
+      s.v(r, 1, text);
+      for (let col = 2; col <= 4; col++) s.f(r, col, `SUM(${L(col)}${first}:${L(col)}${last})`, MONEY);
+      s.bold(r, 4);
+    };
+    const section = (r: number, text: string) => (s.v(r, 1, text).font = { bold: true });
+
+    // where each part starts: all trucks by category, then by truck, then each truck by category
+    const cats = catsOf(trucks.map((sh) => sh.shipmentId));
+    const catFirst = 6, catTotal = catFirst + cats.length;
+    const truckFirst = catTotal + 4, truckTotal = truckFirst + trucks.length;
+    let r = truckTotal + 4;
+    const blocksFirst = r;
+
+    // each truck: its categories — bank from the accountant's figure, cash the rest; column E (hidden) keeps the category
+    section(r - 2, t("3. КАЖДАЯ ФУРА ПО СТАТЬЯМ", "3. EACH TRUCK BY CATEGORY"));
+    s.header(r - 1, [t("Статья", "Category"), ...cols]);
+    const truckTotalRow = new Map<string, number>();
+    for (const sh of trucks) {
+      const code = truckCode.get(sh.shipmentId)!;
+      const head = r++;
+      s.v(head, 1, `${code} — ${t("прибыла", "arrived")} ${sh.monthId}`).font = { bold: true };
+      for (let c = 1; c <= 4; c++) s.cell(head, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: FILL_SECTION } };
+      const first = r;
+      for (const cat of catsOf([sh.shipmentId])) {
+        const crit = `${SE}$A:$A,${str(code)},${SE}$C:$C,${str(cat)},${SE}$G:$G,0`;
+        s.v(r, 1, label(cat));
+        s.cell(r, 1).alignment = { indent: 1 };
+        s.f(r, 2, `SUMIFS(${SE}$H:$H,${crit})`, MONEY);
+        s.f(r, 4, `SUMIFS(${SE}$D:$D,${crit})`, MONEY);
+        s.f(r, 3, `D${r}-B${r}`, MONEY);
+        s.v(r, 5, cat);
+        r++;
+      }
+      total(r, first, r - 1, `${t("Итого", "Total")} ${code}`);
+      truckTotalRow.set(sh.shipmentId, r);
+      r += 2;
+    }
+    const E = (col: string) => `$${col}$${blocksFirst}:$${col}$${r}`;
+
+    section(4, t("1. ВСЕ ФУРЫ ПО СТАТЬЯМ", "1. ALL TRUCKS BY CATEGORY"));
+    s.header(5, [t("Статья", "Category"), ...cols]);
+    cats.forEach((cat, i) => {
+      const row = catFirst + i;
+      s.v(row, 1, label(cat));
+      (["B", "C", "D"] as const).forEach((col, k) => s.f(row, 2 + k, `SUMIFS(${E(col)},${E("E")},${str(cat)})`, MONEY));
     });
-    const last = first + trucks.length - 1;
-    const tr = last + 1;
-    s.v(tr, 1, t("Итого", "Total"));
-    for (let col = 2; col <= 4 + cats.length; col++) s.f(tr, col, `SUM(${L(col)}${first}:${L(col)}${last})`, MONEY);
-    s.bold(tr, 4 + cats.length);
-    for (let r = first; r <= tr; r++) s.cell(r, 4).font = { bold: true };
-    s.widths([16, 16, 16, 16, ...cats.map(() => 15)]);
-    s.freeze(1, 4);
+    total(catTotal, catFirst, catTotal - 1, t("Итого", "Total"));
+
+    section(truckFirst - 2, t("2. ПО ФУРАМ", "2. BY TRUCK"));
+    s.header(truckFirst - 1, [t("Фура", "Truck"), ...cols]);
+    trucks.forEach((sh, i) => {
+      const row = truckFirst + i, tr = truckTotalRow.get(sh.shipmentId)!;
+      s.v(row, 1, truckCode.get(sh.shipmentId)!);
+      (["B", "C", "D"] as const).forEach((col, k) => s.f(row, 2 + k, `${col}${tr}`, MONEY));
+    });
+    total(truckTotal, truckFirst, truckTotal - 1, t("Итого", "Total"));
+
+    s.ws.getColumn(5).hidden = true;
+    s.widths([34, 22, 22, 18]);
   }
   const SH = Q("ship");
   const SHL = (col: string) => `${SH}$${col}$${SHIP.lineFirst}:$${col}$${SHIP.lineLast}`;
@@ -1753,12 +1844,13 @@ export function modelContents(withFormal: boolean): Array<{ name: [string, strin
     ] },
     { name: ["Расчёты", "Workings"], color: "FFB45309", tabs: [
       ["ship", withFormal ? "Фуры: закупка, расходы на импорт, себестоимость каждой строки — фактическая и по учёту (1С)." : "Фуры: закупка, расходы на импорт, себестоимость каждой строки.", withFormal ? "Trucks: purchase, import costs, the cost of each line — actual and formal (1C)." : "Trucks: purchase, import costs, the landed cost of each line."],
-      ...(withFormal ? ([["skuCost", "Из чего складывается себестоимость каждого товара в каждой фуре: фактическая и по учёту, на банку и всего.", "What each product in each truck cost: actual and formal, per tin and in total."], ["cashExp", "Расходы на импорт по каждой фуре: в учёте (1С) и наличными, по статьям.", "Import costs per truck: in the accounting (1C) and in cash, by category."]] as Array<[SheetKey, string, string]>) : []),
+      ...(withFormal ? ([["truckCosts", "Расходы на импорт по каждой фуре по статьям: сколько через банк (в учёте, 1С) и сколько наличными.", "Each truck's import costs by category: how much through the bank (in the accounting, 1C) and how much in cash."], ["skuCost", "Из чего складывается себестоимость каждого товара в каждой фуре: фактическая и по учёту, на банку и всего.", "What each product in each truck cost: actual and formal, per tin and in total."]] as Array<[SheetKey, string, string]>) : []),
       ["cogs", "Себестоимость FIFO: партии фур у TI, счета TI у Fargo.", "FIFO cost: truck batches at TI, TI's invoices at Fargo."],
       ["stock", "Остатки товара в штуках на конец месяца — у TI и у Fargo.", "Stock in units at each month-end, at TI and at Fargo."],
     ] },
     { name: ["Данные", "Data"], color: "FF94A3B8", tabs: [
       ["sales", "Продажи Fargo из 1С: кол-во, цены, наличные и перечисление, НДС по строке.", "Fargo's sales from 1C: quantity, price, cash and bank, VAT per line."],
+      ["esf", "Счета-фактуры Fargo (ЭСФ) по месяцам и товарам: что по ним — банк, остальное — наличные.", "Fargo's e-invoices by month and product: what is on them is bank, the rest is cash."],
       ["inv", "Счета-фактуры TI для Fargo: кол-во, цена, НДС.", "TI's invoices to Fargo: quantity, price, VAT."],
       ["shipExp", withFormal ? "Расходы на импорт по фурам, включая НДС на таможне; у каждой строки — сколько в учёте (1С) и сколько наличными." : "Расходы на импорт по фурам, включая НДС на таможне.", withFormal ? "Import costs per truck, including the VAT paid at customs; each row split into in the accounting (1C) and cash." : "Import costs per truck, including the VAT paid at customs."],
       ["vat", "Лицевой счёт TI по НДС в налоговой, строка за строкой.", "TI's VAT tax account, line by line."],
@@ -1777,7 +1869,7 @@ export function modelContents(withFormal: boolean): Array<{ name: [string, strin
       ["other", "Деньги других покупателей.", "Other customers' money."],
       ["ar", "Долги покупателей перед Fargo на конец месяца.", "What customers owe Fargo at each month-end."],
       ["mb", "Банк, касса и товары в пути TI на конец месяца.", "TI's bank, cash and goods in transit at each month-end."],
-      ["lists", "Товары с ценами и каналы продаж с долей наличных.", "Products with prices, sales channels with their cash share."],
+      ["lists", "Товары с ценами и каналы продаж с долей наличных (для месяцев без ЭСФ).", "Products with prices, sales channels with their cash share (for months without e-invoices)."],
     ] },
     { name: ["Настройки и проверка", "Settings and check"], color: "FF15803D", tabs: [
       ["settings", "Ставки и отчётный месяц, которые используют формулы.", "The rates and the report month the formulas use."],

@@ -5,17 +5,23 @@ import { pageContext } from "./page-context";
 import { costProductIdOf } from "./engine/compute";
 import type { Computed, Dataset } from "./engine/types";
 
-/** FIFO cost per unit sold in a month, by product: the group's and Fargo's. */
+/**
+ * FIFO cost per unit sold in a month, by product: the group's and Fargo's; and, in a month split by Fargo's
+ * e-invoices, each product's cash share (otherwise the channel's applies).
+ */
 function unitCosts(computed: Computed, dataset: Dataset, monthId: string | undefined) {
   const group: Record<string, number> = {};
   const fargo: Record<string, number> = {};
-  if (!monthId) return { group, fargo };
+  const cash: Record<string, number> = {};
+  if (!monthId) return { group, fargo, cash };
+  const esf = computed.fargo.find((f) => f.monthId === monthId)?.esf ?? null;
   for (const p of dataset.products) {
     const fm = computed.fifo[costProductIdOf(p.id, dataset)]?.months[monthId];
     group[p.id] = fm?.groupUnitCost ?? 0;
     fargo[p.id] = fm?.fargoUnitCost ?? 0;
+    if (esf) cash[p.id] = esf.byProduct[costProductIdOf(p.id, dataset)]?.cashShare ?? 1;
   }
-  return { group, fargo };
+  return { group, fargo, cash };
 }
 
 export async function salesData(monthParam: string | undefined, opts: { withClients?: boolean } = {}) {
